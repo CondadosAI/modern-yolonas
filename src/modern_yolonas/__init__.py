@@ -10,7 +10,7 @@ def yolo_nas_s(pretrained: bool = False, num_classes: int = 80) -> YoloNAS:
     """Create a YOLO-NAS S model."""
     model = YoloNAS.from_config("yolo_nas_s", num_classes=num_classes)
     if pretrained:
-        load_pretrained(model, "yolo_nas_s")
+        load_pretrained(model, "yolo_nas_s", strict=(num_classes == 80))
     return model
 
 
@@ -18,7 +18,7 @@ def yolo_nas_m(pretrained: bool = False, num_classes: int = 80) -> YoloNAS:
     """Create a YOLO-NAS M model."""
     model = YoloNAS.from_config("yolo_nas_m", num_classes=num_classes)
     if pretrained:
-        load_pretrained(model, "yolo_nas_m")
+        load_pretrained(model, "yolo_nas_m", strict=(num_classes == 80))
     return model
 
 
@@ -26,7 +26,7 @@ def yolo_nas_l(pretrained: bool = False, num_classes: int = 80) -> YoloNAS:
     """Create a YOLO-NAS L model."""
     model = YoloNAS.from_config("yolo_nas_l", num_classes=num_classes)
     if pretrained:
-        load_pretrained(model, "yolo_nas_l")
+        load_pretrained(model, "yolo_nas_l", strict=(num_classes == 80))
     return model
 
 

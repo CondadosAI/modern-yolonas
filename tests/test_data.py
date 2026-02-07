@@ -1,4 +1,4 @@
-"""Tests for data pipeline: transforms, collation."""
+"""Tests for data pipeline: transforms, collation, dataset config."""
 
 import numpy as np
 import pytest
@@ -11,6 +11,7 @@ from modern_yolonas.data.transforms import (
     Compose,
 )
 from modern_yolonas.data.collate import detection_collate_fn
+from modern_yolonas.data.dataset_config import DatasetConfig, load_dataset_config
 
 
 @pytest.fixture
@@ -81,3 +82,39 @@ class TestCollate:
         images, targets = detection_collate_fn(batch)
         assert images.shape == (1, 3, 640, 640)
         assert targets.shape == (0, 6)
+
+
+class TestDatasetConfig:
+    def test_load_dataset_config(self, tmp_path):
+        yaml_content = (
+            "nc: 3\n"
+            'names: ["person", "head", "hardhat"]\n'
+            "train: images/train\n"
+            "val: images/val\n"
+        )
+        yaml_file = tmp_path / "data.yaml"
+        yaml_file.write_text(yaml_content)
+
+        cfg = load_dataset_config(yaml_file)
+        assert isinstance(cfg, DatasetConfig)
+        assert cfg.root == tmp_path
+        assert cfg.num_classes == 3
+        assert cfg.class_names == ["person", "head", "hardhat"]
+        assert cfg.train_split == "train"
+        assert cfg.val_split == "val"
+
+    def test_load_dataset_config_missing_file(self):
+        with pytest.raises(FileNotFoundError):
+            load_dataset_config("/nonexistent/data.yaml")
+
+    def test_load_dataset_config_defaults(self, tmp_path):
+        """train/val keys are optional and default to images/train, images/val."""
+        yaml_content = "nc: 1\nnames: ['cat']\n"
+        yaml_file = tmp_path / "data.yaml"
+        yaml_file.write_text(yaml_content)
+
+        cfg = load_dataset_config(yaml_file)
+        assert cfg.num_classes == 1
+        assert cfg.class_names == ["cat"]
+        assert cfg.train_split == "train"
+        assert cfg.val_split == "val"

@@ -135,6 +135,10 @@ dev = [
     "ruff>=0.15.0",
     "mypy>=1.0",
     "pre-commit",
+    # Fetching the Roboflow datasets the tutorials fine-tune on, and running
+    # the notebooks that do it.
+    "roboflow>=1.2.13",
+    "jupyter>=1.1.1",
 ]
 docs = [
     "mkdocs-material>=9.5",
