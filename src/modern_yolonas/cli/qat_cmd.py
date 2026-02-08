@@ -13,12 +13,18 @@ import click
 @click.option("--batch-size", default=32, help="Batch size.")
 @click.option("--lr", default=2e-5, help="Learning rate (lower than full training).")
 @click.option("--backend", default="x86", type=click.Choice(["x86", "qnnpack", "onednn"]))
-@click.option("--device", default="cuda", help="Device.")
 @click.option("--output", default="runs/qat", help="Output directory.")
 @click.option("--checkpoint", default=None, help="Checkpoint to start from.")
 @click.option("--input-size", default=640, help="Model input size.")
 @click.option("--workers", default=8, help="DataLoader workers.")
 @click.option("--pretrained/--no-pretrained", default=True, help="Use pretrained COCO weights.")
+@click.option("--devices", default="auto", help="Devices to use (e.g. 'auto', '1', '0,1').")
+@click.option(
+    "--logger",
+    default="csv",
+    type=click.Choice(["csv", "tensorboard", "wandb"]),
+    help="Logger backend.",
+)
 def qat(
     model: str,
     data: str,
@@ -27,16 +33,19 @@ def qat(
     batch_size: int,
     lr: float,
     backend: str,
-    device: str,
     output: str,
     checkpoint: str | None,
     input_size: int,
     workers: int,
     pretrained: bool,
+    devices: str,
+    logger: str,
 ):
     """Run Quantization-Aware Training on a YOLO-NAS model."""
     from pathlib import Path
 
+    import lightning as L
+    from lightning.pytorch.callbacks import ModelCheckpoint
     import torch
     from rich.console import Console
 
@@ -49,9 +58,9 @@ def qat(
         LetterboxResize,
         Normalize,
     )
-    from modern_yolonas.data.collate import detection_collate_fn
     from modern_yolonas.quantization import prepare_model_qat, convert_quantized, export_quantized_onnx
-    from modern_yolonas.quantization.qat_trainer import QATTrainer
+    from modern_yolonas.training import YoloNASLightningModule, QATCallback, DetectionDataModule
+    from modern_yolonas.training.lightning_module import extract_model_state_dict
 
     console = Console()
 
@@ -61,8 +70,7 @@ def qat(
 
     if checkpoint:
         yolo_model = builders[model](pretrained=False)
-        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        sd = ckpt.get("model_state_dict", ckpt)
+        sd = extract_model_state_dict(checkpoint)
         yolo_model.load_state_dict(sd)
     else:
         yolo_model = builders[model](pretrained=pretrained)
@@ -104,44 +112,61 @@ def qat(
             input_size=input_size,
         )
 
-    from torch.utils.data import DataLoader
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=workers,
-        collate_fn=detection_collate_fn,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=workers,
-        collate_fn=detection_collate_fn,
-        pin_memory=True,
-    )
-
     console.print(f"Train: {len(train_dataset)} images, Val: {len(val_dataset)} images")
 
-    # QAT Training
-    trainer = QATTrainer(
+    # Lightning components
+    warmup_steps = min(200, len(train_dataset) // batch_size * 1)
+    lit_model = YoloNASLightningModule(
         model=qat_model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        epochs=epochs,
+        num_classes=80,
         lr=lr,
-        output_dir=output,
-        device=device,
+        warmup_steps=warmup_steps,
     )
-    trainer.train()
+
+    data_module = DetectionDataModule(
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        batch_size=batch_size,
+        num_workers=workers,
+    )
+
+    # Logger
+    if logger == "csv":
+        logger_instance = L.pytorch.loggers.CSVLogger(output)
+    elif logger == "tensorboard":
+        logger_instance = L.pytorch.loggers.TensorBoardLogger(output)
+    else:
+        logger_instance = L.pytorch.loggers.WandbLogger(project="yolonas", save_dir=output)
+
+    # Parse devices
+    parsed_devices: str | int | list[int] = devices
+    if devices != "auto":
+        if "," in devices:
+            parsed_devices = [int(d) for d in devices.split(",")]
+        else:
+            parsed_devices = int(devices)
+
+    callbacks = [
+        QATCallback(freeze_bn_after_epoch=3, freeze_observer_after_epoch=5),
+        ModelCheckpoint(dirpath=output, save_last=True),
+    ]
+
+    trainer = L.Trainer(
+        max_epochs=epochs,
+        accelerator="auto",
+        devices=parsed_devices,
+        strategy="auto",
+        precision="32-true",  # No AMP — fake-quant incompatible with autocast
+        callbacks=callbacks,
+        logger=logger_instance,
+        default_root_dir=output,
+    )
+
+    trainer.fit(lit_model, datamodule=data_module)
 
     # Convert and export
     console.print("Converting QAT model to quantized form...")
-    eval_model = trainer.ema.ema if trainer.ema is not None else trainer.model
-    quantized_model = convert_quantized(eval_model)
+    quantized_model = convert_quantized(qat_model)
 
     onnx_path = str(Path(output) / "model_qat.onnx")
     console.print(f"Exporting to {onnx_path}...")
