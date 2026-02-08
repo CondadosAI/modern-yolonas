@@ -8,6 +8,8 @@ project growing its own versions of them.
 
 from __future__ import annotations
 
+import time
+
 from pathlib import Path
 from typing import Generator
 
@@ -96,6 +98,10 @@ class Detector:
         else:
             self.class_names = COCO_NAMES if num_classes == len(COCO_NAMES) else None
 
+        # Wall-clock of the last single-image detect call, for the FPS overlay and
+        # for callers that want to report throughput without timing it themselves.
+        self.last_inference_ms: float | None = None
+
         self._box_annotator = sv.BoxAnnotator()
         self._label_annotator = sv.LabelAnnotator()
 
@@ -137,14 +143,29 @@ class Detector:
             )
         return detections
 
-    def annotate(self, image: np.ndarray, detections: sv.Detections) -> np.ndarray:
+    def annotate(self, image: np.ndarray, detections: sv.Detections, show_fps: bool = False) -> np.ndarray:
         """Draw boxes and labels on a copy of ``image``.
 
         A convenience wrapper over ``sv.BoxAnnotator`` and ``sv.LabelAnnotator``. Build
         your own annotators when you want different styling.
+
+        Args:
+            image: BGR frame to draw on.
+            detections: What to draw.
+            show_fps: Overlay the last call's inference time and the frame rate it
+                implies. Reads `last_inference_ms`, so it reflects the most recent
+                detect call, not the frame passed here — they are the same frame in a
+                normal capture loop.
         """
         annotated = self._box_annotator.annotate(image.copy(), detections)
-        return self._label_annotator.annotate(annotated, detections)
+        annotated = self._label_annotator.annotate(annotated, detections)
+        if show_fps and self.last_inference_ms is not None:
+            import cv2
+
+            fps = 1000.0 / self.last_inference_ms if self.last_inference_ms > 0 else 0.0
+            text = f"{self.last_inference_ms:.1f}ms ({fps:.1f} FPS)"
+            cv2.putText(annotated, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        return annotated
 
     @torch.no_grad()
     def __call__(
@@ -169,6 +190,8 @@ class Detector:
         else:
             image = source
 
+        t0 = time.perf_counter()
+
         tensor, scale, pad = preprocess(image, self.input_size)
         tensor = tensor.to(self.device)
         if self.precision == "fp16":
@@ -183,6 +206,8 @@ class Detector:
 
         boxes, scores, class_ids = results[0]
         boxes = rescale_boxes(boxes, scale, pad, image.shape[:2])
+
+        self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
 
         return self._to_detections(boxes, scores, class_ids)
 
@@ -290,6 +315,7 @@ class Detector:
         iou_threshold: float | None = None,
         codec: str = "mp4v",
         skip_frames: int = 0,
+        show_fps: bool = False,
     ) -> dict[str, int | float]:
         """Run detection on a video and write annotated output.
 
@@ -301,6 +327,7 @@ class Detector:
             codec: FourCC codec string.
             skip_frames: Process every N-th frame (0 = every frame).
                 Skipped frames are written without annotations.
+            show_fps: Burn the per-frame inference time and frame rate into the output.
 
         Returns:
             Dict with ``total_frames``, ``processed_frames``, ``total_detections``.
@@ -334,7 +361,7 @@ class Detector:
 
                 if should_process:
                     detections = self(frame, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
-                    writer.write(self.annotate(frame, detections))
+                    writer.write(self.annotate(frame, detections, show_fps=show_fps))
                     processed += 1
                     total_detections += len(detections)
                 else:
