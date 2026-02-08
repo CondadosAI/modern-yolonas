@@ -1,3 +1,5 @@
+# uv extra dependence to force use opencv-python instead of opencv-python-headless, which is incompatible with cv2.imshow
+
 """Example: Run YOLO-NAS live on webcam feed.
 
 Usage:
@@ -16,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description="YOLO-NAS webcam detection")
     parser.add_argument("--model", default="yolo_nas_s", choices=["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"])
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--conf", type=float, default=0.25)
+    parser.add_argument("--conf", type=float, default=0.50)
     parser.add_argument("--camera", type=int, default=0, help="Camera index")
     args = parser.parse_args()
 

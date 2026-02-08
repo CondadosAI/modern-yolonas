@@ -152,6 +152,21 @@ model:
   path: /config/model_frigate.xml
 ```
 
+## Tutorials
+
+Step-by-step notebooks in [`tutorials/`](tutorials/):
+
+| Topic | Notebook | Description |
+|---|---|---|
+| **Roboflow** | [`roboflow/01_explore_dataset.ipynb`](tutorials/roboflow/01_explore_dataset.ipynb) | Download from Roboflow + explore |
+| | [`roboflow/02_finetune.ipynb`](tutorials/roboflow/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| **FiftyOne** | [`fiftyone/01_explore_dataset.ipynb`](tutorials/fiftyone/01_explore_dataset.ipynb) | Load from FiftyOne Zoo + explore |
+| | [`fiftyone/02_finetune.ipynb`](tutorials/fiftyone/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| **Export** | [`export_onnx.ipynb`](tutorials/export_onnx.ipynb) | ONNX export from any checkpoint |
+| **Quantization** | [`quantization_ptq.ipynb`](tutorials/quantization_ptq.ipynb) | Post-Training Quantization |
+| | [`quantization_qat.ipynb`](tutorials/quantization_qat.ipynb) | Quantization-Aware Training |
+| **Inference** | [`inference_onnx.ipynb`](tutorials/inference_onnx.ipynb) | ONNX Runtime inference |
+
 ## Examples
 
 Start with the notebook — install, detect, visualize, and inspect the raw model output in
