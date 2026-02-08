@@ -117,6 +117,89 @@ class HorizontalFlip:
         return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
 
+class VerticalFlip:
+    def __init__(self, p: float = 0.5):
+        self.p = p
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if random.random() < self.p:
+            image = np.flipud(image).copy()
+            if len(targets):
+                targets = targets.copy()
+                targets[:, 2] = 1.0 - targets[:, 2]  # flip y_center
+        return image, targets
+
+
+class RandomChannelShuffle:
+    """Randomly permute BGR channels (equivalent to super-gradients DetectionRGB2BGR)."""
+
+    def __init__(self, p: float = 0.5):
+        self.p = p
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if random.random() < self.p:
+            perm = np.random.permutation(3)
+            image = image[:, :, perm].copy()
+        return image, targets
+
+
+class RandomCrop:
+    """Random crop with bbox clipping and re-normalization."""
+
+    def __init__(self, min_scale: float = 0.3, max_scale: float = 1.0, p: float = 1.0):
+        self.min_scale = min_scale
+        self.max_scale = max_scale
+        self.p = p
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if random.random() >= self.p:
+            return image, targets
+
+        h, w = image.shape[:2]
+
+        # Sample crop dimensions
+        crop_h = int(h * random.uniform(self.min_scale, self.max_scale))
+        crop_w = int(w * random.uniform(self.min_scale, self.max_scale))
+        crop_h = max(1, crop_h)
+        crop_w = max(1, crop_w)
+
+        # Sample crop position
+        y0 = random.randint(0, h - crop_h)
+        x0 = random.randint(0, w - crop_w)
+
+        image = image[y0 : y0 + crop_h, x0 : x0 + crop_w].copy()
+
+        if len(targets):
+            targets = targets.copy()
+            # Convert normalized xywh to pixel xyxy
+            x1 = (targets[:, 1] - targets[:, 3] / 2) * w
+            y1 = (targets[:, 2] - targets[:, 4] / 2) * h
+            x2 = (targets[:, 1] + targets[:, 3] / 2) * w
+            y2 = (targets[:, 2] + targets[:, 4] / 2) * h
+
+            # Shift to crop coordinates and clip
+            x1 = np.clip(x1 - x0, 0, crop_w)
+            y1 = np.clip(y1 - y0, 0, crop_h)
+            x2 = np.clip(x2 - x0, 0, crop_w)
+            y2 = np.clip(y2 - y0, 0, crop_h)
+
+            # Filter out boxes that are too small
+            box_w = x2 - x1
+            box_h = y2 - y1
+            valid = (box_w > 2) & (box_h > 2)
+
+            targets = targets[valid]
+            x1, y1, x2, y2 = x1[valid], y1[valid], x2[valid], y2[valid]
+
+            if len(targets):
+                targets[:, 1] = ((x1 + x2) / 2) / crop_w
+                targets[:, 2] = ((y1 + y2) / 2) / crop_h
+                targets[:, 3] = (x2 - x1) / crop_w
+                targets[:, 4] = (y2 - y1) / crop_h
+
+        return image, targets
+
+
 class RandomAffine:
     """Apply random rotation, scale, translation, and shear via Albumentations.
 
@@ -243,11 +326,16 @@ class CenterCrop:
 class Mosaic:
     """4-image mosaic augmentation."""
 
-    def __init__(self, dataset: BaseDetectionDataset, input_size: int = 640):
+    def __init__(self, dataset: BaseDetectionDataset, input_size: int = 640, prob: float = 1.0):
         self.dataset = dataset
         self.input_size = input_size
+        self.prob = prob
+        self.enabled = True
 
     def __call__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        if not self.enabled or random.random() >= self.prob:
+            return self.dataset.load_raw(index)
+
         s = self.input_size
         yc, xc = (int(random.uniform(s * 0.5, s * 1.5)) for _ in range(2))
 
@@ -316,23 +404,36 @@ class Mixup:
 
     Args:
         dataset: Dataset exposing a ``load_raw(index)`` method.
-        p: Per-sample probability of applying mixup.
         alpha: Beta distribution ``alpha`` parameter.
         beta: Beta distribution ``beta`` parameter.
+        prob: Per-sample probability of applying mixup.
     """
 
-    def __init__(self, dataset: BaseDetectionDataset, p: float = 0.5, alpha: float = 1.5, beta: float = 1.5):
+    def __init__(
+        self,
+        dataset: BaseDetectionDataset,
+        alpha: float = 1.5,
+        beta: float = 1.5,
+        prob: float = 0.5,
+    ):
         self.dataset = dataset
-        self.p = p
         self.alpha = alpha
         self.beta = beta
+        self.prob = prob
+        self.enabled = True
+        self.inner_transforms: Compose | None = None
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if random.random() >= self.p:
+        if not self.enabled or random.random() >= self.prob:
             return image, targets
 
         idx2 = random.randint(0, len(self.dataset) - 1)
         img2, targets2 = self.dataset.load_raw(idx2)
+
+        # Per-image augmentations for the mixed-in image, so it is not a pristine
+        # sample pasted onto an augmented one.
+        if self.inner_transforms is not None:
+            img2, targets2 = self.inner_transforms(img2, targets2)
 
         # Letterbox the second image to match the (already resized) first image
         target_h, target_w = image.shape[:2]
@@ -410,3 +511,57 @@ class Normalize:
         image = image[:, :, ::-1].copy()  # BGR → RGB
         image = image.transpose(2, 0, 1).astype(np.float32) / 255.0
         return image, targets
+
+
+class TrainTransformPipeline:
+    """Full training augmentation pipeline with Mosaic and Mixup support.
+
+    Pipeline order (matching super-gradients):
+    Mosaic → per_image_transforms (RandomAffine, RandomChannelShuffle, HSV, HorizontalFlip)
+    → Mixup → final_transforms (LetterboxResize, Normalize)
+    """
+
+    def __init__(
+        self,
+        mosaic: Mosaic | None,
+        per_image_transforms: Compose,
+        mixup: Mixup | None,
+        final_transforms: Compose,
+    ):
+        self.mosaic = mosaic
+        self.per_image_transforms = per_image_transforms
+        self.mixup = mixup
+        self.final_transforms = final_transforms
+
+    def apply(self, index: int, load_raw_fn) -> tuple[np.ndarray, np.ndarray]:
+        """Dataset-aware pipeline entry point called from __getitem__."""
+        # 1. Mosaic (or fallback to load_raw)
+        if self.mosaic is not None:
+            image, targets = self.mosaic(index)
+        else:
+            image, targets = load_raw_fn(index)
+
+        # 2. Per-image transforms
+        image, targets = self.per_image_transforms(image, targets)
+
+        # 3. Mixup
+        if self.mixup is not None:
+            image, targets = self.mixup(image, targets)
+
+        # 4. Final transforms (resize + normalize)
+        image, targets = self.final_transforms(image, targets)
+
+        return image, targets
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Fallback: per-image + final only (no Mosaic/Mixup)."""
+        image, targets = self.per_image_transforms(image, targets)
+        image, targets = self.final_transforms(image, targets)
+        return image, targets
+
+    def disable_mosaic_mixup(self):
+        """Disable Mosaic and Mixup (called by CloseMosaicCallback)."""
+        if self.mosaic is not None:
+            self.mosaic.enabled = False
+        if self.mixup is not None:
+            self.mixup.enabled = False

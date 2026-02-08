@@ -113,6 +113,8 @@ class FiftyOneDetectionDataset(Dataset):
         return image, np.stack(rows)
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        if self.transforms is not None and hasattr(self.transforms, 'apply'):
+            return self.transforms.apply(index, self.load_raw)
         image, targets = self.load_raw(index)
         if self.transforms is not None:
             image, targets = self.transforms(image, targets)

@@ -68,22 +68,24 @@ def coco(
 
     data_path = Path(data)
 
-    # Build datasets
-    train_transforms = build_transforms(recipe, train=True)
-    val_transforms = build_transforms(recipe, train=False)
-
+    # Build datasets without transforms first
     train_dataset = COCODetectionDataset(
         data_path / "images" / "train2017",
         data_path / "annotations" / "instances_train2017.json",
-        transforms=train_transforms,
+        transforms=None,
         input_size=input_size,
     )
     val_dataset = COCODetectionDataset(
         data_path / "images" / "val2017",
         data_path / "annotations" / "instances_val2017.json",
-        transforms=val_transforms,
+        transforms=None,
         input_size=input_size,
     )
+
+    # Assign transforms (train pipeline needs dataset reference for Mosaic/Mixup)
+    train_dataset.transforms = build_transforms(recipe, train=True, dataset=train_dataset)
+    val_dataset.transforms = build_transforms(recipe, train=False)
+
     val_ann_file = data_path / "annotations" / "instances_val2017.json"
 
     console.print(f"Train: {len(train_dataset)} images, Val: {len(val_dataset)} images")

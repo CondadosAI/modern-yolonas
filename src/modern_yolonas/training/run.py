@@ -13,10 +13,16 @@ from modern_yolonas.data.transforms import (
     HSVAugment,
     HorizontalFlip,
     LetterboxResize,
+    Mixup,
+    Mosaic,
     Normalize,
     RandomAffine,
+    RandomChannelShuffle,
+    RandomCrop,
+    TrainTransformPipeline,
+    VerticalFlip,
 )
-from modern_yolonas.training.callbacks import EMACallback
+from modern_yolonas.training.callbacks import CloseMosaicCallback, EMACallback
 from modern_yolonas.training.data_module import DetectionDataModule
 from modern_yolonas.training.lightning_module import YoloNASLightningModule
 
@@ -27,27 +33,85 @@ MODEL_BUILDERS = {
 }
 
 
-def build_transforms(recipe: dict, *, train: bool) -> Compose:
-    """Build transform pipeline from a recipe dict."""
+def build_transforms(recipe: dict, *, train: bool, dataset=None):
+    """Build transform pipeline from a recipe dict.
+
+    Args:
+        recipe: Recipe dict containing 'input_size' and 'augmentations'.
+        train: Whether to build training transforms.
+        dataset: Training dataset instance. When provided and Mosaic/Mixup are
+            enabled, returns a ``TrainTransformPipeline`` that supports
+            dataset-aware augmentations.
+
+    Returns:
+        A ``Compose`` (val, or train without dataset-aware augs) or
+        ``TrainTransformPipeline`` (train with Mosaic/Mixup).
+    """
     input_size = recipe["input_size"]
-    if train:
-        aug = recipe["augmentations"]
-        steps = []
-        if aug.get("hsv"):
-            steps.append(HSVAugment())
-        if aug.get("flip"):
-            steps.append(HorizontalFlip())
-        steps.append(
-            RandomAffine(
-                degrees=aug.get("affine_degrees", 0.0),
-                translate=aug.get("affine_translate", 0.1),
-                scale=aug.get("affine_scale", (0.5, 1.5)),
-            )
+
+    if not train:
+        return Compose([LetterboxResize(target_size=input_size), Normalize()])
+
+    aug = recipe.get("augmentations", {})
+
+    # Build per-image transforms
+    per_image_steps = []
+    per_image_steps.append(
+        RandomAffine(
+            degrees=aug.get("affine_degrees", 0.0),
+            translate=aug.get("affine_translate", 0.1),
+            scale=aug.get("affine_scale", (0.5, 1.5)),
         )
-        steps.append(LetterboxResize(target_size=input_size))
-        steps.append(Normalize())
-        return Compose(steps)
-    return Compose([LetterboxResize(target_size=input_size), Normalize()])
+    )
+    if aug.get("channel_shuffle"):
+        per_image_steps.append(RandomChannelShuffle(p=aug.get("channel_shuffle_prob", 0.5)))
+    if aug.get("hsv"):
+        per_image_steps.append(HSVAugment(p=aug.get("hsv_prob", 1.0)))
+    if aug.get("flip"):
+        per_image_steps.append(HorizontalFlip(p=aug.get("flip_prob", 0.5)))
+    if aug.get("vertical_flip"):
+        per_image_steps.append(VerticalFlip(p=aug.get("vertical_flip_prob", 0.5)))
+    if aug.get("random_crop"):
+        per_image_steps.append(RandomCrop(
+            min_scale=aug.get("random_crop_min_scale", 0.3),
+            max_scale=aug.get("random_crop_max_scale", 1.0),
+            p=aug.get("random_crop_prob", 1.0),
+        ))
+
+    per_image_compose = Compose(per_image_steps)
+    final_compose = Compose([LetterboxResize(target_size=input_size), Normalize()])
+
+    use_mosaic = aug.get("mosaic", False) and dataset is not None
+    use_mixup = aug.get("mixup", False) and dataset is not None
+
+    if not use_mosaic and not use_mixup:
+        # Simple pipeline — no dataset-aware augmentations
+        return Compose(per_image_steps + [LetterboxResize(target_size=input_size), Normalize()])
+
+    # Build TrainTransformPipeline with Mosaic and/or Mixup
+    mosaic = None
+    if use_mosaic:
+        mosaic = Mosaic(
+            dataset=dataset,
+            input_size=input_size,
+            prob=aug.get("mosaic_prob", 1.0),
+        )
+
+    mixup = None
+    if use_mixup:
+        mixup = Mixup(
+            dataset=dataset,
+            prob=aug.get("mixup_prob", 0.5),
+        )
+        # Mixup's second image gets the same per-image transforms
+        mixup.inner_transforms = per_image_compose
+
+    return TrainTransformPipeline(
+        mosaic=mosaic,
+        per_image_transforms=per_image_compose,
+        mixup=mixup,
+        final_transforms=final_compose,
+    )
 
 
 def run_training(
@@ -142,6 +206,12 @@ def run_training(
         EMACallback(decay=recipe.get("ema_decay", 0.9997)),
         checkpoint_cb,
     ]
+
+    # CloseMosaicCallback
+    aug = recipe.get("augmentations", {})
+    close_mosaic_epochs = aug.get("close_mosaic_epochs", 0)
+    if close_mosaic_epochs > 0 and (aug.get("mosaic") or aug.get("mixup")):
+        callbacks.append(CloseMosaicCallback(close_mosaic_epochs=close_mosaic_epochs))
 
     # Trainer
     trainer = L.Trainer(

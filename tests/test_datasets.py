@@ -287,7 +287,7 @@ class TestMosaic:
 class TestMixup:
     def test_output_shape_and_dtype(self):
         ds = _FakeRawDataset(n=3)
-        mixup = Mixup(ds, p=1.0, alpha=1.0, beta=1.0)
+        mixup = Mixup(ds, prob=1.0, alpha=1.0, beta=1.0)
         img1, tgt1 = ds.load_raw(0)
         mixed_img, mixed_tgt = mixup(img1, tgt1)
         assert mixed_img.shape == img1.shape
@@ -302,7 +302,7 @@ class TestMixup:
                 return img, np.zeros((0, 5), dtype=np.float32)
 
         ds = _EmptyPartnerDS(n=3)
-        mixup = Mixup(ds, p=1.0, alpha=1.0, beta=1.0)
+        mixup = Mixup(ds, prob=1.0, alpha=1.0, beta=1.0)
         # Shape must match the dataset's own images (80×80) for the blend
         img = np.full((80, 80, 3), 128, dtype=np.uint8)
         tgt = np.array([[0, 0.5, 0.5, 0.3, 0.3]], dtype=np.float32)

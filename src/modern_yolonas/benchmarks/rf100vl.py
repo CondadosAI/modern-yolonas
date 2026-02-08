@@ -115,22 +115,23 @@ def run_rf100vl_benchmark(
             progress.update(task, description=f"Training {name}")
             console.print(f"\n[bold]Dataset: {name}[/bold] ({num_classes} classes)")
 
-            # Build datasets
-            train_transforms = build_transforms(recipe, train=True)
-            val_transforms = build_transforms(recipe, train=False)
-
+            # Build datasets without transforms first
             train_dataset = COCODetectionDataset(
                 ds_info["train_images"],
                 ds_info["train_ann"],
-                transforms=train_transforms,
+                transforms=None,
                 input_size=recipe["input_size"],
             )
             val_dataset = COCODetectionDataset(
                 ds_info["val_images"],
                 ds_info["val_ann"],
-                transforms=val_transforms,
+                transforms=None,
                 input_size=recipe["input_size"],
             )
+
+            # Assign transforms (train pipeline needs dataset for Mosaic/Mixup)
+            train_dataset.transforms = build_transforms(recipe, train=True, dataset=train_dataset)
+            val_dataset.transforms = build_transforms(recipe, train=False)
 
             # Train
             try:

@@ -177,8 +177,8 @@ class TestBuildTransforms:
         from modern_yolonas.training.run import build_transforms
 
         transforms = build_transforms(COCO_RECIPE, train=True)
-        # Should have multiple steps: HSV, Flip, Affine, Resize, Normalize
-        assert len(transforms.transforms) == 5
+        # Without dataset: Affine, ChannelShuffle, HSV, Flip, Resize, Normalize
+        assert len(transforms.transforms) == 6
 
     def test_val_transforms(self):
         from modern_yolonas.training.run import build_transforms

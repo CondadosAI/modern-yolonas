@@ -105,3 +105,30 @@ class QATCallback(L.Callback):
 
         if epoch >= self.freeze_observer_after_epoch:
             pl_module.model.backbone_neck.apply(torch.ao.quantization.disable_observer)
+
+
+class CloseMosaicCallback(L.Callback):
+    """Disable Mosaic and Mixup augmentations in the final N epochs.
+
+    Accesses the train dataset's transforms pipeline and calls
+    ``disable_mosaic_mixup()``. Idempotent — safe to call every epoch.
+
+    Args:
+        close_mosaic_epochs: Number of final epochs without Mosaic/Mixup.
+    """
+
+    def __init__(self, close_mosaic_epochs: int = 15):
+        super().__init__()
+        self.close_mosaic_epochs = close_mosaic_epochs
+
+    def on_train_epoch_start(self, trainer: L.Trainer, pl_module: L.LightningModule):
+        epoch = trainer.current_epoch
+        max_epochs = trainer.max_epochs
+        if epoch >= max_epochs - self.close_mosaic_epochs:
+            # Walk through dataloader to find the dataset transforms
+            dataloader = trainer.train_dataloader
+            if dataloader is None:
+                return
+            dataset = dataloader.dataset
+            if hasattr(dataset, 'transforms') and hasattr(dataset.transforms, 'disable_mosaic_mixup'):
+                dataset.transforms.disable_mosaic_mixup()

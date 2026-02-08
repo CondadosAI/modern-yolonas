@@ -175,7 +175,7 @@ def train(
             num_classes = len(train_dataset.cat_id_to_label)
 
     # Wire Mixup now that we have a dataset (placed just before Normalize)
-    train_transforms.transforms.insert(-1, Mixup(train_dataset, p=0.5))
+    train_transforms.transforms.insert(-1, Mixup(train_dataset, prob=0.5))
 
     # Resolve class names from dataset (used for annotation in val image logging)
     class_names: list[str] | None = getattr(train_dataset, "class_names", None)

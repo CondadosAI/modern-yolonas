@@ -50,19 +50,26 @@ def qat(
     from rich.console import Console
 
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import (
-        Compose,
-        HSVAugment,
-        HorizontalFlip,
-        RandomAffine,
-        LetterboxResize,
-        Normalize,
-    )
     from modern_yolonas.quantization import prepare_model_qat, convert_quantized, export_quantized_onnx
     from modern_yolonas.training import YoloNASLightningModule, QATCallback, DetectionDataModule
     from modern_yolonas.training.lightning_module import extract_model_state_dict
+    from modern_yolonas.training.recipes import COCO_RECIPE
+    from modern_yolonas.training.run import build_transforms
 
     console = Console()
+
+    # QAT recipe: no Mosaic/Mixup
+    recipe = {
+        **COCO_RECIPE,
+        "input_size": input_size,
+        "workers": workers,
+        "augmentations": {
+            **COCO_RECIPE["augmentations"],
+            "mosaic": False,
+            "mixup": False,
+            "close_mosaic_epochs": 0,
+        },
+    }
 
     # Build model
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
@@ -81,14 +88,8 @@ def qat(
     qat_model = prepare_model_qat(yolo_model, backend=backend, example_input=example_input)
 
     # Build datasets
-    train_transforms = Compose([
-        HSVAugment(),
-        HorizontalFlip(),
-        RandomAffine(degrees=0.0, translate=0.1, scale=(0.5, 1.5)),
-        LetterboxResize(target_size=input_size),
-        Normalize(),
-    ])
-    val_transforms = Compose([LetterboxResize(target_size=input_size), Normalize()])
+    train_transforms = build_transforms(recipe, train=True)
+    val_transforms = build_transforms(recipe, train=False)
 
     if data_format == "yolo":
         from modern_yolonas.data.yolo import YOLODetectionDataset
