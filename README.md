@@ -192,8 +192,22 @@ uv run ruff check src/
 
 This project is a clean-room reimplementation of the YOLO-NAS architecture originally developed by [Deci AI](https://deci.ai/) and published in their [super-gradients](https://github.com/Deci-AI/super-gradients) library (Apache-2.0). The model architecture, module structure, and state_dict key naming were derived from the super-gradients source code to enable pretrained weight compatibility.
 
-**Pretrained weights notice:** The pretrained COCO weights downloaded by this library (via `pretrained=True`) are provided by Deci AI and are subject to [Deci's YOLO-NAS license](https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md), which restricts commercial use and redistribution. The MIT license of this repository applies only to the source code, **not** to the pretrained weights. If you train your own weights from scratch, those are entirely yours.
+**Pretrained weights notice:** The pretrained COCO weights downloaded by this library (via `pretrained=True`) are provided by Deci AI and are subject to [Deci's YOLO-NAS license](https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md), which restricts commercial use and redistribution. The Apache-2.0 license of this repository applies only to the source code, **not** to the pretrained weights. If you train your own weights from scratch, those are entirely yours.
+
+## Citation
+
+If you use modern-yolonas in your research or project, please cite it:
+
+```bibtex
+@software{condados2025modernyolonas,
+  author       = {Condados, Luis},
+  title        = {modern-yolonas: A Clean Reimplementation of YOLO-NAS},
+  year         = {2025},
+  url          = {https://github.com/lcondados/modern-yolonas},
+  license      = {Apache-2.0}
+}
+```
 
 ## License
 
-MIT — applies to the source code only. See [Acknowledgments](#acknowledgments) for pretrained weight licensing.
+Apache-2.0 — applies to the source code only. See [Acknowledgments](#acknowledgments) for pretrained weight licensing.

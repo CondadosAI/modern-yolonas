@@ -3,7 +3,7 @@ name = "modern-yolonas"
 dynamic = ["version"]
 description = "Modern YOLO-NAS object detection — clean reimplementation"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 authors = [{name = "Luis Condados"}]
 requires-python = ">=3.10"
 keywords = [
