@@ -61,6 +61,7 @@ Issues = "https://github.com/CondadosAI/modern-yolonas/issues"
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
 demo = ["gradio>=4.0"]
 onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.6.0"]
+benchmark = ["rf100vl>=0.1"]
 fiftyone = ["fiftyone>=1.0"]
 openvino = ["openvino>=2024.0"]
 wandb = ["wandb>=0.16"]

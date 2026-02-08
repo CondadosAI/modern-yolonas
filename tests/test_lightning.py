@@ -42,10 +42,9 @@ class TestLightningModule:
         assert loss.requires_grad
 
     def test_validation_step(self, lit_module, synthetic_batch):
+        # Without val_ann_file, validation uses train-mode fallback for loss
         lit_module.model.train()
-        loss = lit_module.validation_step(synthetic_batch, 0)
-        assert isinstance(loss, torch.Tensor)
-        assert loss.ndim == 0
+        lit_module.validation_step(synthetic_batch, 0)
 
     def test_configure_optimizers(self, lit_module):
         # Mock trainer with estimated_stepping_batches

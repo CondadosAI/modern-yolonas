@@ -24,6 +24,12 @@ class YoloNASLightningModule(L.LightningModule):
         weight_decay: Weight decay.
         warmup_steps: LR warmup steps.
         cosine_final_lr_ratio: Final LR as fraction of initial LR.
+        val_ann_file: Path to COCO annotation JSON for mAP evaluation.
+            When set, validation computes mAP instead of loss.
+        val_dataset_ids: List of COCO image IDs matching validation dataset order.
+            If None, extracted from the val dataloader's dataset.
+        conf_threshold: Confidence threshold for mAP evaluation.
+        iou_threshold: NMS IoU threshold for mAP evaluation.
     """
 
     def __init__(
@@ -35,10 +41,19 @@ class YoloNASLightningModule(L.LightningModule):
         weight_decay: float = 1e-5,
         warmup_steps: int = 1000,
         cosine_final_lr_ratio: float = 0.1,
+        val_ann_file: str | Path | None = None,
+        val_dataset_ids: list[int] | None = None,
+        conf_threshold: float = 0.001,
+        iou_threshold: float = 0.65,
     ):
         super().__init__()
         self.model = model
         self.criterion = PPYoloELoss(num_classes=num_classes)
+        self.val_ann_file = val_ann_file
+        self.val_dataset_ids = val_dataset_ids
+        self.conf_threshold = conf_threshold
+        self.iou_threshold = iou_threshold
+        self._evaluator = None
         self.save_hyperparameters(ignore=["model"])
 
     def forward(self, x):
@@ -62,17 +77,69 @@ class YoloNASLightningModule(L.LightningModule):
 
         return loss
 
+    def on_validation_epoch_start(self):
+        if self.val_ann_file is not None:
+            from modern_yolonas.training.metrics import COCOEvaluator
+
+            self._evaluator = COCOEvaluator(self.val_ann_file)
+            # Cache image IDs from the val dataset if not provided
+            if self.val_dataset_ids is None and self._trainer is not None:
+                val_dl = self.trainer.val_dataloaders
+                if val_dl is not None and hasattr(val_dl.dataset, "ids"):
+                    self.val_dataset_ids = val_dl.dataset.ids
+
     def validation_step(self, batch, batch_idx):
         images, targets = batch
-        predictions = self.model(images)
-        loss, loss_dict = self.criterion(predictions, targets)
 
-        self.log("val/loss", loss, prog_bar=True, sync_dist=True)
-        self.log("val/cls_loss", loss_dict["cls_loss"], sync_dist=True)
-        self.log("val/iou_loss", loss_dict["iou_loss"], sync_dist=True)
-        self.log("val/dfl_loss", loss_dict["dfl_loss"], sync_dist=True)
+        # Model is in eval mode during validation (set by Lightning).
+        # In eval mode, NDFLHeads returns (bboxes, scores) directly.
+        # In train mode, it returns ((decoded, raw)).
+        if self._evaluator is not None:
+            from modern_yolonas.inference.postprocess import postprocess
 
-        return loss
+            pred_bboxes, pred_scores = self.model(images)
+            results = postprocess(
+                pred_bboxes, pred_scores,
+                conf_threshold=self.conf_threshold,
+                iou_threshold=self.iou_threshold,
+            )
+
+            # Resolve image IDs for this batch
+            batch_size = images.shape[0]
+            start_idx = batch_idx * batch_size
+            if self.val_dataset_ids is not None:
+                image_ids = [
+                    self.val_dataset_ids[start_idx + i]
+                    for i in range(batch_size)
+                    if start_idx + i < len(self.val_dataset_ids)
+                ]
+            else:
+                image_ids = list(range(start_idx, start_idx + batch_size))
+
+            boxes_list = [r[0] for r in results]
+            scores_list = [r[1] for r in results]
+            class_ids_list = [r[2] for r in results]
+            self._evaluator.update(image_ids, boxes_list, scores_list, class_ids_list)
+        else:
+            # No mAP evaluator — run model in eval mode and compute loss
+            # by forcing training mode temporarily for loss computation.
+            self.model.train()
+            predictions = self.model(images)
+            loss, loss_dict = self.criterion(predictions, targets)
+            self.model.eval()
+
+            self.log("val/loss", loss, prog_bar=True, sync_dist=True)
+            self.log("val/cls_loss", loss_dict["cls_loss"], sync_dist=True)
+            self.log("val/iou_loss", loss_dict["iou_loss"], sync_dist=True)
+            self.log("val/dfl_loss", loss_dict["dfl_loss"], sync_dist=True)
+
+    def on_validation_epoch_end(self):
+        if self._evaluator is not None:
+            metrics = self._evaluator.evaluate()
+            self.log("val/mAP", metrics["mAP"], prog_bar=True, sync_dist=True)
+            self.log("val/mAP_50", metrics["mAP_50"], sync_dist=True)
+            self.log("val/mAP_75", metrics["mAP_75"], sync_dist=True)
+            self._evaluator = None
 
     def configure_optimizers(self):
         optimizer = create_optimizer(
