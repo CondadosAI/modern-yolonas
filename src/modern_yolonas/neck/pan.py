@@ -59,7 +59,7 @@ class YoloNASUpStage(nn.Module):
         self.conv = Conv(in_ch, out_channels, 1, 1, activation_type)
 
         # ConvTranspose2d for upsampling (matches super-gradients CONV_TRANSPOSE mode)
-        self.upsample = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2, bias=False)
+        self.upsample = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)
 
         if num_inputs == 3:
             downsample_in = out_channels if reduce_channels else skip_in_channels2

@@ -2,16 +2,21 @@
 
 Components:
 - TaskAlignedAssigner: dynamic label assignment
+- ATSSAssigner: static label assignment for warmup epochs
 - VarifocalLoss: classification loss
-- GIoULoss: box regression loss
-- DFLLoss: distribution focal loss
+- GIoULoss: box regression loss (per-element)
+- DFLLoss: distribution focal loss (per-anchor)
 """
 
 from __future__ import annotations
 
+import logging
+
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +44,30 @@ def bbox_iou(box1: Tensor, box2: Tensor, eps: float = 1e-9) -> Tensor:
 
     inter = (inter_x2 - inter_x1).clamp(min=0) * (inter_y2 - inter_y1).clamp(min=0)
     union = area1[:, None] + area2[None, :] - inter
+
+    return inter / (union + eps)
+
+
+def batch_bbox_iou(box1: Tensor, box2: Tensor, eps: float = 1e-9) -> Tensor:
+    """Compute IoU between two batched sets of boxes (x1y1x2y2 format).
+
+    Args:
+        box1: ``[B, N, 4]``
+        box2: ``[B, M, 4]``
+
+    Returns:
+        ``[B, N, M]`` IoU matrix.
+    """
+    area1 = (box1[:, :, 2] - box1[:, :, 0]) * (box1[:, :, 3] - box1[:, :, 1])
+    area2 = (box2[:, :, 2] - box2[:, :, 0]) * (box2[:, :, 3] - box2[:, :, 1])
+
+    inter_x1 = torch.max(box1[:, :, None, 0], box2[:, None, :, 0])
+    inter_y1 = torch.max(box1[:, :, None, 1], box2[:, None, :, 1])
+    inter_x2 = torch.min(box1[:, :, None, 2], box2[:, None, :, 2])
+    inter_y2 = torch.min(box1[:, :, None, 3], box2[:, None, :, 3])
+
+    inter = (inter_x2 - inter_x1).clamp(min=0) * (inter_y2 - inter_y1).clamp(min=0)
+    union = area1[:, :, None] + area2[:, None, :] - inter
 
     return inter / (union + eps)
 
@@ -103,96 +132,211 @@ class TaskAlignedAssigner:
         """
         batch_size = pred_scores.shape[0]
         num_anchors = pred_scores.shape[1]
+        num_classes = pred_scores.shape[2]
         num_max_boxes = gt_bboxes.shape[1]
+        device = pred_scores.device
 
         if num_max_boxes == 0:
-            device = pred_scores.device
             return (
                 torch.full([batch_size, num_anchors], 0, dtype=torch.long, device=device),
                 torch.zeros([batch_size, num_anchors, 4], device=device),
-                torch.zeros([batch_size, num_anchors, pred_scores.shape[-1]], device=device),
+                torch.zeros([batch_size, num_anchors, num_classes], device=device),
                 torch.zeros([batch_size, num_anchors], dtype=torch.bool, device=device),
             )
 
-        # Check which anchors are inside GT boxes
-        # anchor_points: [N, 2], gt_bboxes: [B, M, 4]
-        lt = anchor_points[None, :, None, :] - gt_bboxes[:, None, :, :2]  # [B, N, M, 2]
-        rb = gt_bboxes[:, None, :, 2:] - anchor_points[None, :, None, :]  # [B, N, M, 2]
-        bbox_deltas = torch.cat([lt, rb], dim=-1)  # [B, N, M, 4]
-        mask_in_gts = bbox_deltas.amin(dim=-1) > self.eps  # [B, N, M]
+        # Check which anchors are inside GT boxes: [B, N, M]
+        lt = anchor_points[None, :, None, :] - gt_bboxes[:, None, :, :2]
+        rb = gt_bboxes[:, None, :, 2:] - anchor_points[None, :, None, :]
+        bbox_deltas = torch.cat([lt, rb], dim=-1)
+        mask_in_gts = bbox_deltas.amin(dim=-1) > self.eps
 
-        # Compute alignment metric
-        # Get predicted score for GT class
-        gt_labels_expanded = gt_labels.squeeze(-1).long()  # [B, M]
-
-        # Clamp to valid range
-        gt_labels_clamped = gt_labels_expanded[:, None, :].expand(-1, num_anchors, -1)
-        gt_labels_clamped = gt_labels_clamped.clamp(0, pred_scores.shape[-1] - 1)
+        # GT class labels: [B, M]
+        gt_labels_expanded = gt_labels.squeeze(-1).long()
 
         # Gather predicted scores for GT classes: [B, N, M]
-        pred_scores_for_gt = pred_scores.gather(
-            2,
-            gt_labels_clamped.reshape(batch_size, num_anchors, num_max_boxes)
-            if gt_labels_clamped.ndim == 3
-            else gt_labels_clamped,
-        )
+        gt_labels_for_gather = gt_labels_expanded[:, None, :].expand(-1, num_anchors, -1)
+        gt_labels_for_gather = gt_labels_for_gather.clamp(0, num_classes - 1)
+        pred_scores_for_gt = pred_scores.gather(2, gt_labels_for_gather)
 
-        # IoU between predictions and GTs: [B, N, M]
-        pair_wise_ious = torch.zeros([batch_size, num_anchors, num_max_boxes], device=pred_bboxes.device)
-        for b in range(batch_size):
-            pair_wise_ious[b] = bbox_iou(pred_bboxes[b], gt_bboxes[b])
+        # Batched IoU: [B, N, M]
+        pair_wise_ious = batch_bbox_iou(pred_bboxes, gt_bboxes)
 
-        # Alignment metric
+        # Alignment metric: [B, N, M]
         alignment_metric = pred_scores_for_gt.pow(self.alpha) * pair_wise_ious.pow(self.beta)
         alignment_metric *= mask_in_gts.float()
         alignment_metric *= mask_gt.permute(0, 2, 1).float()
 
-        # Select top-K
-        topk_mask = torch.zeros_like(alignment_metric, dtype=torch.bool)
-        topk_metrics = torch.zeros_like(alignment_metric)
-        for b in range(batch_size):
-            for m in range(num_max_boxes):
-                if mask_gt[b, m, 0] == 0:
-                    continue
-                vals = alignment_metric[b, :, m]
-                k = min(self.topk, (vals > 0).sum().item())
-                if k > 0:
-                    topk_vals, topk_idx = vals.topk(k)
-                    topk_mask[b, topk_idx, m] = True
-                    topk_metrics[b, topk_idx, m] = topk_vals
+        # Vectorized top-K selection
+        alignment_t = alignment_metric.permute(0, 2, 1)  # [B, M, N]
+        k = min(self.topk, num_anchors)
+        _, topk_idx = alignment_t.topk(k, dim=-1)  # [B, M, k]
 
-        # Resolve conflicts: if anchor assigned to multiple GTs, pick highest metric
+        topk_mask_t = torch.zeros_like(alignment_t, dtype=torch.bool)
+        topk_mask_t.scatter_(2, topk_idx, True)
+        topk_mask = topk_mask_t.permute(0, 2, 1)  # [B, N, M]
+
+        topk_mask &= alignment_metric > 0
+        topk_metrics = torch.where(topk_mask, alignment_metric, torch.zeros_like(alignment_metric))
+
+        # Resolve conflicts: pick GT with highest IoU per anchor (matches super-gradients)
         mask_pos = topk_mask  # [B, N, M]
         fg_mask = mask_pos.any(dim=-1)  # [B, N]
+        masked_ious_for_conflict = torch.where(mask_pos, pair_wise_ious, torch.zeros_like(pair_wise_ious))
+        _, max_gt_idx = masked_ious_for_conflict.max(dim=-1)  # [B, N]
 
-        # For each positive anchor, pick the GT with highest metric
-        max_metric, max_gt_idx = topk_metrics.max(dim=-1)  # [B, N]
+        # Vectorized assignment using gather
+        assigned_labels = torch.gather(gt_labels_expanded, 1, max_gt_idx)
+        assigned_labels *= fg_mask.long()
 
-        # Assigned labels and bboxes
-        assigned_labels = torch.zeros([batch_size, num_anchors], dtype=torch.long, device=pred_scores.device)
-        assigned_bboxes = torch.zeros([batch_size, num_anchors, 4], device=pred_scores.device)
-        assigned_scores = torch.zeros_like(pred_scores)
+        gt_idx_for_bboxes = max_gt_idx.unsqueeze(-1).expand(-1, -1, 4)
+        assigned_bboxes = torch.gather(gt_bboxes, 1, gt_idx_for_bboxes)
+        assigned_bboxes *= fg_mask.unsqueeze(-1).float()
 
-        for b in range(batch_size):
-            fg = fg_mask[b]
-            if fg.any():
-                gt_idx = max_gt_idx[b, fg]
-                assigned_labels[b, fg] = gt_labels_expanded[b, gt_idx]
-                assigned_bboxes[b, fg] = gt_bboxes[b, gt_idx]
+        # Score normalization — vectorized over batch, loop over M only
+        masked_ious = torch.where(mask_pos, pair_wise_ious, torch.zeros_like(pair_wise_ious))
+        max_iou_per_gt = masked_ious.amax(dim=1)  # [B, M]
+        max_metric_per_gt = topk_metrics.amax(dim=1)  # [B, M]
+        norm_metrics = topk_metrics / (max_metric_per_gt.unsqueeze(1) + self.eps) * max_iou_per_gt.unsqueeze(1)
 
-                # Normalize assigned scores by max alignment metric per GT
-                for m in range(num_max_boxes):
-                    pos_m = mask_pos[b, :, m]
-                    if pos_m.any():
-                        max_iou = pair_wise_ious[b, pos_m, m].max()
-                        max_metric_m = topk_metrics[b, pos_m, m].max()
-                        if max_metric_m > 0:
-                            norm_metric = topk_metrics[b, :, m] / (max_metric_m + self.eps) * max_iou
-                            assigned_scores[b, :, gt_labels_expanded[b, m]] = torch.where(
-                                mask_pos[b, :, m],
-                                torch.max(assigned_scores[b, :, gt_labels_expanded[b, m]], norm_metric),
-                                assigned_scores[b, :, gt_labels_expanded[b, m]],
-                            )
+        assigned_scores = torch.zeros([batch_size, num_anchors, num_classes], device=device)
+        for m in range(num_max_boxes):
+            pos_m = mask_pos[:, :, m]  # [B, N]
+            if not pos_m.any():
+                continue
+            class_idx = gt_labels_expanded[:, m].unsqueeze(1).expand(-1, num_anchors).unsqueeze(-1)  # [B, N, 1]
+            current = assigned_scores.gather(2, class_idx).squeeze(-1)  # [B, N]
+            updated = torch.where(pos_m, torch.max(current, norm_metrics[:, :, m]), current)
+            assigned_scores.scatter_(2, class_idx, updated.unsqueeze(-1))
+
+        return assigned_labels, assigned_bboxes, assigned_scores, fg_mask
+
+
+# ---------------------------------------------------------------------------
+# ATSS Assigner (static warmup)
+# ---------------------------------------------------------------------------
+
+
+class ATSSAssigner:
+    """Adaptive Training Sample Selection assigner for warmup epochs.
+
+    Selects positive anchors based on center distance and IoU statistics,
+    providing more stable assignments than TAL when predictions are poor.
+    """
+
+    def __init__(self, topk: int = 9):
+        self.topk = topk
+
+    @torch.no_grad()
+    def assign(
+        self,
+        anchor_bboxes: Tensor,
+        num_anchors_list: list[int],
+        gt_labels: Tensor,
+        gt_bboxes: Tensor,
+        mask_gt: Tensor,
+        num_classes: int,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Assign ground truths to anchors using ATSS.
+
+        Args:
+            anchor_bboxes: ``[N, 4]`` anchor boxes (from grid cell generation).
+            num_anchors_list: Number of anchors per stride level.
+            gt_labels: ``[B, M, 1]`` class labels.
+            gt_bboxes: ``[B, M, 4]`` ground truth boxes (x1y1x2y2).
+            mask_gt: ``[B, M, 1]`` valid GT mask.
+            num_classes: Number of object classes.
+
+        Returns:
+            assigned_labels, assigned_bboxes, assigned_scores, fg_mask
+        """
+        batch_size = gt_labels.shape[0]
+        num_anchors = anchor_bboxes.shape[0]
+        num_max_boxes = gt_bboxes.shape[1]
+        device = gt_labels.device
+
+        if num_max_boxes == 0:
+            return (
+                torch.zeros([batch_size, num_anchors], dtype=torch.long, device=device),
+                torch.zeros([batch_size, num_anchors, 4], device=device),
+                torch.zeros([batch_size, num_anchors, num_classes], device=device),
+                torch.zeros([batch_size, num_anchors], dtype=torch.bool, device=device),
+            )
+
+        gt_labels_expanded = gt_labels.squeeze(-1).long()  # [B, M]
+
+        # Anchor and GT centers
+        anchor_centers = (anchor_bboxes[:, :2] + anchor_bboxes[:, 2:]) / 2  # [N, 2]
+        gt_centers = (gt_bboxes[:, :, :2] + gt_bboxes[:, :, 2:]) / 2  # [B, M, 2]
+
+        # L2 distances: [B, N, M]
+        distances = torch.cdist(
+            anchor_centers.unsqueeze(0).expand(batch_size, -1, -1), gt_centers
+        )
+
+        # Per-stride topk closest anchors for each GT
+        candidate_mask = torch.zeros(
+            [batch_size, num_anchors, num_max_boxes], dtype=torch.bool, device=device
+        )
+        start = 0
+        for level_n in num_anchors_list:
+            end = start + level_n
+            level_dists = distances[:, start:end, :]  # [B, level_n, M]
+            k = min(self.topk, level_n)
+            _, topk_idx = level_dists.topk(k, dim=1, largest=False)  # [B, k, M]
+            level_mask = torch.zeros(
+                [batch_size, level_n, num_max_boxes], dtype=torch.bool, device=device
+            )
+            level_mask.scatter_(1, topk_idx, True)
+            candidate_mask[:, start:end, :] = level_mask
+            start = end
+
+        # IoU between anchor boxes and GTs: [B, N, M]
+        ious = batch_bbox_iou(
+            anchor_bboxes.unsqueeze(0).expand(batch_size, -1, -1), gt_bboxes
+        )
+
+        # IoU-based adaptive threshold per GT: mean + std of candidate IoUs
+        candidate_ious = ious * candidate_mask.float()
+        candidate_count = candidate_mask.float().sum(dim=1).clamp(min=1)  # [B, M]
+        candidate_mean = candidate_ious.sum(dim=1) / candidate_count  # [B, M]
+        candidate_sq_mean = (candidate_ious.pow(2) * candidate_mask.float()).sum(dim=1) / candidate_count
+        candidate_std = (candidate_sq_mean - candidate_mean.pow(2)).clamp(min=0).sqrt()
+        iou_threshold = candidate_mean + candidate_std  # [B, M]
+
+        # Positive: candidate AND IoU >= threshold AND center inside GT
+        is_pos = candidate_mask & (ious >= iou_threshold.unsqueeze(1))
+
+        ac = anchor_centers  # [N, 2]
+        center_in_gt = (
+            (ac[None, :, None, 0] >= gt_bboxes[:, None, :, 0])
+            & (ac[None, :, None, 0] <= gt_bboxes[:, None, :, 2])
+            & (ac[None, :, None, 1] >= gt_bboxes[:, None, :, 1])
+            & (ac[None, :, None, 1] <= gt_bboxes[:, None, :, 3])
+        )
+        is_pos &= center_in_gt
+        is_pos &= mask_gt.permute(0, 2, 1).bool()
+
+        # Resolve conflicts: pick GT with highest IoU
+        fg_mask = is_pos.any(dim=-1)  # [B, N]
+        pos_ious = torch.where(is_pos, ious, torch.zeros_like(ious))
+        _, max_gt_idx = pos_ious.max(dim=-1)  # [B, N]
+
+        # Gather assignments
+        assigned_labels = torch.gather(gt_labels_expanded, 1, max_gt_idx)
+        assigned_labels *= fg_mask.long()
+
+        gt_idx_for_bboxes = max_gt_idx.unsqueeze(-1).expand(-1, -1, 4)
+        assigned_bboxes = torch.gather(gt_bboxes, 1, gt_idx_for_bboxes)
+        assigned_bboxes *= fg_mask.unsqueeze(-1).float()
+
+        # Assigned scores: IoU-based soft labels
+        assigned_ious = torch.gather(ious, 2, max_gt_idx.unsqueeze(-1)).squeeze(-1)
+        assigned_ious *= fg_mask.float()
+
+        assigned_scores = torch.zeros([batch_size, num_anchors, num_classes], device=device)
+        class_idx = assigned_labels.unsqueeze(-1)  # [B, N, 1]
+        assigned_scores.scatter_(2, class_idx, assigned_ious.unsqueeze(-1))
+        assigned_scores *= fg_mask.unsqueeze(-1).float()
 
         return assigned_labels, assigned_bboxes, assigned_scores, fg_mask
 
@@ -224,13 +368,16 @@ class VarifocalLoss(nn.Module):
 
 
 class GIoULoss(nn.Module):
-    """Generalized IoU loss."""
+    """Generalized IoU loss. Returns per-element loss (no reduction)."""
 
     def forward(self, pred_bboxes: Tensor, target_bboxes: Tensor) -> Tensor:
         """
         Args:
             pred_bboxes: ``[N, 4]`` x1y1x2y2.
             target_bboxes: ``[N, 4]`` x1y1x2y2.
+
+        Returns:
+            ``[N]`` per-element GIoU loss.
         """
         # Intersection
         inter_x1 = torch.max(pred_bboxes[:, 0], target_bboxes[:, 0])
@@ -254,18 +401,25 @@ class GIoULoss(nn.Module):
         enc_area = (enc_x2 - enc_x1) * (enc_y2 - enc_y1)
 
         giou = iou - (enc_area - union) / (enc_area + 1e-9)
-        return (1.0 - giou).mean()
+        return 1.0 - giou
 
 
 class DFLLoss(nn.Module):
-    """Distribution Focal Loss for fine-grained box regression."""
+    """Distribution Focal Loss for fine-grained box regression.
+
+    Returns per-anchor loss (averaged over 4 coordinates).
+    """
 
     def forward(self, pred_dist: Tensor, target: Tensor) -> Tensor:
         """
         Args:
             pred_dist: ``[N, 4*(reg_max+1)]`` raw distribution predictions.
             target: ``[N, 4]`` target distances (float, in [0, reg_max] range).
+
+        Returns:
+            ``[N]`` per-anchor DFL loss (averaged over 4 coords).
         """
+        num_anchors = pred_dist.shape[0]
         reg_max = pred_dist.shape[-1] // 4 - 1
         pred_dist = pred_dist.reshape(-1, reg_max + 1)
         target = target.reshape(-1)
@@ -279,7 +433,7 @@ class DFLLoss(nn.Module):
             F.cross_entropy(pred_dist, target_left, reduction="none") * weight_left
             + F.cross_entropy(pred_dist, target_right, reduction="none") * weight_right
         )
-        return loss.mean()
+        return loss.reshape(num_anchors, 4).mean(dim=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +446,11 @@ class PPYoloELoss(nn.Module):
 
     Components:
     - VarifocalLoss (classification)
-    - GIoULoss (box regression)
-    - DFLLoss (distribution focal loss)
+    - GIoULoss (box regression, weighted by assigned scores)
+    - DFLLoss (distribution focal loss, weighted by assigned scores)
 
     Weighted sum: cls_weight * vfl + iou_weight * giou + dfl_weight * dfl
+    All terms normalized by ``assigned_scores_sum`` (matching super-gradients).
 
     Args:
         num_classes: Number of object classes.
@@ -303,6 +458,7 @@ class PPYoloELoss(nn.Module):
         cls_weight: Classification loss weight.
         iou_weight: Box regression loss weight.
         dfl_weight: Distribution focal loss weight.
+        static_assigner_epochs: Use ATSS for the first N epochs (0 to disable).
     """
 
     def __init__(
@@ -312,6 +468,7 @@ class PPYoloELoss(nn.Module):
         cls_weight: float = 1.0,
         iou_weight: float = 2.5,
         dfl_weight: float = 0.5,
+        static_assigner_epochs: int = 4,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -319,8 +476,10 @@ class PPYoloELoss(nn.Module):
         self.cls_weight = cls_weight
         self.iou_weight = iou_weight
         self.dfl_weight = dfl_weight
+        self.static_assigner_epochs = static_assigner_epochs
 
         self.assigner = TaskAlignedAssigner()
+        self.static_assigner = ATSSAssigner(topk=9) if static_assigner_epochs > 0 else None
         self.vfl = VarifocalLoss()
         self.giou_loss = GIoULoss()
         self.dfl_loss = DFLLoss()
@@ -336,6 +495,8 @@ class PPYoloELoss(nn.Module):
         self,
         predictions: tuple,
         targets: Tensor,
+        input_size: tuple[int, int] | None = None,
+        epoch: int | None = None,
     ) -> tuple[Tensor, dict[str, float]]:
         """Compute loss.
 
@@ -345,6 +506,8 @@ class PPYoloELoss(nn.Module):
                 raw_predictions: ``(cls_logits [B,N,C], reg_distri [B,N,4*(reg_max+1)],
                                    anchors, anchor_points, num_anchors_list, stride_tensor)``
             targets: ``[sum(N_i), 6]`` with ``[batch_idx, class_id, x, y, w, h]`` (normalized xywh).
+            input_size: ``(H, W)`` of the input image. If None, inferred from anchor grid.
+            epoch: Current training epoch (used for ATSS warmup).
 
         Returns:
             (total_loss, loss_dict)
@@ -361,6 +524,25 @@ class PPYoloELoss(nn.Module):
         batch_size = cls_logits.shape[0]
         device = cls_logits.device
 
+        # Determine input image size for scaling normalized GT to pixel coords
+        if input_size is not None:
+            img_h, img_w = input_size[0], input_size[1]
+        else:
+            inferred = (anchor_points.max(dim=0).values + stride_tensor.min() / 2).clamp(min=1)
+            img_w, img_h = inferred[0], inferred[1]
+
+        # Validate GT class labels
+        if targets.numel() > 0:
+            class_ids = targets[:, 1]
+            if (class_ids < 0).any() or (class_ids >= self.num_classes).any():
+                logger.warning(
+                    "GT class labels out of range [0, %d): min=%d, max=%d. "
+                    "Check your dataset labels.",
+                    self.num_classes,
+                    int(class_ids.min().item()),
+                    int(class_ids.max().item()),
+                )
+
         # Prepare GT in format expected by assigner
         gt_labels_list = []
         gt_bboxes_list = []
@@ -368,14 +550,10 @@ class PPYoloELoss(nn.Module):
             mask = targets[:, 0] == b
             if mask.any():
                 t = targets[mask]
-                gt_labels_list.append(t[:, 1:2])  # [N_b, 1]
-                # Convert normalized xywh to pixel x1y1x2y2
+                gt_labels_list.append(t[:, 1:2])
                 xc, yc, w, h = t[:, 2], t[:, 3], t[:, 4], t[:, 5]
-                # These are normalized; scale by stride_tensor range
-                # Actually we need image size — but we work in feature-map coords
-                # The pred_bboxes_decoded are already in input-image pixel coords
-                # So we convert GT to pixel coords assuming 640x640 (standard)
-                # This is handled by the dataloader / collation to provide pixel-coords targets
+                xc, w = xc * img_w, w * img_w
+                yc, h = yc * img_h, h * img_h
                 gt_bboxes_list.append(torch.stack([
                     xc - w / 2, yc - h / 2, xc + w / 2, yc + h / 2
                 ], dim=-1))
@@ -383,7 +561,6 @@ class PPYoloELoss(nn.Module):
                 gt_labels_list.append(torch.zeros(0, 1, device=device))
                 gt_bboxes_list.append(torch.zeros(0, 4, device=device))
 
-        # Pad to max GT count
         max_gt = max(len(g) for g in gt_labels_list)
         if max_gt == 0:
             zero_loss = torch.tensor(0.0, device=device, requires_grad=True)
@@ -400,44 +577,49 @@ class PPYoloELoss(nn.Module):
                 gt_bboxes[b, :n] = gt_bboxes_list[b]
                 mask_gt[b, :n] = 1.0
 
-        # Run assigner
-        assigned_labels, assigned_bboxes, assigned_scores, fg_mask = self.assigner.assign(
-            pred_scores_decoded,
-            pred_bboxes_decoded,
-            anchor_points,
-            gt_labels,
-            gt_bboxes,
-            mask_gt,
+        # Select assigner: ATSS for warmup, TAL after
+        use_static = (
+            self.static_assigner is not None
+            and epoch is not None
+            and epoch < self.static_assigner_epochs
         )
 
-        num_pos = fg_mask.sum().clamp(min=1).item()
+        if use_static:
+            assigned_labels, assigned_bboxes, assigned_scores, fg_mask = self.static_assigner.assign(
+                anchors, num_anchors_list, gt_labels, gt_bboxes, mask_gt, self.num_classes
+            )
+        else:
+            assigned_labels, assigned_bboxes, assigned_scores, fg_mask = self.assigner.assign(
+                pred_scores_decoded, pred_bboxes_decoded, anchor_points,
+                gt_labels, gt_bboxes, mask_gt,
+            )
+
+        # Normalization: sum of assigned soft scores (matches super-gradients)
+        assigned_scores_sum = assigned_scores.sum().clamp(min=1)
 
         # Classification loss (VFL)
-        one_hot = torch.zeros_like(cls_logits)
-        for b in range(batch_size):
-            fg = fg_mask[b]
-            if fg.any():
-                one_hot[b, fg] = assigned_scores[b, fg]
+        cls_loss = self.vfl(cls_logits, assigned_scores, (assigned_scores > 0).float()) / assigned_scores_sum
 
-        cls_loss = self.vfl(cls_logits, assigned_scores, (assigned_scores > 0).float()) / num_pos
-
-        # Box regression loss (GIoU) — only on positive anchors
+        # Box regression loss (GIoU) — weighted by per-anchor assigned scores
         if fg_mask.any():
             pos_pred_bboxes = pred_bboxes_decoded[fg_mask]
             pos_target_bboxes = assigned_bboxes[fg_mask]
-            iou_loss = self.giou_loss(pos_pred_bboxes, pos_target_bboxes)
+            bbox_weight = assigned_scores[fg_mask].sum(-1)  # [num_pos]
+            iou_loss_per_anchor = self.giou_loss(pos_pred_bboxes, pos_target_bboxes)  # [num_pos]
+            iou_loss = (iou_loss_per_anchor * bbox_weight).sum() / assigned_scores_sum
         else:
             iou_loss = torch.tensor(0.0, device=device)
 
-        # DFL loss — only on positive anchors
+        # DFL loss — weighted by per-anchor assigned scores
         if fg_mask.any():
-            pos_reg_distri = reg_distri[fg_mask]  # [num_pos, 4*(reg_max+1)]
-            pos_anchor_points = anchor_points.unsqueeze(0).expand(batch_size, -1, -1)[fg_mask]  # [num_pos, 2]
-            pos_stride = stride_tensor.unsqueeze(0).expand(batch_size, -1, -1)[fg_mask]  # [num_pos, 1]
-            pos_target_bboxes = assigned_bboxes[fg_mask] / pos_stride  # Normalize to feature-map scale
-            pos_anchor_points_scaled = pos_anchor_points / pos_stride.squeeze(-1)
+            pos_reg_distri = reg_distri[fg_mask]
+            pos_anchor_points = anchor_points.unsqueeze(0).expand(batch_size, -1, -1)[fg_mask]
+            pos_stride = stride_tensor.unsqueeze(0).expand(batch_size, -1, -1)[fg_mask]
+            pos_target_bboxes = assigned_bboxes[fg_mask] / pos_stride
+            pos_anchor_points_scaled = pos_anchor_points / pos_stride
             target_dist = self._bbox2dist(pos_anchor_points_scaled, pos_target_bboxes)
-            dfl_loss = self.dfl_loss(pos_reg_distri, target_dist)
+            dfl_loss_per_anchor = self.dfl_loss(pos_reg_distri, target_dist)  # [num_pos]
+            dfl_loss = (dfl_loss_per_anchor * bbox_weight).sum() / assigned_scores_sum
         else:
             dfl_loss = torch.tensor(0.0, device=device)
 

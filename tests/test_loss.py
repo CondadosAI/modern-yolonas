@@ -48,9 +48,10 @@ class TestLossComponents:
         loss_fn = DFLLoss()
         pred = torch.randn(10, 4 * 17, requires_grad=True)  # reg_max=16
         target = torch.rand(10, 4) * 15  # targets in [0, 15]
-        loss = loss_fn(pred, target)
-        loss.backward()
-        assert loss.item() >= 0
+        loss = loss_fn(pred, target)  # [10] per-anchor
+        assert loss.shape == (10,)
+        loss.sum().backward()
+        assert loss.min().item() >= 0
 
 
 class TestPPYoloELoss:

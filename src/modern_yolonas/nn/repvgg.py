@@ -207,6 +207,10 @@ class QARepVGGBlock(nn.Module):
     def partial_fusion(self):
         if self.partially_fused:
             return
+        if self.fully_fused:
+            raise NotImplementedError(
+                "QARepVGGBlock can't be converted to partially fused from fully fused"
+            )
         kernel, bias = self._get_equivalent_kernel_bias_for_branches()
         self.rbr_reparam.weight.data = kernel
         self.rbr_reparam.bias.data = bias
@@ -224,8 +228,18 @@ class QARepVGGBlock(nn.Module):
         self.fully_fused = False
 
     def full_fusion(self):
+        """Fuse all branches including post_bn into a single conv.
+
+        This is an inference-only operation — all parameters are detached
+        from the computation graph afterward. Do not call during training.
+        """
         if self.fully_fused:
             return
+        if self.training:
+            raise RuntimeError(
+                "full_fusion() disables gradient tracking and must not be called "
+                "during training. Call model.eval() first."
+            )
         if not self.partially_fused:
             self.partial_fusion()
         if self.use_post_bn:

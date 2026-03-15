@@ -31,6 +31,14 @@ class YoloNAS(nn.Module):
         self.backbone = backbone
         self.neck = neck
         self.heads = heads
+        self._init_bn()
+
+    def _init_bn(self, eps: float = 1e-3, momentum: float = 0.03):
+        """Apply super-gradients-compatible BatchNorm settings globally."""
+        for m in self.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eps = eps
+                m.momentum = momentum
 
     def forward(self, x: Tensor):
         features = self.backbone(x)

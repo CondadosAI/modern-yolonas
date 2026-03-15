@@ -33,6 +33,8 @@ _LICENSE_WARNING = (
 
 
 def _download(variant: str) -> Path:
+    if variant not in WEIGHT_URLS:
+        raise ValueError(f"Unknown variant: {variant!r}. Must be one of {list(WEIGHT_URLS)}")
     url = WEIGHT_URLS[variant]
     filename = url.rsplit("/", 1)[-1]
     dest = CACHE_DIR / filename
@@ -41,7 +43,13 @@ def _download(variant: str) -> Path:
         return dest
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {variant} weights from {url} ...")
-    urlretrieve(url, dest)
+    try:
+        urlretrieve(url, dest)
+    except Exception as exc:
+        # Clean up partial download
+        if dest.exists():
+            dest.unlink()
+        raise RuntimeError(f"Failed to download {variant} weights from {url}") from exc
     return dest
 
 
@@ -72,13 +80,19 @@ def remap_state_dict(raw_sd: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]
     return remapped
 
 
-def load_pretrained(model: nn.Module, variant: str, strict: bool = True) -> nn.Module:
+def load_pretrained(
+    model: nn.Module,
+    variant: str,
+    strict: bool = True,
+    prefer_ema: bool = False,
+) -> nn.Module:
     """Download checkpoint and load into model.
 
     Args:
         model: A ``YoloNAS`` instance (or any nn.Module with matching keys).
         variant: One of ``"yolo_nas_s"``, ``"yolo_nas_m"``, ``"yolo_nas_l"``.
         strict: Whether to require exact key matching (default True).
+        prefer_ema: If True, load EMA weights when available (often better quality).
 
     Returns:
         The model with loaded weights.
@@ -87,7 +101,9 @@ def load_pretrained(model: nn.Module, variant: str, strict: bool = True) -> nn.M
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
 
     # super-gradients checkpoints may wrap the state_dict
-    if "net" in checkpoint:
+    if prefer_ema and "ema_net" in checkpoint:
+        raw_sd = checkpoint["ema_net"]
+    elif "net" in checkpoint:
         raw_sd = checkpoint["net"]
     elif "state_dict" in checkpoint:
         raw_sd = checkpoint["state_dict"]

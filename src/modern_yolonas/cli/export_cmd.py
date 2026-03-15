@@ -37,10 +37,9 @@ def export(
     console = Console()
 
     if output is None:
-        if target == "frigate":
-            output = "model_frigate.xml" if export_format == "openvino" else "model_frigate.onnx"
-        else:
-            output = "model.xml" if export_format == "openvino" else "model.onnx"
+        ext = "xml" if export_format == "openvino" else "onnx"
+        suffix = "_frigate" if target == "frigate" else ""
+        output = f"{model}{suffix}.{ext}"
 
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
     console.print(f"Loading {model}...")

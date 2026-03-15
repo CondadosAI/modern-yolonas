@@ -36,7 +36,8 @@ class Detection:
         import cv2
 
         img = self.visualize(class_names)
-        cv2.imwrite(str(path), img)
+        if not cv2.imwrite(str(path), img):
+            raise IOError(f"Failed to save image to {path}. Check the path and directory exist.")
 
 
 class Detector:
@@ -60,9 +61,10 @@ class Detector:
         model: str = "yolo_nas_s",
         device: str | torch.device = "cuda" if torch.cuda.is_available() else "cpu",
         conf_threshold: float = 0.25,
-        iou_threshold: float = 0.45,
+        iou_threshold: float = 0.7,
         input_size: int = 640,
         pretrained: bool = True,
+        multi_label: bool = True,
     ):
         from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
 
@@ -78,6 +80,7 @@ class Detector:
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.input_size = input_size
+        self.multi_label = multi_label
 
         self.model = builders[model](pretrained=pretrained).to(self.device)
         self.model.eval()
@@ -114,7 +117,7 @@ class Detector:
 
         conf = conf_threshold if conf_threshold is not None else self.conf_threshold
         iou = iou_threshold if iou_threshold is not None else self.iou_threshold
-        results = postprocess(pred_bboxes, pred_scores, conf, iou)
+        results = postprocess(pred_bboxes, pred_scores, conf, iou, multi_label=self.multi_label)
 
         boxes, scores, class_ids = results[0]
         boxes = rescale_boxes(boxes, scale, pad, image.shape[:2])
@@ -206,6 +209,8 @@ class Detector:
 
         fourcc = cv2.VideoWriter_fourcc(*codec)
         writer = cv2.VideoWriter(str(output), fourcc, fps, (w, h))
+        if not writer.isOpened():
+            raise RuntimeError(f"Failed to create video writer for {output} with codec '{codec}'")
 
         frame_idx = 0
         processed = 0

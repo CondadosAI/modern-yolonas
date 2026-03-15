@@ -13,26 +13,26 @@ class TestPreprocess:
         img = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
         padded, scale, pad = letterbox(img, 640)
         assert padded.shape == (640, 640, 3)
-        assert scale == 1.0
-        assert pad == (0, 0)
+        # rescale_size=636 by default, so scale = 636/640
+        assert scale == pytest.approx(636 / 640, abs=1e-4)
 
     def test_letterbox_landscape(self):
         img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
         padded, scale, pad = letterbox(img, 640)
         assert padded.shape == (640, 640, 3)
-        assert scale == 1.0
+        assert scale == pytest.approx(636 / 640, abs=1e-4)
 
     def test_letterbox_portrait(self):
         img = np.random.randint(0, 255, (640, 480, 3), dtype=np.uint8)
         padded, scale, pad = letterbox(img, 640)
         assert padded.shape == (640, 640, 3)
-        assert scale == 1.0
+        assert scale == pytest.approx(636 / 640, abs=1e-4)
 
     def test_letterbox_small(self):
         img = np.random.randint(0, 255, (200, 300, 3), dtype=np.uint8)
         padded, scale, pad = letterbox(img, 640)
         assert padded.shape == (640, 640, 3)
-        assert scale == pytest.approx(640 / 300, abs=0.01)
+        assert scale == pytest.approx(636 / 300, abs=0.01)
 
     def test_preprocess_output(self):
         img = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)

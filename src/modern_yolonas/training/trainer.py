@@ -118,7 +118,11 @@ class Trainer:
 
                 with torch.amp.autocast("cuda", enabled=self.use_amp):
                     predictions = self.model(images)
-                    loss, loss_dict = self.criterion(predictions, targets)
+                    loss, loss_dict = self.criterion(
+                        predictions, targets,
+                        input_size=(images.shape[2], images.shape[3]),
+                        epoch=epoch,
+                    )
 
                 # Backward
                 self.optimizer.zero_grad()
@@ -197,7 +201,7 @@ class Trainer:
 
     def resume(self, checkpoint_path: str | Path):
         """Resume training from checkpoint."""
-        ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
 
         raw_model = self.model.module if isinstance(self.model, DDP) else self.model
         raw_model.load_state_dict(ckpt["model_state_dict"])
