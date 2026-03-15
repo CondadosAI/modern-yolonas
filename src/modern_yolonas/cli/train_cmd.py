@@ -2,37 +2,37 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
+from typing import Annotated
 
-import click
+import typer
 
 
-@click.command()
-@click.option("--model", default="yolo_nas_s", type=click.Choice(["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"]))
-@click.option("--data", required=True, help="Path to dataset root.")
-@click.option("--format", "data_format", default="yolo", type=click.Choice(["yolo", "coco"]))
-@click.option("--epochs", default=300, help="Number of training epochs.")
-@click.option("--batch-size", default=32, help="Batch size per GPU.")
-@click.option("--lr", default=2e-4, help="Learning rate.")
-@click.option("--device", default="cuda", help="Device.")
-@click.option("--output", default="runs/train", help="Output directory.")
-@click.option("--resume", "resume_path", default=None, help="Checkpoint path to resume from.")
-@click.option("--input-size", default=640, help="Model input size.")
-@click.option("--workers", default=8, help="DataLoader workers.")
-@click.option("--pretrained/--no-pretrained", default=True, help="Use pretrained COCO weights.")
+class ModelName(str, Enum):
+    yolo_nas_s = "yolo_nas_s"
+    yolo_nas_m = "yolo_nas_m"
+    yolo_nas_l = "yolo_nas_l"
+
+
+class DataFormat(str, Enum):
+    yolo = "yolo"
+    coco = "coco"
+
+
 def train(
-    model: str,
-    data: str,
-    data_format: str,
-    epochs: int,
-    batch_size: int,
-    lr: float,
-    device: str,
-    output: str,
-    resume_path: str | None,
-    input_size: int,
-    workers: int,
-    pretrained: bool,
+    data: Annotated[str, typer.Option(help="Path to dataset root.")],
+    model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    data_format: Annotated[DataFormat, typer.Option("--format", help="Dataset format.")] = DataFormat.yolo,
+    epochs: Annotated[int, typer.Option(help="Number of training epochs.")] = 300,
+    batch_size: Annotated[int, typer.Option(help="Batch size per GPU.")] = 32,
+    lr: Annotated[float, typer.Option(help="Learning rate.")] = 2e-4,
+    device: Annotated[str, typer.Option(help="Device.")] = "cuda",
+    output: Annotated[str, typer.Option(help="Output directory.")] = "runs/train",
+    resume_path: Annotated[str | None, typer.Option("--resume", help="Checkpoint path to resume from.")] = None,
+    input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
+    workers: Annotated[int, typer.Option(help="DataLoader workers.")] = 8,
+    pretrained: Annotated[bool, typer.Option("--pretrained/--no-pretrained", help="Use pretrained COCO weights.")] = True,
 ):
     """Train a YOLO-NAS model."""
     from rich.console import Console
@@ -44,12 +44,10 @@ def train(
 
     console = Console()
 
-    # Build model
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
-    console.print(f"Building {model} (pretrained={pretrained})...")
-    yolo_model = builders[model](pretrained=pretrained)
+    console.print(f"Building {model.value} (pretrained={pretrained})...")
+    yolo_model = builders[model.value](pretrained=pretrained)
 
-    # Build dataset
     transforms = Compose([
         HSVAugment(),
         HorizontalFlip(),
@@ -58,7 +56,7 @@ def train(
         Normalize(),
     ])
 
-    if data_format == "yolo":
+    if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
         from torch.utils.data import DataLoader
 
@@ -97,7 +95,6 @@ def train(
 
     console.print(f"Train: {len(train_dataset)} images, Val: {len(val_dataset)} images")
 
-    # Trainer
     trainer = Trainer(
         model=yolo_model,
         train_loader=train_loader,

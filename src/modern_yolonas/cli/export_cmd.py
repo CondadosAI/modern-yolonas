@@ -2,31 +2,39 @@
 
 from __future__ import annotations
 
-import click
+from enum import Enum
+from typing import Annotated
+
+import typer
 
 
-@click.command()
-@click.option("--model", default="yolo_nas_s", type=click.Choice(["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"]))
-@click.option("--format", "export_format", default="onnx", type=click.Choice(["onnx", "openvino"]))
-@click.option("--output", default=None, help="Output file path (default: model.onnx or model.xml).")
-@click.option("--input-size", default=640, help="Model input size.")
-@click.option("--opset", default=17, help="ONNX opset version.")
-@click.option("--checkpoint", default=None, help="Custom checkpoint path.")
-@click.option("--target", default="generic", type=click.Choice(["generic", "frigate"]), help="Export target.")
-@click.option("--conf-threshold", default=0.25, help="Confidence threshold (frigate target).")
-@click.option("--iou-threshold", default=0.45, help="IoU threshold for NMS (frigate target).")
-@click.option("--max-detections", default=20, help="Max detections per image (frigate target).")
+class ModelName(str, Enum):
+    yolo_nas_s = "yolo_nas_s"
+    yolo_nas_m = "yolo_nas_m"
+    yolo_nas_l = "yolo_nas_l"
+
+
+class ExportFormat(str, Enum):
+    onnx = "onnx"
+    openvino = "openvino"
+
+
+class ExportTarget(str, Enum):
+    generic = "generic"
+    frigate = "frigate"
+
+
 def export(
-    model: str,
-    export_format: str,
-    output: str | None,
-    input_size: int,
-    opset: int,
-    checkpoint: str | None,
-    target: str,
-    conf_threshold: float,
-    iou_threshold: float,
-    max_detections: int,
+    model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    export_format: Annotated[ExportFormat, typer.Option("--format", help="Export format.")] = ExportFormat.onnx,
+    output: Annotated[str | None, typer.Option(help="Output file path.")] = None,
+    input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
+    opset: Annotated[int, typer.Option(help="ONNX opset version.")] = 17,
+    checkpoint: Annotated[str | None, typer.Option(help="Custom checkpoint path.")] = None,
+    target: Annotated[ExportTarget, typer.Option(help="Export target.")] = ExportTarget.generic,
+    conf_threshold: Annotated[float, typer.Option(help="Confidence threshold (frigate target).")] = 0.25,
+    iou_threshold: Annotated[float, typer.Option(help="IoU threshold for NMS (frigate target).")] = 0.45,
+    max_detections: Annotated[int, typer.Option(help="Max detections per image (frigate target).")] = 20,
 ):
     """Export model to ONNX or OpenVINO format."""
     import torch
@@ -37,33 +45,32 @@ def export(
     console = Console()
 
     if output is None:
-        ext = "xml" if export_format == "openvino" else "onnx"
-        suffix = "_frigate" if target == "frigate" else ""
-        output = f"{model}{suffix}.{ext}"
+        ext = "xml" if export_format == ExportFormat.openvino else "onnx"
+        suffix = "_frigate" if target == ExportTarget.frigate else ""
+        output = f"{model.value}{suffix}.{ext}"
 
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
-    console.print(f"Loading {model}...")
+    console.print(f"Loading {model.value}...")
 
     if checkpoint:
-        yolo_model = builders[model](pretrained=False)
+        yolo_model = builders[model.value](pretrained=False)
         ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
         sd = ckpt.get("model_state_dict", ckpt)
         yolo_model.load_state_dict(sd)
     else:
-        yolo_model = builders[model](pretrained=True)
+        yolo_model = builders[model.value](pretrained=True)
 
     yolo_model.eval()
 
-    # Fuse RepVGG blocks for deployment
     for module in yolo_model.modules():
         if hasattr(module, "fuse_block_residual_branches"):
             module.fuse_block_residual_branches()
 
     dummy = torch.randn(1, 3, input_size, input_size)
 
-    if target == "frigate":
+    if target == ExportTarget.frigate:
         _export_frigate(yolo_model, dummy, output, export_format, opset, conf_threshold, iou_threshold, max_detections, console)
-    elif export_format == "openvino":
+    elif export_format == ExportFormat.openvino:
         import openvino as ov
 
         console.print("Exporting to OpenVINO IR...")
@@ -110,7 +117,7 @@ def _export_frigate(yolo_model, dummy, output, export_format, opset, conf_thresh
             opset_version=opset,
         )
 
-        if export_format == "openvino":
+        if export_format == ExportFormat.openvino:
             frigate_onnx = str(Path(tmpdir) / "frigate.onnx")
         else:
             frigate_onnx = output
@@ -124,7 +131,7 @@ def _export_frigate(yolo_model, dummy, output, export_format, opset, conf_thresh
             max_detections=max_detections,
         )
 
-        if export_format == "openvino":
+        if export_format == ExportFormat.openvino:
             import openvino as ov
 
             console.print("Converting Frigate ONNX to OpenVINO IR...")

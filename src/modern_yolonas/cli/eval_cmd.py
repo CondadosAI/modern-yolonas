@@ -2,31 +2,29 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
+from typing import Annotated
 
-import click
+import typer
 
 
-@click.command("eval")
-@click.option("--model", default="yolo_nas_s", type=click.Choice(["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"]))
-@click.option("--data", required=True, help="Path to COCO dataset root.")
-@click.option("--split", default="val2017", help="Split name.")
-@click.option("--batch-size", default=32, help="Batch size.")
-@click.option("--device", default="cuda", help="Device.")
-@click.option("--input-size", default=640, help="Model input size.")
-@click.option("--conf", default=0.001, help="Confidence threshold for eval.")
-@click.option("--iou", default=0.65, help="NMS IoU threshold for eval.")
-@click.option("--checkpoint", default=None, help="Custom checkpoint path.")
+class ModelName(str, Enum):
+    yolo_nas_s = "yolo_nas_s"
+    yolo_nas_m = "yolo_nas_m"
+    yolo_nas_l = "yolo_nas_l"
+
+
 def eval_cmd(
-    model: str,
-    data: str,
-    split: str,
-    batch_size: int,
-    device: str,
-    input_size: int,
-    conf: float,
-    iou: float,
-    checkpoint: str | None,
+    data: Annotated[str, typer.Option(help="Path to COCO dataset root.")],
+    model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    split: Annotated[str, typer.Option(help="Split name.")] = "val2017",
+    batch_size: Annotated[int, typer.Option(help="Batch size.")] = 32,
+    device: Annotated[str, typer.Option(help="Device.")] = "cuda",
+    input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
+    conf: Annotated[float, typer.Option(help="Confidence threshold for eval.")] = 0.001,
+    iou: Annotated[float, typer.Option(help="NMS IoU threshold for eval.")] = 0.65,
+    checkpoint: Annotated[str | None, typer.Option(help="Custom checkpoint path.")] = None,
 ):
     """Evaluate model on COCO dataset."""
     import torch
@@ -43,20 +41,18 @@ def eval_cmd(
     console = Console()
     data_path = Path(data)
 
-    # Load model
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
 
     if checkpoint:
-        yolo_model = builders[model](pretrained=False)
+        yolo_model = builders[model.value](pretrained=False)
         ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
         sd = ckpt.get("model_state_dict", ckpt)
         yolo_model.load_state_dict(sd)
     else:
-        yolo_model = builders[model](pretrained=True)
+        yolo_model = builders[model.value](pretrained=True)
 
     yolo_model = yolo_model.to(device).eval()
 
-    # Dataset
     ann_file = data_path / "annotations" / f"instances_{split}.json"
     img_dir = data_path / "images" / split
 
@@ -73,7 +69,7 @@ def eval_cmd(
 
     evaluator = COCOEvaluator(ann_file)
 
-    console.print(f"Evaluating {model} on {split} ({len(dataset)} images)...")
+    console.print(f"Evaluating {model.value} on {split} ({len(dataset)} images)...")
 
     with torch.no_grad():
         for batch_idx, (images, targets) in enumerate(loader):
@@ -82,7 +78,6 @@ def eval_cmd(
 
             results = postprocess(pred_bboxes, pred_scores, conf, iou)
 
-            # Get image IDs for this batch
             start_idx = batch_idx * batch_size
             end_idx = min(start_idx + batch_size, len(dataset))
             image_ids = [dataset.ids[i] for i in range(start_idx, end_idx)]
