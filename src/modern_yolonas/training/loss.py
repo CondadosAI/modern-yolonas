@@ -235,6 +235,7 @@ class ATSSAssigner:
         gt_bboxes: Tensor,
         mask_gt: Tensor,
         num_classes: int,
+        pred_bboxes: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """Assign ground truths to anchors using ATSS.
 
@@ -245,6 +246,8 @@ class ATSSAssigner:
             gt_bboxes: ``[B, M, 4]`` ground truth boxes (x1y1x2y2).
             mask_gt: ``[B, M, 1]`` valid GT mask.
             num_classes: Number of object classes.
+            pred_bboxes: ``[B, N, 4]`` predicted boxes (pixel coords). When provided,
+                assigned scores are scaled by IoU(pred, GT) for prediction-quality weighting.
 
         Returns:
             assigned_labels, assigned_bboxes, assigned_scores, fg_mask
@@ -332,6 +335,13 @@ class ATSSAssigner:
         # Assigned scores: IoU-based soft labels
         assigned_ious = torch.gather(ious, 2, max_gt_idx.unsqueeze(-1)).squeeze(-1)
         assigned_ious *= fg_mask.float()
+
+        # Scale by prediction quality IoU(pred, GT) when available (matches SG)
+        if pred_bboxes is not None:
+            pred_ious = batch_bbox_iou(pred_bboxes, gt_bboxes)  # [B, N, M]
+            pred_assigned_ious = torch.gather(pred_ious, 2, max_gt_idx.unsqueeze(-1)).squeeze(-1)
+            pred_assigned_ious *= fg_mask.float()
+            assigned_ious = assigned_ious * pred_assigned_ious
 
         assigned_scores = torch.zeros([batch_size, num_anchors, num_classes], device=device)
         class_idx = assigned_labels.unsqueeze(-1)  # [B, N, 1]
@@ -586,7 +596,8 @@ class PPYoloELoss(nn.Module):
 
         if use_static:
             assigned_labels, assigned_bboxes, assigned_scores, fg_mask = self.static_assigner.assign(
-                anchors, num_anchors_list, gt_labels, gt_bboxes, mask_gt, self.num_classes
+                anchors, num_anchors_list, gt_labels, gt_bboxes, mask_gt, self.num_classes,
+                pred_bboxes=pred_bboxes_decoded.detach(),
             )
         else:
             assigned_labels, assigned_bboxes, assigned_scores, fg_mask = self.assigner.assign(

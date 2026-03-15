@@ -63,9 +63,10 @@ def postprocess(
                 ))
                 continue
 
-        # Top-K before NMS
-        if boxes_filtered.shape[0] > max_detections * 3:
-            topk = scores_filtered.topk(max_detections * 3).indices
+        # Top-K before NMS (1024 matches super-gradients default nms_top_k)
+        nms_top_k = 1024
+        if boxes_filtered.shape[0] > nms_top_k:
+            topk = scores_filtered.topk(nms_top_k).indices
             boxes_filtered = boxes_filtered[topk]
             scores_filtered = scores_filtered[topk]
             class_ids = class_ids[topk]
