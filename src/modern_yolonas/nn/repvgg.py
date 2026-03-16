@@ -28,6 +28,23 @@ class Residual(nn.Module):
 
 
 class QARepVGGBlock(nn.Module):
+    """Quantization-aware RepVGG block with multi-branch training and single-conv inference.
+
+    During training, maintains three parallel branches (3x3 conv+BN, 1x1 conv, identity)
+    that are fused into a single convolution for inference via ``partial_fusion()`` or
+    ``full_fusion()``.
+
+    Args:
+        in_channels: Number of input channels.
+        out_channels: Number of output channels.
+        stride: Convolution stride.
+        activation_type: Activation module class.
+        se_type: Squeeze-and-excitation module class.
+        use_residual_connection: Enable identity skip (requires in==out and stride==1).
+        use_alpha: Learnable scaling for the 1x1 branch.
+        use_post_bn: Apply BatchNorm after branch summation.
+    """
+
     def __init__(
         self,
         in_channels: int,
@@ -205,6 +222,10 @@ class QARepVGGBlock(nn.Module):
         return kernel * A_, bias * A + b
 
     def partial_fusion(self):
+        """Fuse 3x3, 1x1, and identity branches into ``rbr_reparam``, keeping post_bn separate.
+
+        This creates a Conv+BN+ReLU chain suitable for FX-graph quantization.
+        """
         if self.partially_fused:
             return
         if self.fully_fused:

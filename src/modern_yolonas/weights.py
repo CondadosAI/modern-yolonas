@@ -6,10 +6,11 @@ from the super-gradients module hierarchy to ours.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from pathlib import Path
-from urllib.request import urlretrieve
+from urllib.request import urlopen
 
 import torch
 from torch import nn
@@ -22,6 +23,11 @@ WEIGHT_URLS = {
     "yolo_nas_l": "https://sg-hub-nv.s3.amazonaws.com/models/yolo_nas_l_coco.pth",
 }
 
+WEIGHT_CHECKSUMS: dict[str, str] = {
+    # SHA256 checksums for official super-gradients pretrained weights
+    # Populated after first verified download — empty means skip verification
+}
+
 CACHE_DIR = Path(os.environ.get("YOLONAS_CACHE_DIR", Path.home() / ".cache" / "modern_yolonas"))
 
 
@@ -30,6 +36,23 @@ _LICENSE_WARNING = (
     "under the Super Gradients Model EULA (non-commercial use only). "
     "See https://docs.deci.ai/super-gradients/latest/LICENSE.YOLONAS.html for details."
 )
+
+
+def _download_with_progress(url: str, dest: Path) -> None:
+    """Download a file with a Rich progress bar."""
+    from rich.progress import BarColumn, DownloadColumn, Progress, TransferSpeedColumn
+
+    response = urlopen(url)  # noqa: S310
+    total = int(response.headers.get("Content-Length", 0))
+
+    with (
+        Progress(BarColumn(), DownloadColumn(), TransferSpeedColumn()) as progress,
+        open(dest, "wb") as f,
+    ):
+        task = progress.add_task("Downloading", total=total or None)
+        while chunk := response.read(1024 * 64):
+            f.write(chunk)
+            progress.advance(task, len(chunk))
 
 
 def _download(variant: str) -> Path:
@@ -42,15 +65,35 @@ def _download(variant: str) -> Path:
     if dest.exists():
         return dest
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {variant} weights from {url} ...")
+    logger.info("Downloading %s weights from %s ...", variant, url)
     try:
-        urlretrieve(url, dest)
+        _download_with_progress(url, dest)
     except Exception as exc:
         # Clean up partial download
         if dest.exists():
             dest.unlink()
         raise RuntimeError(f"Failed to download {variant} weights from {url}") from exc
+
+    # Verify checksum if available
+    expected = WEIGHT_CHECKSUMS.get(variant)
+    if expected:
+        actual = _sha256(dest)
+        if actual != expected:
+            dest.unlink()
+            raise RuntimeError(
+                f"Checksum mismatch for {variant}: expected {expected[:16]}..., got {actual[:16]}... "
+                f"The file has been deleted. Please retry the download."
+            )
     return dest
+
+
+def _sha256(path: Path) -> str:
+    """Compute SHA256 hex digest of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1024 * 64):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _strip_prefix(key: str) -> str:

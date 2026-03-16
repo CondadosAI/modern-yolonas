@@ -1,0 +1,67 @@
+site_name: modern-yolonas
+site_description: Modern YOLO-NAS object detection — clean reimplementation
+site_url: https://condadosai.github.io/modern-yolonas/
+repo_url: https://github.com/CondadosAI/modern-yolonas
+repo_name: CondadosAI/modern-yolonas
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - content.code.annotate
+    - search.highlight
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - CLI Reference: cli.md
+  - API Reference:
+    - Detector: api/detector.md
+    - YoloNAS Model: api/model.md
+    - Training: api/training.md
+    - Data: api/data.md
+    - Weights: api/weights.md
+  - Guides:
+    - Training: guides/training.md
+    - Export: guides/export.md
+    - Extending: guides/extending.md
+  - Architecture: architecture.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            show_root_heading: true
+            members_order: source
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true

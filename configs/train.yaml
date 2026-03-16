@@ -1,0 +1,11 @@
+# Example training config
+# CLI flags override these values
+model: yolo_nas_s
+epochs: 300
+batch-size: 32
+lr: 0.0002
+device: cuda
+input-size: 640
+workers: 8
+pretrained: true
+output: runs/train

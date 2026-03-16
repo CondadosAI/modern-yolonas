@@ -31,7 +31,7 @@ jobs:
         run: uv run ruff check src/ tests/
 
       - name: Test
-        run: uv run pytest tests/ -v --tb=short
+        run: uv run pytest tests/ -v --tb=short --cov=modern_yolonas --cov-report=term-missing --cov-report=xml
 
   auto-tag:
     needs: lint-and-test

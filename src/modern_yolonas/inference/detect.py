@@ -12,6 +12,7 @@ import torch
 from modern_yolonas.inference.preprocess import preprocess
 from modern_yolonas.inference.postprocess import postprocess, rescale_boxes
 from modern_yolonas.inference.visualize import draw_detections
+from modern_yolonas.validation import validate_confidence, validate_device, validate_input_size, validate_iou_threshold, validate_model_name
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
 
@@ -65,24 +66,34 @@ class Detector:
         input_size: int = 640,
         pretrained: bool = True,
         multi_label: bool = True,
+        precision: str = "fp32",
     ):
         from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
+
+        validate_model_name(model)
+        validate_confidence(conf_threshold)
+        validate_iou_threshold(iou_threshold)
+        validate_input_size(input_size)
+
+        if precision not in ("fp32", "fp16"):
+            raise ValueError(f"precision must be 'fp32' or 'fp16', got {precision!r}")
 
         builders = {
             "yolo_nas_s": yolo_nas_s,
             "yolo_nas_m": yolo_nas_m,
             "yolo_nas_l": yolo_nas_l,
         }
-        if model not in builders:
-            raise ValueError(f"Unknown model: {model}. Choose from {list(builders)}")
 
-        self.device = torch.device(device)
+        self.device = validate_device(device)
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
         self.input_size = input_size
         self.multi_label = multi_label
+        self.precision = precision
 
         self.model = builders[model](pretrained=pretrained).to(self.device)
+        if precision == "fp16":
+            self.model = self.model.half()
         self.model.eval()
 
     @torch.no_grad()
@@ -112,8 +123,11 @@ class Detector:
 
         tensor, scale, pad = preprocess(image, self.input_size)
         tensor = tensor.to(self.device)
+        if self.precision == "fp16":
+            tensor = tensor.half()
 
-        pred_bboxes, pred_scores = self.model(tensor)
+        with torch.amp.autocast("cuda", enabled=self.precision == "fp16"):
+            pred_bboxes, pred_scores = self.model(tensor)
 
         conf = conf_threshold if conf_threshold is not None else self.conf_threshold
         iou = iou_threshold if iou_threshold is not None else self.iou_threshold
@@ -128,6 +142,64 @@ class Detector:
             class_ids=class_ids.cpu().numpy(),
             image=image if retain_image else None,
         )
+
+    @torch.no_grad()
+    def detect_batch(
+        self,
+        sources: list[str | Path | np.ndarray],
+        conf_threshold: float | None = None,
+        iou_threshold: float | None = None,
+        retain_image: bool = True,
+    ) -> list[Detection]:
+        """Run detection on a batch of images in a single forward pass.
+
+        Args:
+            sources: List of file paths or BGR numpy arrays.
+            conf_threshold: Override instance default.
+            iou_threshold: Override instance default.
+            retain_image: Store original image in result for visualization.
+
+        Returns:
+            List of Detection results, one per input image.
+        """
+        import cv2
+
+        images = []
+        tensors = []
+        scales = []
+        pads = []
+
+        for source in sources:
+            if isinstance(source, (str, Path)):
+                image = cv2.imread(str(source))
+                if image is None:
+                    raise FileNotFoundError(f"Cannot read image: {source}")
+            else:
+                image = source
+            images.append(image)
+
+            tensor, scale, pad = preprocess(image, self.input_size)
+            tensors.append(tensor)
+            scales.append(scale)
+            pads.append(pad)
+
+        batch_tensor = torch.cat(tensors, dim=0).to(self.device)
+        pred_bboxes, pred_scores = self.model(batch_tensor)
+
+        conf = conf_threshold if conf_threshold is not None else self.conf_threshold
+        iou = iou_threshold if iou_threshold is not None else self.iou_threshold
+        results = postprocess(pred_bboxes, pred_scores, conf, iou, multi_label=self.multi_label)
+
+        detections = []
+        for i, (boxes, scores, class_ids) in enumerate(results):
+            boxes = rescale_boxes(boxes, scales[i], pads[i], images[i].shape[:2])
+            detections.append(Detection(
+                boxes=boxes.cpu().numpy(),
+                scores=scores.cpu().numpy(),
+                class_ids=class_ids.cpu().numpy(),
+                image=images[i] if retain_image else None,
+            ))
+        return detections
 
     def detect_video(
         self,

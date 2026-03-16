@@ -1,0 +1,8 @@
+# Example detection config
+# CLI flags override these values
+model: yolo_nas_s
+conf: 0.25
+iou: 0.7
+device: cuda
+input-size: 640
+output: results

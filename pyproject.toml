@@ -18,7 +18,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "ruff>=0.4", "mypy>=1.0", "pre-commit"]
+dev = ["pytest>=7.0", "pytest-cov>=6.0", "ruff>=0.4", "mypy>=1.0", "pre-commit"]
+docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24", "mkdocs-gen-files>=0.5", "mkdocs-literate-nav>=0.6"]
+serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
+demo = ["gradio>=4.0"]
+hub = ["huggingface-hub>=0.20"]
 onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.1"]
 openvino = ["openvino>=2024.0"]
 
@@ -41,6 +45,32 @@ version-file = "src/modern_yolonas/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/modern_yolonas"]
 
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests that require model weights or heavy computation",
+]
+
+[tool.coverage.run]
+source = ["modern_yolonas"]
+omit = ["src/modern_yolonas/_version.py"]
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+]
+
 [tool.ruff]
 line-length = 120
 target-version = "py313"
@@ -57,5 +87,6 @@ torchvision = { index = "pytorch-cu130" }
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-cov>=6.0",
     "ruff>=0.15.0",
 ]

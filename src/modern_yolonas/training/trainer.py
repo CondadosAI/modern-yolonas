@@ -10,6 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from rich.console import Console
 
+from modern_yolonas.training.callbacks import Callback
 from modern_yolonas.training.loss import PPYoloELoss
 from modern_yolonas.training.ema import ModelEMA
 from modern_yolonas.training.optimizer import create_optimizer
@@ -54,8 +55,11 @@ class Trainer:
         output_dir: str | Path = "runs/train",
         device: str | torch.device = "cuda",
         local_rank: int = -1,
+        callbacks: list[Callback] | None = None,
     ):
         self.epochs = epochs
+        self.callbacks = callbacks or []
+        self._stop_training = False
         self.device = torch.device(device)
         self.local_rank = local_rank
         self.output_dir = Path(output_dir)
@@ -98,9 +102,16 @@ class Trainer:
         self.start_epoch = 0
         self.best_map = 0.0
 
+    def _fire(self, hook: str, *args, **kwargs):
+        for cb in self.callbacks:
+            getattr(cb, hook)(self, *args, **kwargs)
+
     def train(self):
         """Run training loop."""
+        self._fire("on_train_start")
         for epoch in range(self.start_epoch, self.epochs):
+            if self._stop_training:
+                break
             self.model.train()
 
             if isinstance(self.train_loader.sampler, DistributedSampler):
@@ -109,6 +120,7 @@ class Trainer:
             epoch_loss = 0.0
             num_batches = 0
 
+            self._fire("on_epoch_start", epoch)
             if self.is_main:
                 console.print(f"\n[bold]Epoch {epoch + 1}/{self.epochs}[/bold]")
 
@@ -143,6 +155,8 @@ class Trainer:
                 epoch_loss += loss.item()
                 num_batches += 1
 
+                self._fire("on_batch_end", epoch, batch_idx, loss.item(), loss_dict)
+
                 if self.is_main and (batch_idx + 1) % 50 == 0:
                     avg_loss = epoch_loss / num_batches
                     lr = self.optimizer.param_groups[0]["lr"]
@@ -155,9 +169,11 @@ class Trainer:
                         f"lr={lr:.6f}"
                     )
 
+            avg_loss = epoch_loss / max(num_batches, 1)
             if self.is_main:
-                avg_loss = epoch_loss / max(num_batches, 1)
                 console.print(f"  Epoch {epoch + 1} avg loss: {avg_loss:.4f}")
+
+            self._fire("on_epoch_end", epoch, avg_loss)
 
             # Validation
             if self.val_loader is not None and self.is_main and (epoch + 1) % 10 == 0:
@@ -166,6 +182,8 @@ class Trainer:
             # Save checkpoint
             if self.is_main:
                 self._save_checkpoint(epoch)
+
+        self._fire("on_train_end")
 
     @torch.no_grad()
     def _validate(self, epoch: int):

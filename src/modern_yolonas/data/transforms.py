@@ -14,6 +14,13 @@ import numpy as np
 
 
 class Compose:
+    """Chain multiple transforms sequentially.
+
+    Args:
+        transforms: List of callables, each accepting ``(image, targets)``
+            and returning ``(image, targets)``.
+    """
+
     def __init__(self, transforms: list):
         self.transforms = transforms
 
@@ -24,6 +31,14 @@ class Compose:
 
 
 class HSVAugment:
+    """Randomly adjust hue, saturation, and value channels.
+
+    Args:
+        h_gain: Maximum hue shift factor.
+        s_gain: Maximum saturation shift factor.
+        v_gain: Maximum value shift factor.
+    """
+
     def __init__(self, h_gain: float = 0.015, s_gain: float = 0.7, v_gain: float = 0.4):
         self.h_gain = h_gain
         self.s_gain = s_gain
@@ -42,6 +57,12 @@ class HSVAugment:
 
 
 class HorizontalFlip:
+    """Randomly flip the image and targets horizontally.
+
+    Args:
+        p: Probability of applying the flip.
+    """
+
     def __init__(self, p: float = 0.5):
         self.p = p
 
@@ -55,6 +76,18 @@ class HorizontalFlip:
 
 
 class RandomAffine:
+    """Apply random rotation, scaling, translation, and shear.
+
+    Transforms both the image and bounding box targets, filtering out
+    boxes that become too small after the transform.
+
+    Args:
+        degrees: Maximum rotation in degrees.
+        translate: Maximum translation as a fraction of image size.
+        scale: Scale range ``(min, max)``.
+        shear: Maximum shear in degrees.
+    """
+
     def __init__(
         self,
         degrees: float = 0.0,
@@ -216,6 +249,13 @@ class Mixup:
 
 
 class LetterboxResize:
+    """Resize with aspect ratio preservation and center padding.
+
+    Args:
+        target_size: Output square dimension.
+        pad_value: Pixel value for padding (default 114, matching YOLO convention).
+    """
+
     def __init__(self, target_size: int = 640, pad_value: int = 114):
         self.target_size = target_size
         self.pad_value = pad_value
