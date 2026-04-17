@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 from torch.utils.data import Dataset
+
+Transform = Callable[[np.ndarray, dict[str, Any]], tuple[np.ndarray, dict[str, Any]]]
 
 
 class COCODetectionDataset(Dataset):
@@ -23,7 +27,7 @@ class COCODetectionDataset(Dataset):
         self,
         root: str | Path,
         ann_file: str | Path,
-        transforms=None,
+        transforms: Transform | None = None,
         input_size: int = 640,
     ):
         from pycocotools.coco import COCO

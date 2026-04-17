@@ -1,5 +1,6 @@
 """Tests for CLI commands."""
 
+import re
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -12,46 +13,60 @@ from modern_yolonas.cli import app
 
 runner = CliRunner()
 
+# Typer injects Rich ANSI color codes *inside* option names (e.g. `--source` becomes
+# `\x1b[1;36m-\x1b[0m\x1b[1;36m-source\x1b[0m`), which breaks substring matches in CI
+# where FORCE_COLOR / a non-tty but colored-by-default environment is set.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    return _ANSI.sub("", output)
+
 
 class TestVersionAndHelp:
     def test_version(self):
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert "modern-yolonas" in result.output
+        assert "modern-yolonas" in _plain(result.output)
 
     def test_help(self):
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "detect" in result.output
-        assert "train" in result.output
-        assert "export" in result.output
-        assert "eval" in result.output
+        out = _plain(result.output)
+        assert "detect" in out
+        assert "train" in out
+        assert "export" in out
+        assert "eval" in out
 
     def test_detect_help(self):
         result = runner.invoke(app, ["detect", "--help"])
         assert result.exit_code == 0
-        assert "--source" in result.output
-        assert "--model" in result.output
-        assert "--conf" in result.output
+        out = _plain(result.output)
+        assert "--source" in out
+        assert "--model" in out
+        assert "--conf" in out
 
     def test_train_help(self):
         result = runner.invoke(app, ["train", "--help"])
         assert result.exit_code == 0
-        assert "--data" in result.output
-        assert "--epochs" in result.output
-        assert "--format" in result.output
+        out = _plain(result.output)
+        assert "--data" in out
+        assert "--epochs" in out
+        assert "--format" in out
 
     def test_export_help(self):
         result = runner.invoke(app, ["export", "--help"])
         assert result.exit_code == 0
-        assert "--format" in result.output
-        assert "--output" in result.output
+        out = _plain(result.output)
+        assert "--format" in out
+        assert "--output" in out
 
     def test_eval_help(self):
         result = runner.invoke(app, ["eval", "--help"])
         assert result.exit_code == 0
-        assert "--data" in result.output
-        assert "--split" in result.output
+        out = _plain(result.output)
+        assert "--data" in out
+        assert "--split" in out
 
 
 class TestDetectValidation:
