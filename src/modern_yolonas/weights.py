@@ -1,99 +1,40 @@
-"""Download and load pretrained super-gradients checkpoints.
+"""Download and load pretrained YOLO-NAS checkpoints from Hugging Face Hub.
 
-Downloads to ``~/.cache/modern_yolonas/`` and remaps state_dict keys
-from the super-gradients module hierarchy to ours.
+The distributed safetensors were converted from Deci AI's super-gradients
+releases and remain under the Super Gradients Model EULA (non-commercial use
+only). For commercial deployments, train from scratch — no open-licensed COCO
+pretrain is currently provided.
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
-from pathlib import Path
-from urllib.request import urlopen
 
 import torch
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
 from torch import nn
 
 logger = logging.getLogger(__name__)
 
-WEIGHT_URLS = {
-    "yolo_nas_s": "https://sg-hub-nv.s3.amazonaws.com/models/yolo_nas_s_coco.pth",
-    "yolo_nas_m": "https://sg-hub-nv.s3.amazonaws.com/models/yolo_nas_m_coco.pth",
-    "yolo_nas_l": "https://sg-hub-nv.s3.amazonaws.com/models/yolo_nas_l_coco.pth",
-}
+# Override with YOLONAS_HF_REPO env var to pull from a fork / private mirror.
+HF_REPO_ID = os.environ.get("YOLONAS_HF_REPO", "CondadosAI/detectors")
 
-WEIGHT_CHECKSUMS: dict[str, str] = {
-    # SHA256 checksums for official super-gradients pretrained weights
-    # Populated after first verified download — empty means skip verification
+WEIGHT_FILES = {
+    "yolo_nas_s": "yolo-nas-s.safetensors",
+    "yolo_nas_m": "yolo-nas-m.safetensors",
+    "yolo_nas_l": "yolo-nas-l.safetensors",
 }
-
-CACHE_DIR = Path(os.environ.get("YOLONAS_CACHE_DIR", Path.home() / ".cache" / "modern_yolonas"))
 
 
 _LICENSE_WARNING = (
-    "The pretrained weights are from Deci AI's super-gradients and are licensed "
-    "under the Super Gradients Model EULA (non-commercial use only). "
-    "See https://docs.deci.ai/super-gradients/latest/LICENSE.YOLONAS.html for details."
+    "Pretrained YOLO-NAS COCO weights are derived from Deci AI's super-gradients "
+    "releases and remain under the Super Gradients Model EULA (non-commercial use only). "
+    "For commercial deployments, train from scratch — no open-licensed COCO pretrain "
+    "is currently distributed. "
+    "See https://docs.deci.ai/super-gradients/latest/LICENSE.YOLONAS.html."
 )
-
-
-def _download_with_progress(url: str, dest: Path) -> None:
-    """Download a file with a Rich progress bar."""
-    from rich.progress import BarColumn, DownloadColumn, Progress, TransferSpeedColumn
-
-    response = urlopen(url)  # noqa: S310
-    total = int(response.headers.get("Content-Length", 0))
-
-    with (
-        Progress(BarColumn(), DownloadColumn(), TransferSpeedColumn()) as progress,
-        open(dest, "wb") as f,
-    ):
-        task = progress.add_task("Downloading", total=total or None)
-        while chunk := response.read(1024 * 64):
-            f.write(chunk)
-            progress.advance(task, len(chunk))
-
-
-def _download(variant: str) -> Path:
-    if variant not in WEIGHT_URLS:
-        raise ValueError(f"Unknown variant: {variant!r}. Must be one of {list(WEIGHT_URLS)}")
-    url = WEIGHT_URLS[variant]
-    filename = url.rsplit("/", 1)[-1]
-    dest = CACHE_DIR / filename
-    logger.warning(_LICENSE_WARNING)
-    if dest.exists():
-        return dest
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info("Downloading %s weights from %s ...", variant, url)
-    try:
-        _download_with_progress(url, dest)
-    except Exception as exc:
-        # Clean up partial download
-        if dest.exists():
-            dest.unlink()
-        raise RuntimeError(f"Failed to download {variant} weights from {url}") from exc
-
-    # Verify checksum if available
-    expected = WEIGHT_CHECKSUMS.get(variant)
-    if expected:
-        actual = _sha256(dest)
-        if actual != expected:
-            dest.unlink()
-            raise RuntimeError(
-                f"Checksum mismatch for {variant}: expected {expected[:16]}..., got {actual[:16]}... "
-                f"The file has been deleted. Please retry the download."
-            )
-    return dest
-
-
-def _sha256(path: Path) -> str:
-    """Compute SHA256 hex digest of a file."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(1024 * 64):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _strip_prefix(key: str) -> str:
@@ -116,48 +57,40 @@ def remap_state_dict(raw_sd: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]
     Our ``YoloNAS`` uses the same attribute names, so the only work is
     stripping DDP/EMA prefixes.
     """
-    remapped = {}
-    for key, value in raw_sd.items():
-        new_key = _strip_prefix(key)
-        remapped[new_key] = value
-    return remapped
+    return {_strip_prefix(k): v for k, v in raw_sd.items()}
+
+
+def _download(variant: str, repo_id: str, revision: str | None) -> str:
+    if variant not in WEIGHT_FILES:
+        raise ValueError(f"Unknown variant: {variant!r}. Must be one of {list(WEIGHT_FILES)}")
+    logger.warning(_LICENSE_WARNING)
+    return hf_hub_download(repo_id=repo_id, filename=WEIGHT_FILES[variant], revision=revision)
 
 
 def load_pretrained(
     model: nn.Module,
     variant: str,
     strict: bool = True,
-    prefer_ema: bool = False,
+    repo_id: str = HF_REPO_ID,
+    revision: str | None = None,
 ) -> nn.Module:
-    """Download checkpoint and load into model.
+    """Download safetensors checkpoint from HF Hub and load into model.
 
     Args:
         model: A ``YoloNAS`` instance (or any nn.Module with matching keys).
         variant: One of ``"yolo_nas_s"``, ``"yolo_nas_m"``, ``"yolo_nas_l"``.
-        strict: Whether to require exact key matching (default True).
-        prefer_ema: If True, load EMA weights when available (often better quality).
+        strict: Require exact key matching.
+        repo_id: HF Hub repo (default :data:`HF_REPO_ID`, overridable via the
+            ``YOLONAS_HF_REPO`` env var or this arg).
+        revision: Git ref (branch / tag / commit) of the repo.
 
     Returns:
         The model with loaded weights.
     """
-    path = _download(variant)
-    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-
-    # super-gradients checkpoints may wrap the state_dict
-    if prefer_ema and "ema_net" in checkpoint:
-        raw_sd = checkpoint["ema_net"]
-    elif "net" in checkpoint:
-        raw_sd = checkpoint["net"]
-    elif "state_dict" in checkpoint:
-        raw_sd = checkpoint["state_dict"]
-    elif "ema_net" in checkpoint:
-        raw_sd = checkpoint["ema_net"]
-    else:
-        raw_sd = checkpoint
-
+    path = _download(variant, repo_id=repo_id, revision=revision)
+    raw_sd = load_file(path)
     sd = remap_state_dict(raw_sd)
 
-    # Filter out keys that don't belong to the model (optimizer state, etc.)
     model_keys = set(model.state_dict().keys())
     sd = {k: v for k, v in sd.items() if k in model_keys}
 

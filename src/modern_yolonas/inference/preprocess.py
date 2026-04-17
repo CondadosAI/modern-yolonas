@@ -28,6 +28,8 @@ def letterbox(
         (padded_image, scale, (pad_left, pad_top))
     """
     h, w = image.shape[:2]
+    # Clamp so the resized longest side fits the target canvas (overflow crashes the paste below).
+    rescale_size = min(rescale_size, target_size)
     scale = rescale_size / max(h, w)
     new_h, new_w = int(round(h * scale)), int(round(w * scale))
 

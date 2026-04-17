@@ -15,6 +15,8 @@ dependencies = [
     "torch>=2.7",
     "torchvision>=0.22",
     "pycocotools>=2.0",
+    "huggingface-hub>=0.20",
+    "safetensors>=0.4",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +24,6 @@ dev = ["pytest>=7.0", "pytest-cov>=6.0", "ruff>=0.4", "mypy>=1.0", "pre-commit"]
 docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24", "mkdocs-gen-files>=0.5", "mkdocs-literate-nav>=0.6"]
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
 demo = ["gradio>=4.0"]
-hub = ["huggingface-hub>=0.20"]
 onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.1"]
 openvino = ["openvino>=2024.0"]
 

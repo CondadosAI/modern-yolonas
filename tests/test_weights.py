@@ -1,13 +1,10 @@
 """Tests for weight loading and state_dict remapping."""
 
-import os
-from unittest.mock import patch
-
 import torch
 
 from modern_yolonas.weights import (
-    CACHE_DIR,
-    WEIGHT_URLS,
+    HF_REPO_ID,
+    WEIGHT_FILES,
     _strip_prefix,
     remap_state_dict,
 )
@@ -67,30 +64,16 @@ class TestRemapStateDict:
         assert "heads.head1.cls.weight" in remapped
 
 
-class TestWeightURLs:
-    def test_all_variants_have_urls(self):
-        assert "yolo_nas_s" in WEIGHT_URLS
-        assert "yolo_nas_m" in WEIGHT_URLS
-        assert "yolo_nas_l" in WEIGHT_URLS
+class TestWeightFiles:
+    def test_all_variants_have_files(self):
+        assert "yolo_nas_s" in WEIGHT_FILES
+        assert "yolo_nas_m" in WEIGHT_FILES
+        assert "yolo_nas_l" in WEIGHT_FILES
 
-    def test_urls_are_strings(self):
-        for url in WEIGHT_URLS.values():
-            assert isinstance(url, str)
-            assert url.startswith("https://")
+    def test_files_are_safetensors(self):
+        for filename in WEIGHT_FILES.values():
+            assert isinstance(filename, str)
+            assert filename.endswith(".safetensors")
 
-
-class TestCacheDir:
-    def test_default_cache_dir(self):
-        assert "modern_yolonas" in str(CACHE_DIR)
-
-    def test_custom_cache_dir(self):
-        with patch.dict(os.environ, {"YOLONAS_CACHE_DIR": "/tmp/custom_cache"}):
-            # Re-import to pick up the env var
-            from importlib import reload
-            import modern_yolonas.weights as w
-
-            reload(w)
-            assert str(w.CACHE_DIR) == "/tmp/custom_cache"
-
-            # Restore
-            reload(w)
+    def test_default_repo_id(self):
+        assert "/" in HF_REPO_ID
