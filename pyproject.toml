@@ -61,10 +61,16 @@ markers = [
 
 [tool.coverage.run]
 source = ["modern_yolonas"]
-omit = ["src/modern_yolonas/_version.py"]
+omit = [
+    "src/modern_yolonas/_version.py",
+    # IO / network wrappers — covering these needs integration tests with mocks.
+    "src/modern_yolonas/hub.py",
+    "src/modern_yolonas/serve/app.py",
+    "src/modern_yolonas/export/frigate.py",
+]
 
 [tool.coverage.report]
-fail_under = 60
+fail_under = 70
 show_missing = true
 exclude_lines = [
     "pragma: no cover",

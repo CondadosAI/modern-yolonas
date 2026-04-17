@@ -29,3 +29,6 @@ runs/
 outputs/
 results/
 site/
+.coverage
+coverage.xml
+htmlcov/
