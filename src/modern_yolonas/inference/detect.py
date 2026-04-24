@@ -52,6 +52,9 @@ class Detector:
         result = det("image.jpg")
         result.save("output.jpg")
 
+        # From a custom checkpoint trained with --num-classes 3
+        det = Detector("yolo_nas_s", weights="runs/train/best.pt", num_classes=3)
+
         # Video (yields per-frame results)
         for frame_idx, result in det.detect_video("video.mp4"):
             print(f"Frame {frame_idx}: {len(result.boxes)} detections")
@@ -67,6 +70,8 @@ class Detector:
         pretrained: bool = True,
         multi_label: bool = True,
         precision: str = "fp32",
+        weights: str | Path | None = None,
+        num_classes: int = 80,
     ):
         from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
 
@@ -91,7 +96,22 @@ class Detector:
         self.multi_label = multi_label
         self.precision = precision
 
-        self.model = builders[model](pretrained=pretrained).to(self.device)
+        if weights is not None:
+            # Load a custom checkpoint saved by Trainer._save_checkpoint.
+            # Build the architecture for the requested num_classes (no pretrained
+            # weights), then overwrite with the checkpoint's model_state_dict.
+            self.model = builders[model](pretrained=False, num_classes=num_classes).to(self.device)
+            ckpt = torch.load(weights, map_location=self.device, weights_only=True)
+            state_dict = ckpt.get("ema", {}).get("ema") or ckpt.get("model_state_dict")
+            if state_dict is None:
+                raise KeyError(
+                    f"Checkpoint {weights!r} does not contain 'model_state_dict' or 'ema'. "
+                    "Make sure it was saved by the Trainer."
+                )
+            self.model.load_state_dict(state_dict)
+        else:
+            self.model = builders[model](pretrained=pretrained, num_classes=num_classes).to(self.device)
+
         if precision == "fp16":
             self.model = self.model.half()
         self.model.eval()
