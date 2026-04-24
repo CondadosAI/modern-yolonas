@@ -268,9 +268,7 @@ class TestDetectionMetrics:
         labels  = torch.tensor([0])
         metrics.update([self._make_perfect_pred(boxes, labels)], [self._make_target(boxes, labels)])
         result = metrics.compute()
-        expected_keys = {"mAP", "mAP_50", "mAP_75", "mAP_small", "mAP_medium", "mAP_large",
-                         "mAR_1", "mAR_10", "mAR_100"}
-        assert expected_keys.issubset(result.keys())
+        assert set(result.keys()) == {"mAP", "mAP_50", "mAR_100"}
         assert all(isinstance(v, float) for v in result.values())
 
     def test_perfect_predictions_give_map50_one(self):

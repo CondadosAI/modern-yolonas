@@ -43,6 +43,10 @@ class COCODetectionDataset(Dataset):
         cat_ids = sorted(self.coco.getCatIds())
         self.cat_id_to_label = {cat_id: i for i, cat_id in enumerate(cat_ids)}
 
+        # Ordered list of class names aligned with label indices 0..N-1
+        cats = self.coco.loadCats(cat_ids)
+        self.class_names: list[str] = [c["name"] for c in cats]
+
     def __len__(self) -> int:
         return len(self.ids)
 

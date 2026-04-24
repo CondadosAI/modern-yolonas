@@ -45,6 +45,29 @@ class YOLODetectionDataset(Dataset):
         self.images = [p for p in self.images if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp")]
         self.label_dir = label_dir
 
+        # Try to load class names from classes.txt or data.yaml at dataset root
+        self.class_names: list[str] | None = self._load_class_names()
+
+    def _load_class_names(self) -> list[str] | None:
+        """Return class names from ``classes.txt`` or ``data.yaml`` if present."""
+        classes_txt = self.root / "classes.txt"
+        if classes_txt.exists():
+            names = [l.strip() for l in classes_txt.read_text().splitlines() if l.strip()]
+            return names if names else None
+
+        for yaml_name in ("data.yaml", "dataset.yaml"):
+            yaml_path = self.root / yaml_name
+            if yaml_path.exists():
+                import yaml
+                data = yaml.safe_load(yaml_path.read_text())
+                names = data.get("names")
+                if isinstance(names, list) and names:
+                    return [str(n) for n in names]
+                if isinstance(names, dict):
+                    return [str(names[k]) for k in sorted(names)]
+
+        return None
+
     def __len__(self) -> int:
         return len(self.images)
 

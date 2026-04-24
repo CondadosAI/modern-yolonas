@@ -36,7 +36,21 @@ class Callback:
             trainer: The :class:`Trainer` instance.
             epoch: Zero-based epoch index.
             metrics: Dict produced by :meth:`~modern_yolonas.training.metrics.DetectionMetrics.compute`,
-                containing keys such as ``mAP``, ``mAP_50``, ``mAP_75``, ``mAR_100``, etc.
+                containing keys such as ``mAP``, ``mAP_50``, ``mAR_100``.
+        """
+
+    def on_validation_images(
+        self, trainer: Any, epoch: int, images: list["np.ndarray"]
+    ) -> None:
+        """Called after each validation run with a sample of annotated images.
+
+        Images have ground-truth boxes drawn in green and prediction boxes drawn
+        in class colours on top, making it easy to compare the two at a glance.
+
+        Args:
+            trainer: The :class:`Trainer` instance.
+            epoch: Zero-based epoch index.
+            images: List of HWC uint8 BGR :class:`numpy.ndarray` images.
         """
 
     def on_train_end(self, trainer: Any) -> None:
@@ -219,6 +233,21 @@ class WandbCallback(Callback):
             step=trainer.global_step,
         )
 
+    def on_validation_images(
+        self, trainer: Any, epoch: int, images: list
+    ) -> None:
+        import wandb
+
+        wandb.log(
+            {
+                "val/detections": [
+                    wandb.Image(img[:, :, ::-1], caption=f"epoch {epoch + 1} [{i}]")
+                    for i, img in enumerate(images)
+                ]
+            },
+            step=trainer.global_step,
+        )
+
     def on_train_end(self, trainer: Any) -> None:
         import wandb
 
@@ -234,14 +263,22 @@ class TensorBoardCallback(Callback):
     Training scalars are logged at every global step under ``"train/"``; validation
     metrics are logged after each evaluation run under ``"val/"``.
 
+    The final event-file directory is ``<log_dir>/<experiment_name>``.  When you
+    point ``tensorboard --logdir <log_dir>`` at the parent, every experiment
+    appears as a separate run in the UI.
+
     Args:
-        log_dir: Directory where TensorBoard event files are written.
+        log_dir: Root directory for TensorBoard event files.
+        experiment_name: Sub-directory name that identifies this run.  Defaults
+            to ``"default"``; use a descriptive string such as
+            ``"yolo_nas_s_coco_lr2e-4"`` to keep runs apart.
         log_every: Write training scalars every *n* global steps (default: 1).
     """
 
     def __init__(
         self,
         log_dir: str | Path = "runs/tensorboard",
+        experiment_name: str = "default",
         log_every: int = 1,
     ) -> None:
         try:
@@ -252,7 +289,7 @@ class TensorBoardCallback(Callback):
                 "Install it with: pip install tensorboard"
             ) from exc
 
-        self.log_dir = Path(log_dir)
+        self.log_dir = Path(log_dir) / experiment_name
         self.log_every = log_every
         self._writer = None
 
@@ -285,7 +322,18 @@ class TensorBoardCallback(Callback):
             return
         step = trainer.global_step
         for key, value in metrics.items():
-            self._writer.add_scalar(f"val/{key}", value, step)
+            self._writer.add_scalar(f"{key}", value, step)
+
+    def on_validation_images(
+        self, trainer: Any, epoch: int, images: list
+    ) -> None:
+        if self._writer is None:
+            return
+        step = trainer.global_step
+        for i, img_bgr in enumerate(images):
+            # TensorBoard expects [C, H, W] uint8 or float; convert BGR → RGB
+            img_rgb_chw = img_bgr[:, :, ::-1].transpose(2, 0, 1)
+            self._writer.add_image(f"val/detections/{i}", img_rgb_chw, step)
 
     def on_train_end(self, trainer: Any) -> None:
         if self._writer is not None:

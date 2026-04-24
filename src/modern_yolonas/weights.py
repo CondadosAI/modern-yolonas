@@ -96,3 +96,57 @@ def load_pretrained(
 
     model.load_state_dict(sd, strict=strict)
     return model
+
+
+def transfer_to(
+    variant: str,
+    num_classes: int,
+    repo_id: str = HF_REPO_ID,
+    revision: str | None = None,
+) -> "YoloNAS":
+    """Build a model for transfer learning by loading pretrained weights then
+    replacing the detection heads with freshly initialised ones.
+
+    The strategy is:
+
+    1. Build a full 80-class model and load the pretrained checkpoint **strictly**
+       — backbone and neck weights are guaranteed to be fully and correctly loaded.
+    2. Swap ``model.heads`` for a new :class:`~modern_yolonas.head.dfl.NDFLHeads`
+       instance initialised for *num_classes*.  The new heads start from their
+       default random initialisation (biases set via ``prior_prob``).
+
+    This is the correct way to do transfer learning onto a different class set:
+    no weight filtering, no shape mismatch surprises.
+
+    Args:
+        variant: One of ``"yolo_nas_s"``, ``"yolo_nas_m"``, ``"yolo_nas_l"``.
+        num_classes: Number of classes in your dataset.
+        repo_id: HF Hub repo (overridable via the ``YOLONAS_HF_REPO`` env var).
+        revision: Git ref of the repo.
+
+    Returns:
+        A :class:`~modern_yolonas.model.YoloNAS` instance with pretrained
+        backbone+neck and freshly initialised detection heads.
+    """
+    from modern_yolonas.configs import CONFIGS
+    from modern_yolonas.head.dfl import NDFLHeads
+    from modern_yolonas.model import YoloNAS
+
+    cfg = CONFIGS[variant]
+
+    # Step 1 — load pretrained 80-class model with full strict matching
+    model = YoloNAS.from_config(variant, num_classes=80)
+    load_pretrained(model, variant, strict=True, repo_id=repo_id, revision=revision)
+
+    # Step 2 — replace heads; backbone and neck are untouched
+    model.heads = NDFLHeads(
+        num_classes=num_classes,
+        in_channels=tuple(model.neck.out_channels),
+        **cfg["heads"],
+    )
+    logger.info(
+        "Transferred pretrained %s backbone+neck; heads re-initialised for %d classes.",
+        variant,
+        num_classes,
+    )
+    return model

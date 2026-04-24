@@ -2,7 +2,7 @@
 
 from modern_yolonas._version import __version__
 from modern_yolonas.model import YoloNAS
-from modern_yolonas.weights import load_pretrained
+from modern_yolonas.weights import load_pretrained, transfer_to
 from modern_yolonas.inference.detect import Detector, Detection
 
 
@@ -37,6 +37,7 @@ __all__ = [
     "yolo_nas_m",
     "yolo_nas_l",
     "load_pretrained",
+    "transfer_to",
     "Detector",
     "Detection",
 ]

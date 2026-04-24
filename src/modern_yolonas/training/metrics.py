@@ -75,24 +75,12 @@ class DetectionMetrics:
         """Compute metrics over all accumulated predictions and return a flat dict.
 
         Returns:
-            A ``dict[str, float]`` with the following keys:
+            A ``dict[str, float]`` with three keys:
 
             ``mAP``
                 Mean AP averaged over IoU thresholds 0.50–0.95 (primary COCO metric).
             ``mAP_50``
-                Mean AP at IoU = 0.50 (PASCAL VOC-style).
-            ``mAP_75``
-                Mean AP at IoU = 0.75 (stricter threshold).
-            ``mAP_small``
-                mAP restricted to small objects (area < 32² px).
-            ``mAP_medium``
-                mAP restricted to medium objects (32²–96² px).
-            ``mAP_large``
-                mAP restricted to large objects (area > 96² px).
-            ``mAR_1``
-                Max recall given at most 1 detection per image.
-            ``mAR_10``
-                Max recall given at most 10 detections per image.
+                Mean AP at IoU = 0.50 (PASCAL VOC-style, a.k.a. the IoU metric).
             ``mAR_100``
                 Max recall given at most 100 detections per image.
         """
@@ -103,15 +91,9 @@ class DetectionMetrics:
             return float(v.item() if isinstance(v, Tensor) else v)
 
         return {
-            "mAP":        _scalar("map"),
-            "mAP_50":     _scalar("map_50"),
-            "mAP_75":     _scalar("map_75"),
-            "mAP_small":  _scalar("map_small"),
-            "mAP_medium": _scalar("map_medium"),
-            "mAP_large":  _scalar("map_large"),
-            "mAR_1":      _scalar("mar_1"),
-            "mAR_10":     _scalar("mar_10"),
-            "mAR_100":    _scalar("mar_100"),
+            "mAP":    _scalar("map"),
+            "mAP_50": _scalar("map_50"),
+            "mAR_100": _scalar("mar_100"),
         }
 
     def reset(self) -> None:
