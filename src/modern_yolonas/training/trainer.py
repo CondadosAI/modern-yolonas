@@ -10,9 +10,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from rich.console import Console
 
+from modern_yolonas.inference.postprocess import postprocess
 from modern_yolonas.training.callbacks import Callback
 from modern_yolonas.training.loss import PPYoloELoss
 from modern_yolonas.training.ema import ModelEMA
+from modern_yolonas.training.metrics import DetectionMetrics
 from modern_yolonas.training.optimizer import create_optimizer
 from modern_yolonas.training.scheduler import cosine_with_warmup
 
@@ -101,6 +103,10 @@ class Trainer:
 
         self.start_epoch = 0
         self.best_map = 0.0
+        # Global optimisation step counter (incremented once per batch).
+        # Persisted through checkpoints so that loggers keep a monotonic x-axis
+        # when training is resumed.
+        self.global_step = 0
 
     def _fire(self, hook: str, *args, **kwargs):
         for cb in self.callbacks:
@@ -154,6 +160,7 @@ class Trainer:
 
                 epoch_loss += loss.item()
                 num_batches += 1
+                self.global_step += 1
 
                 self._fire("on_batch_end", epoch, batch_idx, loss.item(), loss_dict)
 
@@ -186,20 +193,92 @@ class Trainer:
         self._fire("on_train_end")
 
     @torch.no_grad()
-    def _validate(self, epoch: int):
-        eval_model = self.ema.ema if self.ema is not None else self.model
+    def _validate(self, epoch: int) -> dict[str, float]:
+        """Run one pass over the validation set and compute detection metrics.
+
+        Predictions are decoded from the model, filtered with NMS, then compared
+        against ground-truth boxes using
+        :class:`~modern_yolonas.training.metrics.DetectionMetrics`.  The best
+        checkpoint (``best.pt``) is updated whenever ``mAP_50`` improves.
+
+        Args:
+            epoch: Zero-based epoch index (used for logging only).
+
+        Returns:
+            Dict produced by :meth:`~DetectionMetrics.compute`.
+        """
+        raw_model = self.model.module if isinstance(self.model, DDP) else self.model
+        eval_model = self.ema.ema if self.ema is not None else raw_model
         eval_model.eval()
 
+        metrics = DetectionMetrics(device=self.device)
         num_batches = 0
 
-        for images, _targets in self.val_loader:
-            images = images.to(self.device, non_blocking=True)
-            eval_model(images)
+        for images, targets in self.val_loader:
+            images  = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
+
+            pred_bboxes, pred_scores = eval_model(images)  # [B,N,4], [B,N,C]
+
+            # Apply confidence filtering + per-class NMS
+            detections = postprocess(pred_bboxes, pred_scores)
+            preds = [
+                {
+                    "boxes":  boxes.float(),
+                    "scores": scores.float(),
+                    "labels": labels.int(),
+                }
+                for boxes, scores, labels in detections
+            ]
+
+            # Convert collated targets [sum_N, 6] → per-image xyxy dicts
+            batch_size = images.shape[0]
+            img_h, img_w = images.shape[2], images.shape[3]
+            target_list: list[dict] = []
+            for i in range(batch_size):
+                mask = targets[:, 0] == i
+                t = targets[mask]  # [N_i, 6]: [batch_idx, cls, cx, cy, w, h] normalised
+                if t.shape[0] == 0:
+                    target_list.append({
+                        "boxes":  torch.zeros(0, 4, device=self.device),
+                        "labels": torch.zeros(0, dtype=torch.int, device=self.device),
+                    })
+                else:
+                    cx = t[:, 2] * img_w
+                    cy = t[:, 3] * img_h
+                    bw = t[:, 4] * img_w
+                    bh = t[:, 5] * img_h
+                    boxes = torch.stack(
+                        [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], dim=-1
+                    )
+                    target_list.append({
+                        "boxes":  boxes,
+                        "labels": t[:, 1].int(),
+                    })
+
+            metrics.update(preds, target_list)
             num_batches += 1
 
-        console.print(f"  Validation done ({num_batches} batches)")
+        results = metrics.compute()
 
-    def _save_checkpoint(self, epoch: int):
+        if self.is_main:
+            console.print(
+                f"  Val [{num_batches} batches] "
+                f"mAP={results['mAP']:.4f}  "
+                f"mAP_50={results['mAP_50']:.4f}  "
+                f"mAP_75={results['mAP_75']:.4f}  "
+                f"mAR_100={results['mAR_100']:.4f}"
+            )
+
+        # Persist the best checkpoint when mAP_50 improves
+        if results["mAP_50"] > self.best_map:
+            self.best_map = results["mAP_50"]
+            self._save_checkpoint(epoch, is_best=True)
+
+        self._fire("on_validation_end", epoch, results)
+        return results
+
+    def _save_checkpoint(self, epoch: int, *, is_best: bool = False):
         raw_model = self.model.module if isinstance(self.model, DDP) else self.model
         state = {
             "epoch": epoch + 1,
@@ -207,6 +286,7 @@ class Trainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "best_map": self.best_map,
+            "global_step": self.global_step,
         }
         if self.ema is not None:
             state["ema"] = self.ema.state_dict()
@@ -214,6 +294,8 @@ class Trainer:
             state["scaler_state_dict"] = self.scaler.state_dict()
 
         torch.save(state, self.output_dir / "last.pt")
+        if is_best:
+            torch.save(state, self.output_dir / "best.pt")
         if (epoch + 1) % 50 == 0:
             torch.save(state, self.output_dir / f"epoch_{epoch + 1}.pt")
 
@@ -227,6 +309,7 @@ class Trainer:
         self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         self.start_epoch = ckpt["epoch"]
         self.best_map = ckpt.get("best_map", 0.0)
+        self.global_step = ckpt.get("global_step", self.start_epoch * len(self.train_loader))
 
         if self.ema is not None and "ema" in ckpt:
             self.ema.load_state_dict(ckpt["ema"])

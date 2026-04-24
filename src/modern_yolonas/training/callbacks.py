@@ -7,8 +7,11 @@ Implement any subset of hooks — unimplemented hooks are no-ops.
 from __future__ import annotations
 
 import csv
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class Callback:
@@ -25,6 +28,16 @@ class Callback:
 
     def on_epoch_end(self, trainer: Any, epoch: int, avg_loss: float) -> None:
         """Called at the end of each epoch."""
+
+    def on_validation_end(self, trainer: Any, epoch: int, metrics: dict) -> None:
+        """Called after each validation run with the computed detection metrics.
+
+        Args:
+            trainer: The :class:`Trainer` instance.
+            epoch: Zero-based epoch index.
+            metrics: Dict produced by :meth:`~modern_yolonas.training.metrics.DetectionMetrics.compute`,
+                containing keys such as ``mAP``, ``mAP_50``, ``mAP_75``, ``mAR_100``, etc.
+        """
 
     def on_train_end(self, trainer: Any) -> None:
         """Called once after training completes."""
@@ -108,3 +121,173 @@ class EarlyStoppingCallback(Callback):
             self._wait += 1
             if self._wait >= self.patience:
                 trainer._stop_training = True
+
+
+class WandbCallback(Callback):
+    """Log training losses, learning rate, and validation metrics to `Weights & Biases`_.
+
+    Requires ``wandb`` to be installed (``pip install wandb``).
+
+    Each training step is logged under the ``"train/"`` prefix; validation metrics
+    are logged under ``"val/"`` using the global step so that both streams share
+    the same x-axis in the W&B UI.
+
+    Args:
+        project: W&B project name.
+        name: Run display name.  If ``None`` W&B generates one automatically.
+        config: Optional hyper-parameter dict attached to the run.
+        tags: Optional list of tags for the run.
+        log_every: Log training scalars every *n* global steps (default: 1).
+        resume_run_id: Existing run ID to resume.  When given, sets
+            ``resume="must"`` in :func:`wandb.init`.
+
+    .. _Weights & Biases: https://wandb.ai
+    """
+
+    def __init__(
+        self,
+        project: str,
+        name: str | None = None,
+        config: dict | None = None,
+        tags: list[str] | None = None,
+        log_every: int = 1,
+        resume_run_id: str | None = None,
+    ) -> None:
+        try:
+            import wandb as _wandb  # noqa: F401
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "wandb is required for WandbCallback.  Install it with: pip install wandb"
+            ) from exc
+
+        self.project = project
+        self.name = name
+        self.config = config or {}
+        self.tags = tags
+        self.log_every = log_every
+        self.resume_run_id = resume_run_id
+        self._run = None
+
+    def on_train_start(self, trainer: Any) -> None:
+        import wandb
+
+        init_kwargs: dict = dict(
+            project=self.project,
+            name=self.name,
+            config=self.config,
+            tags=self.tags,
+        )
+        if self.resume_run_id is not None:
+            init_kwargs["id"] = self.resume_run_id
+            init_kwargs["resume"] = "must"
+
+        self._run = wandb.init(**init_kwargs)
+
+    def on_batch_end(
+        self, trainer: Any, epoch: int, batch_idx: int, loss: float, loss_dict: dict
+    ) -> None:
+        step = trainer.global_step
+        if step % self.log_every != 0:
+            return
+
+        import wandb
+
+        wandb.log(
+            {
+                "train/loss":     loss,
+                "train/cls_loss": loss_dict.get("cls_loss", 0.0),
+                "train/iou_loss": loss_dict.get("iou_loss", 0.0),
+                "train/dfl_loss": loss_dict.get("dfl_loss", 0.0),
+                "train/lr":       trainer.optimizer.param_groups[0]["lr"],
+            },
+            step=step,
+        )
+
+    def on_epoch_end(self, trainer: Any, epoch: int, avg_loss: float) -> None:
+        import wandb
+
+        wandb.log(
+            {"train/epoch_loss": avg_loss, "epoch": epoch + 1},
+            step=trainer.global_step,
+        )
+
+    def on_validation_end(self, trainer: Any, epoch: int, metrics: dict) -> None:
+        import wandb
+
+        wandb.log(
+            {f"val/{k}": v for k, v in metrics.items()},
+            step=trainer.global_step,
+        )
+
+    def on_train_end(self, trainer: Any) -> None:
+        import wandb
+
+        wandb.finish()
+        self._run = None
+
+
+class TensorBoardCallback(Callback):
+    """Log training losses, learning rate, and validation metrics to TensorBoard.
+
+    Requires ``tensorboard`` to be installed (``pip install tensorboard``).
+
+    Training scalars are logged at every global step under ``"train/"``; validation
+    metrics are logged after each evaluation run under ``"val/"``.
+
+    Args:
+        log_dir: Directory where TensorBoard event files are written.
+        log_every: Write training scalars every *n* global steps (default: 1).
+    """
+
+    def __init__(
+        self,
+        log_dir: str | Path = "runs/tensorboard",
+        log_every: int = 1,
+    ) -> None:
+        try:
+            from torch.utils.tensorboard import SummaryWriter  # noqa: F401
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "TensorBoard is required for TensorBoardCallback.  "
+                "Install it with: pip install tensorboard"
+            ) from exc
+
+        self.log_dir = Path(log_dir)
+        self.log_every = log_every
+        self._writer = None
+
+    def on_train_start(self, trainer: Any) -> None:
+        from torch.utils.tensorboard import SummaryWriter
+
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self._writer = SummaryWriter(log_dir=str(self.log_dir))
+
+    def on_batch_end(
+        self, trainer: Any, epoch: int, batch_idx: int, loss: float, loss_dict: dict
+    ) -> None:
+        step = trainer.global_step
+        if step % self.log_every != 0 or self._writer is None:
+            return
+
+        self._writer.add_scalar("train/loss",     loss,                                step)
+        self._writer.add_scalar("train/cls_loss", loss_dict.get("cls_loss", 0.0),      step)
+        self._writer.add_scalar("train/iou_loss", loss_dict.get("iou_loss", 0.0),      step)
+        self._writer.add_scalar("train/dfl_loss", loss_dict.get("dfl_loss", 0.0),      step)
+        self._writer.add_scalar("train/lr",       trainer.optimizer.param_groups[0]["lr"], step)
+
+    def on_epoch_end(self, trainer: Any, epoch: int, avg_loss: float) -> None:
+        if self._writer is None:
+            return
+        self._writer.add_scalar("train/epoch_loss", avg_loss, trainer.global_step)
+
+    def on_validation_end(self, trainer: Any, epoch: int, metrics: dict) -> None:
+        if self._writer is None:
+            return
+        step = trainer.global_step
+        for key, value in metrics.items():
+            self._writer.add_scalar(f"val/{key}", value, step)
+
+    def on_train_end(self, trainer: Any) -> None:
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
