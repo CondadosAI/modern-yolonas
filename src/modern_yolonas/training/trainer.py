@@ -324,9 +324,9 @@ class Trainer:
             "val/iou_loss": loss_sum["iou"]   / n,
             "val/dfl_loss": loss_sum["dfl"]   / n,
             # Detection metrics — in their own group
-            "val metrics/mAP":     map_results["mAP"],
-            "val metrics/mAP_50":  map_results["mAP_50"],
-            "val metrics/mAR_100": map_results["mAR_100"],
+            "val_metrics/mAP":     map_results["mAP"],
+            "val_metrics/mAP_50":  map_results["mAP_50"],
+            "val_metrics/mAR_100": map_results["mAR_100"],
         }
 
         if self.is_main:
@@ -336,14 +336,14 @@ class Trainer:
                 f"cls={results['val/cls_loss']:.4f}  "
                 f"iou={results['val/iou_loss']:.4f}  "
                 f"dfl={results['val/dfl_loss']:.4f}  "
-                f"mAP={results['val metrics/mAP']:.4f}  "
-                f"mAP_50={results['val metrics/mAP_50']:.4f}  "
-                f"mAR_100={results['val metrics/mAR_100']:.4f}"
+                f"mAP={results['val_metrics/mAP']:.4f}  "
+                f"mAP_50={results['val_metrics/mAP_50']:.4f}  "
+                f"mAR_100={results['val_metrics/mAR_100']:.4f}"
             )
 
         # Persist the best checkpoint when mAP_50 improves
-        if results["val metrics/mAP_50"] > self.best_map:
-            self.best_map = results["val metrics/mAP_50"]
+        if results["val_metrics/mAP_50"] > self.best_map:
+            self.best_map = results["val_metrics/mAP_50"]
             self._save_checkpoint(epoch, is_best=True)
 
         self._fire("on_validation_end", epoch, results)
