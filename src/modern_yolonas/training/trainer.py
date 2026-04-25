@@ -148,7 +148,7 @@ class Trainer:
                 images = images.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
 
-                with torch.amp.autocast("cuda", enabled=self.use_amp):
+                with torch.amp.autocast(self.device, enabled=self.use_amp):
                     predictions = self.model(images)
                     loss, loss_dict = self.criterion(
                         predictions, targets,
@@ -160,6 +160,7 @@ class Trainer:
                 self.optimizer.zero_grad()
                 if self.scaler is not None:
                     self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
@@ -239,7 +240,7 @@ class Trainer:
             images  = images.to(self.device, non_blocking=True)
             targets = targets.to(self.device, non_blocking=True)
 
-            with torch.amp.autocast("cuda", enabled=self.use_amp):
+            with torch.amp.autocast(self.device, enabled=self.use_amp):
                 predictions = eval_model(images)
                 loss, loss_dict = self.criterion(
                     predictions, targets,
