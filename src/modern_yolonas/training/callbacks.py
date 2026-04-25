@@ -88,28 +88,40 @@ class RichProgressCallback(Callback):
 
 
 class CSVLoggerCallback(Callback):
-    """Log training metrics to a CSV file."""
+    """Log training metrics to a CSV file (one row per epoch)."""
 
     def __init__(self, path: str | Path = "training_log.csv"):
         self.path = Path(path)
         self._writer = None
         self._file = None
+        self._loss_acc: dict[str, float] = {}
+        self._batch_count = 0
 
     def on_train_start(self, trainer):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._file = open(self.path, "w", newline="")
         self._writer = csv.writer(self._file)
-        self._writer.writerow(["epoch", "batch", "loss", "cls_loss", "iou_loss", "dfl_loss", "lr"])
+        self._writer.writerow(["epoch", "loss", "cls_loss", "iou_loss", "dfl_loss", "lr"])
+
+    def on_epoch_start(self, trainer, epoch):
+        self._loss_acc = {}
+        self._batch_count = 0
 
     def on_batch_end(self, trainer, epoch, batch_idx, loss, loss_dict):
+        self._batch_count += 1
+        self._loss_acc["loss"] = self._loss_acc.get("loss", 0.0) + loss
+        for k, v in loss_dict.items():
+            self._loss_acc[k] = self._loss_acc.get(k, 0.0) + v
+
+    def on_epoch_end(self, trainer, epoch, avg_loss):
+        n = max(self._batch_count, 1)
         lr = trainer.optimizer.param_groups[0]["lr"]
         self._writer.writerow([
-            epoch,
-            batch_idx,
-            f"{loss:.6f}",
-            f"{loss_dict.get('cls_loss', 0):.6f}",
-            f"{loss_dict.get('iou_loss', 0):.6f}",
-            f"{loss_dict.get('dfl_loss', 0):.6f}",
+            epoch + 1,
+            f"{self._loss_acc.get('loss', 0.0) / n:.6f}",
+            f"{self._loss_acc.get('cls_loss', 0.0) / n:.6f}",
+            f"{self._loss_acc.get('iou_loss', 0.0) / n:.6f}",
+            f"{self._loss_acc.get('dfl_loss', 0.0) / n:.6f}",
             f"{lr:.8f}",
         ])
 
@@ -151,7 +163,6 @@ class WandbCallback(Callback):
         name: Run display name.  If ``None`` W&B generates one automatically.
         config: Optional hyper-parameter dict attached to the run.
         tags: Optional list of tags for the run.
-        log_every: Log training scalars every *n* global steps (default: 1).
         resume_run_id: Existing run ID to resume.  When given, sets
             ``resume="must"`` in :func:`wandb.init`.
 
@@ -164,7 +175,6 @@ class WandbCallback(Callback):
         name: str | None = None,
         config: dict | None = None,
         tags: list[str] | None = None,
-        log_every: int = 1,
         resume_run_id: str | None = None,
     ) -> None:
         try:
@@ -178,9 +188,10 @@ class WandbCallback(Callback):
         self.name = name
         self.config = config or {}
         self.tags = tags
-        self.log_every = log_every
         self.resume_run_id = resume_run_id
         self._run = None
+        self._loss_acc: dict[str, float] = {}
+        self._batch_count = 0
 
     def on_train_start(self, trainer: Any) -> None:
         import wandb
@@ -197,41 +208,40 @@ class WandbCallback(Callback):
 
         self._run = wandb.init(**init_kwargs)
 
+    def on_epoch_start(self, trainer: Any, epoch: int) -> None:
+        self._loss_acc = {}
+        self._batch_count = 0
+
     def on_batch_end(
         self, trainer: Any, epoch: int, batch_idx: int, loss: float, loss_dict: dict
     ) -> None:
-        step = trainer.global_step
-        if step % self.log_every != 0:
-            return
-
-        import wandb
-
-        wandb.log(
-            {
-                "train/loss":     loss,
-                "train/cls_loss": loss_dict.get("cls_loss", 0.0),
-                "train/iou_loss": loss_dict.get("iou_loss", 0.0),
-                "train/dfl_loss": loss_dict.get("dfl_loss", 0.0),
-                "train/lr":       trainer.optimizer.param_groups[0]["lr"],
-            },
-            step=step,
-        )
+        self._batch_count += 1
+        self._loss_acc["loss"] = self._loss_acc.get("loss", 0.0) + loss
+        for k, v in loss_dict.items():
+            self._loss_acc[k] = self._loss_acc.get(k, 0.0) + v
 
     def on_epoch_end(self, trainer: Any, epoch: int, avg_loss: float) -> None:
         import wandb
 
+        n = max(self._batch_count, 1)
         wandb.log(
-            {"train/epoch_loss": avg_loss, "epoch": epoch + 1},
-            step=trainer.global_step,
+            {
+                "train/loss":     self._loss_acc.get("loss", 0.0) / n,
+                "train/cls_loss": self._loss_acc.get("cls_loss", 0.0) / n,
+                "train/iou_loss": self._loss_acc.get("iou_loss", 0.0) / n,
+                "train/dfl_loss": self._loss_acc.get("dfl_loss", 0.0) / n,
+                "train/lr":       trainer.optimizer.param_groups[0]["lr"],
+                "epoch":          epoch + 1,
+            },
+            step=epoch + 1,
+            commit=False,
         )
 
     def on_validation_end(self, trainer: Any, epoch: int, metrics: dict) -> None:
         import wandb
 
-        wandb.log(
-            {f"val/{k}": v for k, v in metrics.items()},
-            step=trainer.global_step,
-        )
+        # metrics keys are already prefixed (e.g. "val/loss", "val metrics/mAP")
+        wandb.log(dict(metrics), step=epoch + 1, commit=False)
 
     def on_validation_images(
         self, trainer: Any, epoch: int, images: list
@@ -241,11 +251,12 @@ class WandbCallback(Callback):
         wandb.log(
             {
                 "val/detections": [
-                    wandb.Image(img[:, :, ::-1], caption=f"epoch {epoch + 1} [{i}]")
+                    wandb.Image(img[:, :, ::-1].copy(), caption=f"epoch {epoch + 1} [{i}]")
                     for i, img in enumerate(images)
                 ]
             },
-            step=trainer.global_step,
+            step=epoch + 1,
+            commit=False,
         )
 
     def on_train_end(self, trainer: Any) -> None:
@@ -272,14 +283,12 @@ class TensorBoardCallback(Callback):
         experiment_name: Sub-directory name that identifies this run.  Defaults
             to ``"default"``; use a descriptive string such as
             ``"yolo_nas_s_coco_lr2e-4"`` to keep runs apart.
-        log_every: Write training scalars every *n* global steps (default: 1).
     """
 
     def __init__(
         self,
         log_dir: str | Path = "runs/tensorboard",
         experiment_name: str = "default",
-        log_every: int = 1,
     ) -> None:
         try:
             from torch.utils.tensorboard import SummaryWriter  # noqa: F401
@@ -290,8 +299,9 @@ class TensorBoardCallback(Callback):
             ) from exc
 
         self.log_dir = Path(log_dir) / experiment_name
-        self.log_every = log_every
         self._writer = None
+        self._loss_acc: dict[str, float] = {}
+        self._batch_count = 0
 
     def on_train_start(self, trainer: Any) -> None:
         from torch.utils.tensorboard import SummaryWriter
@@ -299,28 +309,33 @@ class TensorBoardCallback(Callback):
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._writer = SummaryWriter(log_dir=str(self.log_dir))
 
+    def on_epoch_start(self, trainer: Any, epoch: int) -> None:
+        self._loss_acc = {}
+        self._batch_count = 0
+
     def on_batch_end(
         self, trainer: Any, epoch: int, batch_idx: int, loss: float, loss_dict: dict
     ) -> None:
-        step = trainer.global_step
-        if step % self.log_every != 0 or self._writer is None:
-            return
-
-        self._writer.add_scalar("train/loss",     loss,                                step)
-        self._writer.add_scalar("train/cls_loss", loss_dict.get("cls_loss", 0.0),      step)
-        self._writer.add_scalar("train/iou_loss", loss_dict.get("iou_loss", 0.0),      step)
-        self._writer.add_scalar("train/dfl_loss", loss_dict.get("dfl_loss", 0.0),      step)
-        self._writer.add_scalar("train/lr",       trainer.optimizer.param_groups[0]["lr"], step)
+        self._batch_count += 1
+        self._loss_acc["loss"] = self._loss_acc.get("loss", 0.0) + loss
+        for k, v in loss_dict.items():
+            self._loss_acc[k] = self._loss_acc.get(k, 0.0) + v
 
     def on_epoch_end(self, trainer: Any, epoch: int, avg_loss: float) -> None:
         if self._writer is None:
             return
-        self._writer.add_scalar("train/epoch_loss", avg_loss, trainer.global_step)
+        n = max(self._batch_count, 1)
+        step = epoch + 1
+        self._writer.add_scalar("train/loss",     self._loss_acc.get("loss", 0.0) / n,     step)
+        self._writer.add_scalar("train/cls_loss", self._loss_acc.get("cls_loss", 0.0) / n, step)
+        self._writer.add_scalar("train/iou_loss", self._loss_acc.get("iou_loss", 0.0) / n, step)
+        self._writer.add_scalar("train/dfl_loss", self._loss_acc.get("dfl_loss", 0.0) / n, step)
+        self._writer.add_scalar("train/lr",       trainer.optimizer.param_groups[0]["lr"],  step)
 
     def on_validation_end(self, trainer: Any, epoch: int, metrics: dict) -> None:
         if self._writer is None:
             return
-        step = trainer.global_step
+        step = epoch + 1
         for key, value in metrics.items():
             self._writer.add_scalar(f"{key}", value, step)
 
@@ -329,7 +344,7 @@ class TensorBoardCallback(Callback):
     ) -> None:
         if self._writer is None:
             return
-        step = trainer.global_step
+        step = epoch + 1
         for i, img_bgr in enumerate(images):
             # TensorBoard expects [C, H, W] uint8 or float; convert BGR → RGB
             img_rgb_chw = img_bgr[:, :, ::-1].transpose(2, 0, 1)
