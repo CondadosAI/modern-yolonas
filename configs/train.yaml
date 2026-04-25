@@ -2,8 +2,8 @@
 # CLI flags always override values defined here.
 model:
   type: yolo_nas_s
-  num_classes: 0      # 0 = auto-detect from dataset
-  input-size: 640
+  num_classes: 3      # 0 = auto-detect from dataset
+  input-size: 320
 
 train:
   epochs: 300

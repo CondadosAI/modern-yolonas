@@ -39,8 +39,11 @@ class COCODetectionDataset(Dataset):
         self.coco = COCO(str(ann_file))
         self.ids = list(sorted(self.coco.imgs.keys()))
 
-        # Build contiguous class mapping (COCO IDs are not 0-79)
-        cat_ids = sorted(self.coco.getCatIds())
+        # Build contiguous class mapping using only categories present in annotations.
+        # Excludes unused categories (e.g. a "background" id=0 that carries no annotations)
+        # so that the resulting label indices are always 0-indexed and contiguous.
+        ann_cat_ids = {ann["category_id"] for ann in self.coco.dataset.get("annotations", [])}
+        cat_ids = sorted(c for c in self.coco.getCatIds() if c in ann_cat_ids)
         self.cat_id_to_label = {cat_id: i for i, cat_id in enumerate(cat_ids)}
 
         # Ordered list of class names aligned with label indices 0..N-1
