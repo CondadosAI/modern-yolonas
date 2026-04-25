@@ -109,6 +109,11 @@ class Trainer:
         self.use_amp = use_amp
         self.scaler = torch.amp.GradScaler("cuda", enabled=use_amp) if use_amp else None
 
+        # Speed: let cuDNN auto-select fastest convolution algorithms for
+        # the fixed input size used throughout training.
+        # if self.device.type == "cuda":
+        #     torch.backends.cudnn.benchmark = True
+
         # EMA
         self.ema = ModelEMA(raw_model) if use_ema else None
 
@@ -148,7 +153,7 @@ class Trainer:
                 images = images.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
 
-                with torch.amp.autocast(self.device, enabled=self.use_amp):
+                with torch.amp.autocast(str(self.device), enabled=self.use_amp):
                     predictions = self.model(images)
                     loss, loss_dict = self.criterion(
                         predictions, targets,
@@ -157,16 +162,15 @@ class Trainer:
                     )
 
                 # Backward
-                self.optimizer.zero_grad()
+                self.optimizer.zero_grad(set_to_none=True)
                 if self.scaler is not None:
                     self.scaler.scale(loss).backward()
-                    self.scaler.unscale_(self.optimizer)
+                    # self.scaler.unscale_(self.optimizer)
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
                     loss.backward()
                     self.optimizer.step()
-
                 self.scheduler.step()
 
                 if self.ema is not None:
@@ -240,7 +244,7 @@ class Trainer:
             images  = images.to(self.device, non_blocking=True)
             targets = targets.to(self.device, non_blocking=True)
 
-            with torch.amp.autocast(self.device, enabled=self.use_amp):
+            with torch.amp.autocast(str(self.device), enabled=self.use_amp):
                 predictions = eval_model(images)
                 loss, loss_dict = self.criterion(
                     predictions, targets,

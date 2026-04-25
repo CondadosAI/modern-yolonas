@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
+import yaml
 
 
 class ModelName(str, Enum):
@@ -22,6 +23,7 @@ class DataFormat(str, Enum):
 
 def train(
     data: Annotated[str, typer.Option(help="Path to dataset root.")],
+    config: Annotated[str | None, typer.Option("--config", "-c", help="Path to YAML config file. CLI flags override config values.")] = None,
     model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
     data_format: Annotated[DataFormat, typer.Option("--format", help="Dataset format.")] = DataFormat.yolo,
     epochs: Annotated[int, typer.Option(help="Number of training epochs.")] = 300,
@@ -42,6 +44,7 @@ def train(
     tensorboard_dir: Annotated[str, typer.Option(help="TensorBoard root log directory.")] = "runs/tensorboard",
     tensorboard_name: Annotated[str, typer.Option(help="TensorBoard experiment name (sub-directory under tensorboard-dir).")] = "default",
     val_freq: Annotated[int, typer.Option(help="Run validation every N epochs.")] = 10,
+    compile_model: Annotated[bool, typer.Option("--compile/--no-compile", help="torch.compile the model for faster training (PyTorch 2+).")] = False,
     # COCO-specific path overrides
     train_images: Annotated[str | None, typer.Option(help="[COCO] Training images directory. Defaults to <data>/images/train.")] = None,
     val_images: Annotated[str | None, typer.Option(help="[COCO] Validation images directory. Defaults to <data>/images/val.")] = None,
@@ -51,6 +54,56 @@ def train(
     """Train a YOLO-NAS model."""
     from rich.console import Console
 
+    # --- Config file -------------------------------------------------------
+    # Load YAML first; any flag that still holds its default value is replaced
+    # by the config value, so explicit CLI flags always win.
+    # Supports a nested layout with top-level "model" and "train" sections:
+    #
+    #   model:
+    #     type: yolo_nas_s
+    #     num_classes: 3
+    #     input-size: 320
+    #   train:
+    #     epochs: 100
+    #     batch-size: 64
+    #     ...
+    #
+    # as well as the original flat layout.
+    if config is not None:
+        cfg: dict[str, Any] = yaml.safe_load(Path(config).read_text()) or {}
+
+        # Normalise: if nested sections exist, merge them into a flat dict
+        cfg_model: dict[str, Any] = {}
+        cfg_train: dict[str, Any] = {}
+        if isinstance(cfg.get("model"), dict):
+            cfg_model = cfg.pop("model")
+            # "type" maps to the "model" CLI flag
+            if "type" in cfg_model:
+                cfg_model["model"] = cfg_model.pop("type")
+        if isinstance(cfg.get("train"), dict):
+            cfg_train = cfg.pop("train")
+        flat: dict[str, Any] = {**cfg_train, **cfg_model, **cfg}
+
+        def _pick(val: Any, key: str, default: Any) -> Any:
+            """Return val if it differs from default, otherwise fall back to flat cfg."""
+            return val if val != default else flat.get(key, val)
+
+        model_str = _pick(model.value, "model", ModelName.yolo_nas_s.value)
+        model      = ModelName(model_str)
+        epochs     = _pick(epochs,      "epochs",      300)
+        batch_size = _pick(batch_size,  "batch-size",  32)
+        lr         = float(_pick(lr,          "lr",          2e-4))
+        device     = _pick(device,      "device",      "cuda")
+        output     = _pick(output,      "output",      "runs/train")
+        input_size = _pick(input_size,  "input-size",  640)
+        workers    = _pick(workers,     "workers",     8)
+        pretrained = _pick(pretrained,  "pretrained",  True)
+        if num_classes == 0:
+            num_classes = int(flat.get("num_classes", flat.get("num-classes", 0)))
+        compile_model = _pick(compile_model, "compile", False)
+        val_freq      = _pick(val_freq,       "val-freq", 10)
+
+    # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
     from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, LetterboxResize, Normalize
     from modern_yolonas.data.collate import detection_collate_fn
@@ -125,14 +178,22 @@ def train(
         console.print(f"Building {model.value} (pretrained={pretrained}, num_classes={num_classes})...")
         yolo_model = builders[model.value](pretrained=pretrained, num_classes=num_classes)
 
+    if compile_model:
+        import torch
+        yolo_model = torch.compile(yolo_model)
+        console.print("[green]torch.compile enabled[/green]")
+
     # DataLoaders --------------------------------------------------------
+    _persistent = workers > 0
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, num_workers=workers,
         collate_fn=detection_collate_fn, pin_memory=True, drop_last=True,
+        persistent_workers=_persistent, prefetch_factor=2 if _persistent else None,
     )
     val_loader = DataLoader(
         val_dataset, batch_size=batch_size, shuffle=False, num_workers=workers,
         collate_fn=detection_collate_fn, pin_memory=True,
+        persistent_workers=_persistent, prefetch_factor=2 if _persistent else None,
     )
 
     # Callbacks ----------------------------------------------------------
