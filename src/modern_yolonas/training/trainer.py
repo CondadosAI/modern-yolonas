@@ -69,6 +69,7 @@ class Trainer:
         class_names: list[str] | None = None,
         val_freq: int = 10,
         val_vis_images: int = 8,
+        gradient_accum: int = 1,
     ):
         self.epochs = epochs
         self.callbacks = callbacks or []
@@ -78,6 +79,7 @@ class Trainer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.is_main = local_rank <= 0
+        self.gradient_accum = max(1, gradient_accum)
 
         # DDP setup
         if local_rank >= 0:
@@ -150,6 +152,12 @@ class Trainer:
                 console.print(f"\n[bold]Epoch {epoch + 1}/{self.epochs}[/bold]")
 
             for batch_idx, (images, targets) in enumerate(self.train_loader):
+                is_last_batch = (batch_idx + 1 == len(self.train_loader))
+                should_step = (batch_idx + 1) % self.gradient_accum == 0 or is_last_batch
+
+                if batch_idx % self.gradient_accum == 0:
+                    self.optimizer.zero_grad(set_to_none=True)
+
                 images = images.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
 
@@ -160,28 +168,30 @@ class Trainer:
                         input_size=(images.shape[2], images.shape[3]),
                         epoch=epoch,
                     )
+                    loss = loss / self.gradient_accum
 
-                # Backward
-                self.optimizer.zero_grad(set_to_none=True)
                 if self.scaler is not None:
                     self.scaler.scale(loss).backward()
-                    # self.scaler.unscale_(self.optimizer)
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    if should_step:
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
                 else:
                     loss.backward()
-                    self.optimizer.step()
+                    if should_step:
+                        self.optimizer.step()
+
                 self.scheduler.step()
 
-                if self.ema is not None:
+                if should_step and self.ema is not None:
                     raw_model = self.model.module if isinstance(self.model, DDP) else self.model
                     self.ema.update(raw_model)
 
-                epoch_loss += loss.item()
+                unscaled_loss = loss.item() * self.gradient_accum
+                epoch_loss += unscaled_loss
                 num_batches += 1
                 self.global_step += 1
 
-                self._fire("on_batch_end", epoch, batch_idx, loss.item(), loss_dict)
+                self._fire("on_batch_end", epoch, batch_idx, unscaled_loss, loss_dict)
 
                 if self.is_main and (batch_idx + 1) % 50 == 0:
                     avg_loss = epoch_loss / num_batches

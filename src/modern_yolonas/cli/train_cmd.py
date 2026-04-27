@@ -45,6 +45,7 @@ def train(
     tensorboard_name: Annotated[str, typer.Option(help="TensorBoard experiment name (sub-directory under tensorboard-dir).")] = "default",
     val_freq: Annotated[int, typer.Option(help="Run validation every N epochs.")] = 10,
     compile_model: Annotated[bool, typer.Option("--compile/--no-compile", help="torch.compile the model for faster training (PyTorch 2+).")] = False,
+    gradient_accum: Annotated[int, typer.Option(help="Gradient accumulation steps (1 = disabled).")] = 1,
     # COCO-specific path overrides
     train_images: Annotated[str | None, typer.Option(help="[COCO] Training images directory. Defaults to <data>/images/train.")] = None,
     val_images: Annotated[str | None, typer.Option(help="[COCO] Validation images directory. Defaults to <data>/images/val.")] = None,
@@ -100,8 +101,9 @@ def train(
         pretrained = _pick(pretrained,  "pretrained",  True)
         if num_classes == 0:
             num_classes = int(flat.get("num_classes", flat.get("num-classes", 0)))
-        compile_model = _pick(compile_model, "compile", False)
-        val_freq      = _pick(val_freq,       "val-freq", 10)
+        compile_model   = _pick(compile_model,   "compile",        False)
+        val_freq        = _pick(val_freq,         "val-freq",       10)
+        gradient_accum  = int(_pick(gradient_accum, "gradient_accum", 1))
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
@@ -219,6 +221,7 @@ def train(
         callbacks=callbacks,
         class_names=class_names,
         val_freq=val_freq,
+        gradient_accum=gradient_accum,
     )
 
     if resume_path:
