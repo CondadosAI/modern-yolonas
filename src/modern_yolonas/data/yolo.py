@@ -34,6 +34,7 @@ class YOLODetectionDataset(Dataset):
         transforms=None,
         input_size: int = 640,
         cache_annotations: bool = True,
+        ignore_empty_annotations: bool = True,
     ):
         self.root = Path(root)
         self.transforms = transforms
@@ -53,6 +54,14 @@ class YOLODetectionDataset(Dataset):
         self._label_cache: list[np.ndarray] | None = None
         if cache_annotations:
             self._label_cache = [self._read_label(p) for p in self.images]
+
+        # Drop images with no annotations (background-only samples waste training batches)
+        if ignore_empty_annotations:
+            labels = self._label_cache if self._label_cache is not None else [self._read_label(p) for p in self.images]
+            keep = [i for i, t in enumerate(labels) if len(t) > 0]
+            self.images = [self.images[i] for i in keep]
+            if self._label_cache is not None:
+                self._label_cache = [self._label_cache[i] for i in keep]
 
     def _load_class_names(self) -> list[str] | None:
         """Return class names from ``classes.txt`` or ``data.yaml`` if present."""

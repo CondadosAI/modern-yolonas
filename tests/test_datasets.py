@@ -157,7 +157,7 @@ class TestCOCODetectionDataset:
                 "annotations": [],
                 "categories": [{"id": 5, "name": "cat_a"}],
             }, f)
-        ds = COCODetectionDataset(root=img_dir, ann_file=ann)
+        ds = COCODetectionDataset(root=img_dir, ann_file=ann, ignore_empty_annotations=False)
         _, targets = ds.load_raw(0)
         assert targets.shape == (0, 5)
 
@@ -178,13 +178,13 @@ class TestYOLODetectionDataset:
         return tmp_path
 
     def test_discovers_images_only(self, yolo_root):
-        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        ds = YOLODetectionDataset(root=yolo_root, split="train", ignore_empty_annotations=False)
         assert len(ds) == 2
         suffixes = {p.suffix for p in ds.images}
         assert ".txt" not in suffixes
 
     def test_load_raw_with_labels(self, yolo_root):
-        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        ds = YOLODetectionDataset(root=yolo_root, split="train", ignore_empty_annotations=False)
         # First image is sorted by filename; find the one with labels
         image, targets = ds.load_raw(0)  # a.jpg
         assert image.shape == (100, 100, 3)
@@ -192,7 +192,7 @@ class TestYOLODetectionDataset:
         assert targets.dtype == np.float32
 
     def test_load_raw_missing_label_file(self, yolo_root):
-        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        ds = YOLODetectionDataset(root=yolo_root, split="train", ignore_empty_annotations=False)
         # b.png has no label file → empty targets
         image, targets = ds.load_raw(1)
         assert image.shape == (100, 100, 3)
@@ -201,10 +201,17 @@ class TestYOLODetectionDataset:
     def test_getitem_applies_transforms(self, yolo_root):
         def _noop(image, targets):
             return image, targets + 0  # forces evaluation
-        ds = YOLODetectionDataset(root=yolo_root, split="train", transforms=_noop)
+        ds = YOLODetectionDataset(root=yolo_root, split="train", transforms=_noop, ignore_empty_annotations=False)
         image, targets = ds[0]
         assert image.shape == (100, 100, 3)
         assert targets.shape[1] == 5
+
+    def test_ignore_empty_annotations_filters_unannotated(self, yolo_root):
+        # Default: ignore_empty_annotations=True → only a.jpg (has labels) remains
+        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        assert len(ds) == 1
+        _, targets = ds.load_raw(0)
+        assert len(targets) > 0
 
 
 class TestRandomAffine:

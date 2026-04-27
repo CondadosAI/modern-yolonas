@@ -50,6 +50,7 @@ def train(
     early_stopping_min_delta: Annotated[float, typer.Option(help="Minimum improvement in train loss to count as progress.")] = 1e-4,
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
     num_gpus: Annotated[int, typer.Option(help="Number of GPUs for DDP training. 1 = single GPU. Values >1 spawn child processes via torchrun.")] = 1,
+    ignore_empty: Annotated[bool, typer.Option("--ignore-empty/--no-ignore-empty", help="Skip images with zero annotations (background-only samples).")] = True,
     # COCO-specific path overrides
     train_images: Annotated[str | None, typer.Option(help="[COCO] Training images directory. Defaults to <data>/images/train.")] = None,
     val_images: Annotated[str | None, typer.Option(help="[COCO] Validation images directory. Defaults to <data>/images/val.")] = None,
@@ -112,6 +113,7 @@ def train(
         early_stopping_min_delta = float(_pick(early_stopping_min_delta, "early-stopping-min-delta", 1e-4))
         amp      = bool(_pick(amp,      "amp",       True))
         num_gpus = int(_pick(num_gpus,  "num-gpus",  1))
+        ignore_empty = bool(_pick(ignore_empty, "ignore-empty", True))
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
@@ -137,7 +139,7 @@ def train(
     if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
 
-        train_dataset = YOLODetectionDataset(data, split="train", transforms=train_transforms, input_size=input_size)
+        train_dataset = YOLODetectionDataset(data, split="train", transforms=train_transforms, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset = YOLODetectionDataset(data, split="val", transforms=val_transforms, input_size=input_size)
         if num_classes == 0:
             num_classes = train_dataset.num_classes
@@ -161,7 +163,7 @@ def train(
         if not _val_ann.exists() and (data_path / "annotations" / "instances_val2017.json").exists():
             _val_ann = data_path / "annotations" / "instances_val2017.json"
 
-        train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=train_transforms, input_size=input_size)
+        train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=train_transforms, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset   = COCODetectionDataset(_val_images,   _val_ann,   transforms=val_transforms,   input_size=input_size)
 
         if num_classes == 0:

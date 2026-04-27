@@ -30,6 +30,7 @@ class COCODetectionDataset(Dataset):
         transforms: Transform | None = None,
         input_size: int = 640,
         cache_annotations: bool = True,
+        ignore_empty_annotations: bool = True,
     ):
         from pycocotools.coco import COCO
 
@@ -55,6 +56,14 @@ class COCODetectionDataset(Dataset):
         self._label_cache: list[np.ndarray] | None = None
         if cache_annotations:
             self._label_cache = [self._parse_anns(img_id) for img_id in self.ids]
+
+        # Drop images with no annotations (background-only samples waste training batches)
+        if ignore_empty_annotations:
+            labels = self._label_cache if self._label_cache is not None else [self._parse_anns(img_id) for img_id in self.ids]
+            keep = [i for i, t in enumerate(labels) if len(t) > 0]
+            self.ids = [self.ids[i] for i in keep]
+            if self._label_cache is not None:
+                self._label_cache = [self._label_cache[i] for i in keep]
 
     def __len__(self) -> int:
         return len(self.ids)
