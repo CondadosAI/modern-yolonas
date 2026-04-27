@@ -46,6 +46,10 @@ def train(
     val_freq: Annotated[int, typer.Option(help="Run validation every N epochs.")] = 10,
     compile_model: Annotated[bool, typer.Option("--compile/--no-compile", help="torch.compile the model for faster training (PyTorch 2+).")] = False,
     gradient_accum: Annotated[int, typer.Option(help="Gradient accumulation steps (1 = disabled).")] = 1,
+    early_stopping_patience: Annotated[int, typer.Option(help="Stop training if train loss doesn't improve for N epochs (0 = disabled).")] = 0,
+    early_stopping_min_delta: Annotated[float, typer.Option(help="Minimum improvement in train loss to count as progress.")] = 1e-4,
+    amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
+    num_gpus: Annotated[int, typer.Option(help="Number of GPUs for DDP training. 1 = single GPU. Values >1 spawn child processes via torchrun.")] = 1,
     # COCO-specific path overrides
     train_images: Annotated[str | None, typer.Option(help="[COCO] Training images directory. Defaults to <data>/images/train.")] = None,
     val_images: Annotated[str | None, typer.Option(help="[COCO] Validation images directory. Defaults to <data>/images/val.")] = None,
@@ -104,10 +108,14 @@ def train(
         compile_model   = _pick(compile_model,   "compile",        False)
         val_freq        = _pick(val_freq,         "val-freq",       10)
         gradient_accum  = int(_pick(gradient_accum, "gradient_accum", 1))
+        early_stopping_patience  = int(_pick(early_stopping_patience,  "early-stopping-patience",  0))
+        early_stopping_min_delta = float(_pick(early_stopping_min_delta, "early-stopping-min-delta", 1e-4))
+        amp      = bool(_pick(amp,      "amp",       True))
+        num_gpus = int(_pick(num_gpus,  "num-gpus",  1))
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, LetterboxResize, Normalize
+    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomChannelSwap, LetterboxResize, Normalize, Mixup
     from modern_yolonas.data.collate import detection_collate_fn
     from modern_yolonas.training.trainer import Trainer
     from torch.utils.data import DataLoader
@@ -116,10 +124,12 @@ def train(
     data_path = Path(data)
 
     train_transforms = Compose([
-        HSVAugment(),
+        HSVAugment(p=0.5),
         HorizontalFlip(),
-        RandomAffine(degrees=0.0, translate=0.1, scale=(0.5, 1.5)),
+        RandomAffine(degrees=0.0, translate=0.25, scale=(0.5, 1.5)),
+        RandomChannelSwap(p=0.5),
         LetterboxResize(target_size=input_size),
+        # Mixup is appended here after the dataset is created (needs dataset reference)
         Normalize(),
     ])
     val_transforms = Compose([LetterboxResize(target_size=input_size), Normalize()])
@@ -156,6 +166,9 @@ def train(
 
         if num_classes == 0:
             num_classes = len(train_dataset.cat_id_to_label)
+
+    # Wire Mixup now that we have a dataset (placed just before Normalize)
+    train_transforms.transforms.insert(-1, Mixup(train_dataset, p=0.5))
 
     # Resolve class names from dataset (used for annotation in val image logging)
     class_names: list[str] | None = getattr(train_dataset, "class_names", None)
@@ -208,6 +221,10 @@ def train(
         from modern_yolonas.training.callbacks import TensorBoardCallback
         callbacks.append(TensorBoardCallback(log_dir=tensorboard_dir, experiment_name=tensorboard_name))
         console.print(f"[green]TensorBoard logging enabled → {tensorboard_dir}/{tensorboard_name}[/green]")
+    if early_stopping_patience > 0:
+        from modern_yolonas.training.callbacks import EarlyStoppingCallback
+        callbacks.append(EarlyStoppingCallback(patience=early_stopping_patience, min_delta=early_stopping_min_delta))
+        console.print(f"[green]Early stopping enabled → patience={early_stopping_patience}, min_delta={early_stopping_min_delta}[/green]")
 
     trainer = Trainer(
         model=yolo_model,
@@ -222,10 +239,80 @@ def train(
         class_names=class_names,
         val_freq=val_freq,
         gradient_accum=gradient_accum,
+        use_amp=amp,
     )
 
     if resume_path:
         trainer.resume(resume_path)
 
+    if num_gpus > 1:
+        import os
+        import torch.multiprocessing as mp
+
+        os.environ.setdefault("MASTER_ADDR", "localhost")
+        os.environ.setdefault("MASTER_PORT", "29500")
+        console.print(f"[green]DDP training on {num_gpus} GPUs[/green]")
+        mp.spawn(
+            _ddp_worker,
+            args=(num_gpus, yolo_model, train_loader, val_loader, num_classes,
+                  epochs, lr, output, device, callbacks, class_names, val_freq,
+                  gradient_accum, amp, resume_path),
+            nprocs=num_gpus,
+            join=True,
+        )
+    else:
+        trainer.train()
+
+
+def _ddp_worker(
+    local_rank: int,
+    world_size: int,
+    model,
+    train_loader,
+    val_loader,
+    num_classes: int,
+    epochs: int,
+    lr: float,
+    output_dir: str,
+    device: str,
+    callbacks: list,
+    class_names,
+    val_freq: int,
+    gradient_accum: int,
+    use_amp: bool,
+    resume_path: str | None,
+):
+    """DDP worker spawned by ``torch.multiprocessing.spawn`` for multi-GPU training."""
+    import os
+    import torch.distributed as dist
+    from modern_yolonas.training.trainer import Trainer
+
+    os.environ["LOCAL_RANK"] = str(local_rank)
+    os.environ["RANK"]       = str(local_rank)
+    os.environ["WORLD_SIZE"] = str(world_size)
+
+    dist.init_process_group(backend="nccl", init_method="env://",
+                            world_size=world_size, rank=local_rank)
+
+    trainer = Trainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        num_classes=num_classes,
+        epochs=epochs,
+        lr=lr,
+        output_dir=output_dir,
+        device=f"cuda:{local_rank}",
+        callbacks=callbacks,
+        class_names=class_names,
+        val_freq=val_freq,
+        gradient_accum=gradient_accum,
+        use_amp=use_amp,
+        local_rank=local_rank,
+    )
+    if resume_path:
+        trainer.resume(resume_path)
     trainer.train()
+
+    dist.destroy_process_group()
 

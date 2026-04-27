@@ -29,6 +29,7 @@ class COCODetectionDataset(Dataset):
         ann_file: str | Path,
         transforms: Transform | None = None,
         input_size: int = 640,
+        cache_annotations: bool = True,
     ):
         from pycocotools.coco import COCO
 
@@ -50,8 +51,32 @@ class COCODetectionDataset(Dataset):
         cats = self.coco.loadCats(cat_ids)
         self.class_names: list[str] = [c["name"] for c in cats]
 
+        # Pre-load all annotation arrays into memory to avoid repeated pycocotools lookups
+        self._label_cache: list[np.ndarray] | None = None
+        if cache_annotations:
+            self._label_cache = [self._parse_anns(img_id) for img_id in self.ids]
+
     def __len__(self) -> int:
         return len(self.ids)
+
+    def _parse_anns(self, img_id: int) -> np.ndarray:
+        """Return ``[N, 5]`` float32 targets for *img_id* (no image needed)."""
+        img_info = self.coco.loadImgs(img_id)[0]
+        h_img, w_img = img_info["height"], img_info["width"]
+        ann_ids = self.coco.getAnnIds(imgIds=img_id)
+        anns = self.coco.loadAnns(ann_ids)
+        targets = []
+        for ann in anns:
+            if ann.get("iscrowd", 0):
+                continue
+            x, y, bw, bh = ann["bbox"]
+            cls = self.cat_id_to_label[ann["category_id"]]
+            xc = (x + bw / 2) / w_img
+            yc = (y + bh / 2) / h_img
+            nw = bw / w_img
+            nh = bh / h_img
+            targets.append([cls, xc, yc, nw, nh])
+        return np.array(targets, dtype=np.float32).reshape(-1, 5) if targets else np.zeros((0, 5), dtype=np.float32)
 
     def load_raw(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         """Load image and targets without transforms."""
@@ -59,24 +84,11 @@ class COCODetectionDataset(Dataset):
         img_info = self.coco.loadImgs(img_id)[0]
         image = cv2.imread(str(self.root / img_info["file_name"]))
 
-        h, w = image.shape[:2]
-        ann_ids = self.coco.getAnnIds(imgIds=img_id)
-        anns = self.coco.loadAnns(ann_ids)
+        if self._label_cache is not None:
+            targets = self._label_cache[index]
+        else:
+            targets = self._parse_anns(img_id)
 
-        targets = []
-        for ann in anns:
-            if ann.get("iscrowd", 0):
-                continue
-            x, y, bw, bh = ann["bbox"]  # COCO: x,y,w,h (pixel, top-left)
-            cls = self.cat_id_to_label[ann["category_id"]]
-            # Convert to normalized x_center, y_center, w, h
-            xc = (x + bw / 2) / w
-            yc = (y + bh / 2) / h
-            nw = bw / w
-            nh = bh / h
-            targets.append([cls, xc, yc, nw, nh])
-
-        targets = np.array(targets, dtype=np.float32).reshape(-1, 5) if targets else np.zeros((0, 5), dtype=np.float32)
         return image, targets
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:

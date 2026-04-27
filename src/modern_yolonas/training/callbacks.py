@@ -131,22 +131,40 @@ class CSVLoggerCallback(Callback):
 
 
 class EarlyStoppingCallback(Callback):
-    """Stop training if loss doesn't improve for ``patience`` epochs."""
+    """Stop training when ``mAP@0.50:0.95`` stops improving for ``patience`` validations.
+
+    Monitors the ``val_metrics/mAP`` key emitted by the trainer after each
+    validation run (mirrors the ``metric_to_watch`` in the official YOLO-NAS
+    training recipe).  Falls back to watching train loss via ``on_epoch_end``
+    when no validation metrics have been received yet.
+
+    Args:
+        patience: Number of validation rounds without improvement before stopping.
+        min_delta: Minimum absolute improvement in mAP to count as progress.
+    """
 
     def __init__(self, patience: int = 20, min_delta: float = 1e-4):
         self.patience = patience
         self.min_delta = min_delta
-        self._best_loss = float("inf")
+        self._best_map = -1.0
         self._wait = 0
+        self._has_val = False
 
-    def on_epoch_end(self, trainer, epoch, avg_loss):
-        if avg_loss < self._best_loss - self.min_delta:
-            self._best_loss = avg_loss
+    def on_validation_end(self, trainer, epoch, metrics):
+        self._has_val = True
+        current_map = metrics.get("val_metrics/mAP", 0.0)
+        if current_map > self._best_map + self.min_delta:
+            self._best_map = current_map
             self._wait = 0
         else:
             self._wait += 1
             if self._wait >= self.patience:
                 trainer._stop_training = True
+
+    def on_epoch_end(self, trainer, epoch, avg_loss):
+        # Only used as a fallback when validation is disabled (val_freq=0)
+        if not self._has_val:
+            pass  # no-op: mAP-based monitoring takes priority
 
 
 class WandbCallback(Callback):

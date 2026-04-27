@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
+import glob
 
 import typer
 
@@ -58,9 +59,13 @@ def detect(
     source_path = Path(source)
 
     if source_path.is_dir():
-        files = sorted(source_path.glob("*.*"))
-        files = [f for f in files if f.suffix.lower() in IMAGE_EXTENSIONS]
-        _detect_images(det, files, out_dir, console)
+        all_files = sorted(glob.glob(f"{str(source_path)}/**", recursive=True))
+        image_files = [f for f in all_files if Path(f).suffix.lower() in IMAGE_EXTENSIONS]
+        video_files = [f for f in all_files if Path(f).suffix.lower() in VIDEO_EXTENSIONS]
+        if image_files:
+            _detect_images(det, image_files, out_dir, console)
+        for video_file in video_files:
+            _detect_video(det, Path(video_file), out_dir, console, skip_frames, codec)
 
     elif source_path.suffix.lower() in VIDEO_EXTENSIONS:
         _detect_video(det, source_path, out_dir, console, skip_frames, codec)

@@ -33,6 +33,7 @@ class YOLODetectionDataset(Dataset):
         split: str = "train",
         transforms=None,
         input_size: int = 640,
+        cache_annotations: bool = True,
     ):
         self.root = Path(root)
         self.transforms = transforms
@@ -47,6 +48,11 @@ class YOLODetectionDataset(Dataset):
 
         # Try to load class names from classes.txt or data.yaml at dataset root
         self.class_names: list[str] | None = self._load_class_names()
+
+        # Pre-load all annotation arrays into memory (avoids repeated disk I/O during training)
+        self._label_cache: list[np.ndarray] | None = None
+        if cache_annotations:
+            self._label_cache = [self._read_label(p) for p in self.images]
 
     def _load_class_names(self) -> list[str] | None:
         """Return class names from ``classes.txt`` or ``data.yaml`` if present."""
@@ -71,21 +77,30 @@ class YOLODetectionDataset(Dataset):
     def __len__(self) -> int:
         return len(self.images)
 
+    @property
+    def num_classes(self) -> int:
+        """Number of classes inferred from cached labels (or scanning all label files)."""
+        labels = self._label_cache if self._label_cache is not None else [self._read_label(p) for p in self.images]
+        all_cls = np.concatenate([t[:, 0] for t in labels if len(t)]) if any(len(t) for t in labels) else np.array([])
+        return int(all_cls.max()) + 1 if len(all_cls) else 0
+
     def _label_path(self, img_path: Path) -> Path:
         return self.label_dir / (img_path.stem + ".txt")
+
+    def _read_label(self, img_path: Path) -> np.ndarray:
+        label_path = self._label_path(img_path)
+        if label_path.exists():
+            data = np.loadtxt(str(label_path), ndmin=2).reshape(-1, 5)
+        else:
+            data = np.zeros((0, 5))
+        return data.astype(np.float32)
 
     def load_raw(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         """Load image and targets without transforms."""
         img_path = self.images[index]
         image = cv2.imread(str(img_path))
-
-        label_path = self._label_path(img_path)
-        if label_path.exists():
-            targets = np.loadtxt(str(label_path), ndmin=2).reshape(-1, 5)
-        else:
-            targets = np.zeros((0, 5))
-
-        return image, targets.astype(np.float32)
+        targets = self._label_cache[index] if self._label_cache is not None else self._read_label(img_path)
+        return image, targets
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         image, targets = self.load_raw(index)

@@ -187,6 +187,7 @@ class TestCSVLoggerCallback:
 
         trainer = _FakeTrainer()
         cb.on_train_start(trainer)
+        cb.on_epoch_start(trainer, epoch=0)
         cb.on_batch_end(
             trainer, epoch=0, batch_idx=0, loss=0.5,
             loss_dict={"cls_loss": 0.2, "iou_loss": 0.2, "dfl_loss": 0.1},
@@ -195,15 +196,16 @@ class TestCSVLoggerCallback:
             trainer, epoch=0, batch_idx=1, loss=0.4,
             loss_dict={"cls_loss": 0.1, "iou_loss": 0.2, "dfl_loss": 0.1},
         )
+        cb.on_epoch_end(trainer, epoch=0, avg_loss=0.45)
         cb.on_train_end(trainer)
 
         assert path.exists()
         with path.open() as f:
             rows = list(csv.reader(f))
-        assert rows[0] == ["epoch", "batch", "loss", "cls_loss", "iou_loss", "dfl_loss", "lr"]
-        assert len(rows) == 3  # header + 2 data rows
-        assert rows[1][0] == "0"
-        assert rows[1][2].startswith("0.5")
+        assert rows[0] == ["epoch", "loss", "cls_loss", "iou_loss", "dfl_loss", "lr"]
+        assert len(rows) == 2  # header + 1 epoch row
+        assert rows[1][0] == "1"  # epoch is 1-indexed
+        assert float(rows[1][1]) == pytest.approx(0.45, abs=1e-3)
 
     def test_on_train_end_without_start_is_safe(self, tmp_path):
         cb = CSVLoggerCallback(path=tmp_path / "x.csv")
@@ -219,8 +221,8 @@ class TestEarlyStoppingCallback:
             _stop_training = False
 
         t = _T()
-        for epoch, loss in enumerate([1.0, 0.9, 0.8, 0.7]):
-            cb.on_epoch_end(t, epoch=epoch, avg_loss=loss)
+        for epoch, map_val in enumerate([0.5, 0.6, 0.7, 0.8]):
+            cb.on_validation_end(t, epoch=epoch, metrics={"val_metrics/mAP": map_val})
         assert not t._stop_training
 
     def test_stops_after_patience(self):
@@ -230,10 +232,10 @@ class TestEarlyStoppingCallback:
             _stop_training = False
 
         t = _T()
-        cb.on_epoch_end(t, epoch=0, avg_loss=1.0)  # best
-        cb.on_epoch_end(t, epoch=1, avg_loss=1.0)  # no improvement, wait=1
+        cb.on_validation_end(t, epoch=0, metrics={"val_metrics/mAP": 0.5})  # best
+        cb.on_validation_end(t, epoch=1, metrics={"val_metrics/mAP": 0.5})  # no improvement, wait=1
         assert not t._stop_training
-        cb.on_epoch_end(t, epoch=2, avg_loss=1.0)  # wait=2, triggers stop
+        cb.on_validation_end(t, epoch=2, metrics={"val_metrics/mAP": 0.5})  # wait=2, triggers stop
         assert t._stop_training
 
     def test_min_delta_requires_real_improvement(self):
@@ -243,9 +245,9 @@ class TestEarlyStoppingCallback:
             _stop_training = False
 
         t = _T()
-        cb.on_epoch_end(t, epoch=0, avg_loss=1.0)
-        # Drop below best but not by min_delta → counts as no improvement
-        cb.on_epoch_end(t, epoch=1, avg_loss=0.95)
+        cb.on_validation_end(t, epoch=0, metrics={"val_metrics/mAP": 0.5})
+        # Improves but not by min_delta → counts as no improvement
+        cb.on_validation_end(t, epoch=1, metrics={"val_metrics/mAP": 0.55})
         assert t._stop_training
 
 

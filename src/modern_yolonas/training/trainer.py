@@ -83,6 +83,7 @@ class Trainer:
 
         # DDP setup
         if local_rank >= 0:
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = model.to(self.device)
             model = DDP(model, device_ids=[local_rank])
         else:
