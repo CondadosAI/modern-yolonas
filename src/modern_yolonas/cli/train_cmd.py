@@ -117,7 +117,7 @@ def train(
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomChannelSwap, LetterboxResize, Normalize, Mixup
+    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, CenterCrop, RandomChannelSwap, LetterboxResize, Normalize, Mixup
     from modern_yolonas.data.collate import detection_collate_fn
     from modern_yolonas.training.trainer import Trainer
     from torch.utils.data import DataLoader
@@ -127,14 +127,19 @@ def train(
 
     train_transforms = Compose([
         HSVAugment(p=0.5),
+        RandomResizedCrop(size=input_size, scale=(0.05, 0.8), ratio=(0.75, 1.33), p=1.0),
         HorizontalFlip(),
         RandomAffine(degrees=0.0, translate=0.25, scale=(0.5, 1.5)),
         RandomChannelSwap(p=0.5),
-        LetterboxResize(target_size=input_size),
+        # LetterboxResize(target_size=input_size),
         # Mixup is appended here after the dataset is created (needs dataset reference)
         Normalize(),
     ])
-    val_transforms = Compose([LetterboxResize(target_size=input_size), Normalize()])
+    val_transforms = Compose([
+        CenterCrop(size=input_size),
+        # LetterboxResize(target_size=input_size),
+        Normalize()
+    ])
 
     if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset

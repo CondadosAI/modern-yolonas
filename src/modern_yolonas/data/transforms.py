@@ -4,8 +4,9 @@ Each transform operates on ``(image, targets)`` where:
 - image: HWC uint8 BGR numpy array
 - targets: ``[N, 5]`` numpy array with ``[class_id, x_center, y_center, w, h]`` (normalized)
 
-HSVAugment, HorizontalFlip, RandomAffine, and RandomChannelSwap are backed
-by `Albumentations <https://albumentations.ai>`_ (MIT license, v2+).
+HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, and
+RandomChannelSwap are backed by `Albumentations <https://albumentations.ai>`_
+(MIT license, v2+).
 Mosaic, Mixup, LetterboxResize, and Normalize use native implementations
 because they have no direct Albumentations equivalent.
 """
@@ -154,6 +155,53 @@ class RandomAffine:
         return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
 
+class RandomResizedCrop:
+    """Randomly crop a region of the image and resize it to ``size`` via Albumentations.
+
+    Mirrors ``torchvision.transforms.RandomResizedCrop`` but is bounding-box
+    aware.  Boxes whose area falls below ``min_width`` / ``min_height`` pixels
+    after cropping are automatically discarded by ``_BBOX_PARAMS``.
+
+    Args:
+        size: Output square side length in pixels.
+        scale: Range of fraction of the original image area to crop.
+              Default ``(0.08, 1.0)`` matches the torchvision default.
+        ratio: Range of aspect ratio of the crop.
+              Default ``(0.75, 1.333)`` matches the torchvision default.
+        interpolation: OpenCV interpolation flag (default ``cv2.INTER_LINEAR``).
+        p: Probability of applying the transform.
+    """
+
+    def __init__(
+        self,
+        size: int = 640,
+        scale: tuple[float, float] = (0.08, 1.0),
+        ratio: tuple[float, float] = (0.75, 1.333),
+        interpolation: int = cv2.INTER_LINEAR,
+        p: float = 1.0,
+    ):
+        self._aug = A.Compose(
+            [
+                A.RandomResizedCrop(
+                    size=(size, size),
+                    scale=scale,
+                    ratio=ratio,
+                    interpolation=interpolation,
+                    p=1.0,
+                )
+            ],
+            bbox_params=_BBOX_PARAMS,
+        )
+        self.p = p
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if random.random() >= self.p:
+            return image, targets
+        bboxes, labels = _to_albu(targets)
+        r = self._aug(image=image, bboxes=bboxes, class_labels=labels)
+        return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
+
+
 class RandomChannelSwap:
     """Randomly swap BGR channel order to RGB (and vice-versa) via Albumentations.
 
@@ -168,6 +216,28 @@ class RandomChannelSwap:
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return self._aug(image=image)["image"], targets
+
+
+class CenterCrop:
+    """Crop the center of the image to ``size`` × ``size`` pixels.
+
+    Bounding boxes that fall outside the cropped region are discarded;
+    those that overlap are clipped to the new canvas by ``_BBOX_PARAMS``.
+
+    Args:
+        size: Output square side length in pixels.
+    """
+
+    def __init__(self, size: int = 640):
+        self._aug = A.Compose(
+            [A.CenterCrop(height=size, width=size, p=1.0)],
+            bbox_params=_BBOX_PARAMS,
+        )
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        bboxes, labels = _to_albu(targets)
+        r = self._aug(image=image, bboxes=bboxes, class_labels=labels)
+        return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
 
 class Mosaic:
