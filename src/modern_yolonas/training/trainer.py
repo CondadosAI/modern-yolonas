@@ -310,7 +310,6 @@ class Trainer:
 
             # Collect visual samples from the first batch only
             if num_batches == 1 and self.val_vis_images > 0:
-                import numpy as np
                 n_vis = min(self.val_vis_images, images.shape[0])
                 imgs_np = images[:n_vis].cpu().numpy()
                 for idx in range(n_vis):

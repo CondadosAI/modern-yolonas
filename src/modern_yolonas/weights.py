@@ -16,6 +16,10 @@ from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
 from torch import nn
 
+from modern_yolonas.configs import CONFIGS
+from modern_yolonas.head.dfl import NDFLHeads
+from modern_yolonas.model import YoloNAS
+
 logger = logging.getLogger(__name__)
 
 # Override with YOLONAS_HF_REPO env var to pull from a fork / private mirror.
@@ -130,7 +134,7 @@ def transfer_to(
     num_classes: int,
     repo_id: str = HF_REPO_ID,
     revision: str | None = None,
-) -> "YoloNAS":
+) -> YoloNAS:
     """Build a model for transfer learning by loading pretrained weights then
     replacing the detection heads with freshly initialised ones.
 
@@ -155,10 +159,6 @@ def transfer_to(
         A :class:`~modern_yolonas.model.YoloNAS` instance with pretrained
         backbone+neck and freshly initialised detection heads.
     """
-    from modern_yolonas.configs import CONFIGS
-    from modern_yolonas.head.dfl import NDFLHeads
-    from modern_yolonas.model import YoloNAS
-
     cfg = CONFIGS[variant]
 
     # Step 1 — load pretrained 80-class model with full strict matching

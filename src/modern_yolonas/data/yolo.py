@@ -67,7 +67,7 @@ class YOLODetectionDataset(Dataset):
         """Return class names from ``classes.txt`` or ``data.yaml`` if present."""
         classes_txt = self.root / "classes.txt"
         if classes_txt.exists():
-            names = [l.strip() for l in classes_txt.read_text().splitlines() if l.strip()]
+            names = [label.strip() for label in classes_txt.read_text().splitlines() if label.strip()]
             return names if names else None
 
         for yaml_name in ("data.yaml", "dataset.yaml"):
