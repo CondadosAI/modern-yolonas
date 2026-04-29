@@ -117,7 +117,7 @@ def train(
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, CenterCrop, RandomChannelSwap, LetterboxResize, Normalize, Mixup
+    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, CenterCrop, RandomChannelSwap, Normalize, Mixup
     from modern_yolonas.data.collate import detection_collate_fn
     from modern_yolonas.training.trainer import Trainer
     from torch.utils.data import DataLoader

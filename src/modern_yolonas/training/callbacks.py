@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import numpy as np
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,7 @@ class Callback:
         """
 
     def on_validation_images(
-        self, trainer: Any, epoch: int, images: list["np.ndarray"]
+        self, trainer: Any, epoch: int, images: list[np.ndarray]
     ) -> None:
         """Called after each validation run with a sample of annotated images.
 

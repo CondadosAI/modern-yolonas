@@ -19,6 +19,8 @@ import albumentations as A
 import cv2
 import numpy as np
 
+from modern_yolonas.data.base import BaseDetectionDataset
+
 
 # ---------------------------------------------------------------------------
 # Helpers: convert between our [N, 5] format and Albumentations bbox API
@@ -243,7 +245,7 @@ class CenterCrop:
 class Mosaic:
     """4-image mosaic augmentation."""
 
-    def __init__(self, dataset, input_size: int = 640):
+    def __init__(self, dataset: BaseDetectionDataset, input_size: int = 640):
         self.dataset = dataset
         self.input_size = input_size
 
@@ -321,7 +323,7 @@ class Mixup:
         beta: Beta distribution ``beta`` parameter.
     """
 
-    def __init__(self, dataset, p: float = 0.5, alpha: float = 1.5, beta: float = 1.5):
+    def __init__(self, dataset: BaseDetectionDataset, p: float = 0.5, alpha: float = 1.5, beta: float = 1.5):
         self.dataset = dataset
         self.p = p
         self.alpha = alpha

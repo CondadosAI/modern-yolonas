@@ -146,3 +146,44 @@ class TestDetectIntegration:
                     "--device", "cpu",
                 ])
                 assert result.exit_code == 0
+
+
+class TestCLIConfig:
+    def test_load_config_basic(self, tmp_path):
+        from modern_yolonas.cli.config import load_config
+
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("epochs: 100\nbatch-size: 32\n")
+        result = load_config(cfg_file)
+        assert result["epochs"] == 100
+        assert result["batch_size"] == 32  # hyphen → underscore
+
+    def test_load_config_empty(self, tmp_path):
+        from modern_yolonas.cli.config import load_config
+
+        cfg_file = tmp_path / "config.yaml"
+        cfg_file.write_text("")
+        assert load_config(cfg_file) == {}
+
+    def test_load_config_not_found(self):
+        from modern_yolonas.cli.config import load_config
+
+        with pytest.raises(FileNotFoundError):
+            load_config("/nonexistent/config.yaml")
+
+    def test_merge_config_cli_wins(self):
+        from modern_yolonas.cli.config import merge_config
+
+        config = {"epochs": 100, "batch_size": 32, "device": "cuda"}
+        cli = {"epochs": 50, "batch_size": None}  # None = not explicitly set by user
+        result = merge_config(config, cli)
+        assert result["epochs"] == 50      # CLI wins
+        assert result["batch_size"] == 32  # None skipped, config value kept
+        assert result["device"] == "cuda"  # from config only
+
+    def test_merge_config_all_none(self):
+        from modern_yolonas.cli.config import merge_config
+
+        config = {"epochs": 100}
+        result = merge_config(config, {"epochs": None})
+        assert result["epochs"] == 100
