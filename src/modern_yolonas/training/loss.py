@@ -573,7 +573,7 @@ class PPYoloELoss(nn.Module):
 
         max_gt = max(len(g) for g in gt_labels_list)
         if max_gt == 0:
-            zero_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            zero_loss = cls_logits.sum() * 0.0
             return zero_loss, {"cls_loss": 0.0, "iou_loss": 0.0, "dfl_loss": 0.0, "total_loss": 0.0}
 
         gt_labels = torch.zeros(batch_size, max_gt, 1, device=device)

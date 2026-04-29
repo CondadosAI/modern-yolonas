@@ -5,6 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
+import glob
 
 import typer
 
@@ -21,6 +22,8 @@ class ModelName(str, Enum):
 def detect(
     source: Annotated[str, typer.Option(help="Image file, directory, or video path.")],
     model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    weights: Annotated[str | None, typer.Option(help="Path to a custom checkpoint (.pt) produced by the trainer. When set, --model selects the architecture.")] = None,
+    num_classes: Annotated[int, typer.Option(help="Number of classes in the custom checkpoint (ignored when using pretrained weights).")] = 80,
     conf: Annotated[float, typer.Option(help="Confidence threshold.")] = 0.25,
     iou: Annotated[float, typer.Option(help="NMS IoU threshold.")] = 0.7,
     device: Annotated[str, typer.Option(help="Device (cuda or cpu).")] = "cuda",
@@ -38,15 +41,31 @@ def detect(
     out_dir = Path(output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"Loading {model.value}...")
-    det = Detector(model.value, device=device, conf_threshold=conf, iou_threshold=iou, input_size=input_size)
+    if weights:
+        console.print(f"Loading {model.value} from checkpoint {weights!r} ({num_classes} classes)...")
+    else:
+        console.print(f"Loading pretrained {model.value}...")
+
+    det = Detector(
+        model.value,
+        device=device,
+        conf_threshold=conf,
+        iou_threshold=iou,
+        input_size=input_size,
+        weights=weights,
+        num_classes=num_classes,
+    )
 
     source_path = Path(source)
 
     if source_path.is_dir():
-        files = sorted(source_path.glob("*.*"))
-        files = [f for f in files if f.suffix.lower() in IMAGE_EXTENSIONS]
-        _detect_images(det, files, out_dir, console)
+        all_files = sorted(glob.glob(f"{str(source_path)}/**", recursive=True))
+        image_files = [f for f in all_files if Path(f).suffix.lower() in IMAGE_EXTENSIONS]
+        video_files = [f for f in all_files if Path(f).suffix.lower() in VIDEO_EXTENSIONS]
+        if image_files:
+            _detect_images(det, image_files, out_dir, console)
+        for video_file in video_files:
+            _detect_video(det, Path(video_file), out_dir, console, skip_frames, codec)
 
     elif source_path.suffix.lower() in VIDEO_EXTENSIONS:
         _detect_video(det, source_path, out_dir, console, skip_frames, codec)

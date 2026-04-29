@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import json
 
 import pytest
 import torch
@@ -15,7 +14,7 @@ from modern_yolonas.training.callbacks import (
     EarlyStoppingCallback,
 )
 from modern_yolonas.training.ema import ModelEMA
-from modern_yolonas.training.metrics import COCOEvaluator
+from modern_yolonas.training.metrics import DetectionMetrics
 from modern_yolonas.training.optimizer import create_optimizer
 from modern_yolonas.training.scheduler import cosine_with_warmup
 
@@ -171,6 +170,7 @@ class TestCallbackBase:
         cb.on_epoch_start(trainer=None, epoch=0)
         cb.on_batch_end(trainer=None, epoch=0, batch_idx=0, loss=0.1, loss_dict={})
         cb.on_epoch_end(trainer=None, epoch=0, avg_loss=0.1)
+        cb.on_validation_end(trainer=None, epoch=0, metrics={})
         cb.on_train_end(trainer=None)
 
 
@@ -187,6 +187,7 @@ class TestCSVLoggerCallback:
 
         trainer = _FakeTrainer()
         cb.on_train_start(trainer)
+        cb.on_epoch_start(trainer, epoch=0)
         cb.on_batch_end(
             trainer, epoch=0, batch_idx=0, loss=0.5,
             loss_dict={"cls_loss": 0.2, "iou_loss": 0.2, "dfl_loss": 0.1},
@@ -195,15 +196,16 @@ class TestCSVLoggerCallback:
             trainer, epoch=0, batch_idx=1, loss=0.4,
             loss_dict={"cls_loss": 0.1, "iou_loss": 0.2, "dfl_loss": 0.1},
         )
+        cb.on_epoch_end(trainer, epoch=0, avg_loss=0.45)
         cb.on_train_end(trainer)
 
         assert path.exists()
         with path.open() as f:
             rows = list(csv.reader(f))
-        assert rows[0] == ["epoch", "batch", "loss", "cls_loss", "iou_loss", "dfl_loss", "lr"]
-        assert len(rows) == 3  # header + 2 data rows
-        assert rows[1][0] == "0"
-        assert rows[1][2].startswith("0.5")
+        assert rows[0] == ["epoch", "loss", "cls_loss", "iou_loss", "dfl_loss", "lr"]
+        assert len(rows) == 2  # header + 1 epoch row
+        assert rows[1][0] == "1"  # epoch is 1-indexed
+        assert float(rows[1][1]) == pytest.approx(0.45, abs=1e-3)
 
     def test_on_train_end_without_start_is_safe(self, tmp_path):
         cb = CSVLoggerCallback(path=tmp_path / "x.csv")
@@ -219,8 +221,8 @@ class TestEarlyStoppingCallback:
             _stop_training = False
 
         t = _T()
-        for epoch, loss in enumerate([1.0, 0.9, 0.8, 0.7]):
-            cb.on_epoch_end(t, epoch=epoch, avg_loss=loss)
+        for epoch, map_val in enumerate([0.5, 0.6, 0.7, 0.8]):
+            cb.on_validation_end(t, epoch=epoch, metrics={"val_metrics/mAP": map_val})
         assert not t._stop_training
 
     def test_stops_after_patience(self):
@@ -230,10 +232,10 @@ class TestEarlyStoppingCallback:
             _stop_training = False
 
         t = _T()
-        cb.on_epoch_end(t, epoch=0, avg_loss=1.0)  # best
-        cb.on_epoch_end(t, epoch=1, avg_loss=1.0)  # no improvement, wait=1
+        cb.on_validation_end(t, epoch=0, metrics={"val_metrics/mAP": 0.5})  # best
+        cb.on_validation_end(t, epoch=1, metrics={"val_metrics/mAP": 0.5})  # no improvement, wait=1
         assert not t._stop_training
-        cb.on_epoch_end(t, epoch=2, avg_loss=1.0)  # wait=2, triggers stop
+        cb.on_validation_end(t, epoch=2, metrics={"val_metrics/mAP": 0.5})  # wait=2, triggers stop
         assert t._stop_training
 
     def test_min_delta_requires_real_improvement(self):
@@ -243,80 +245,80 @@ class TestEarlyStoppingCallback:
             _stop_training = False
 
         t = _T()
-        cb.on_epoch_end(t, epoch=0, avg_loss=1.0)
-        # Drop below best but not by min_delta → counts as no improvement
-        cb.on_epoch_end(t, epoch=1, avg_loss=0.95)
+        cb.on_validation_end(t, epoch=0, metrics={"val_metrics/mAP": 0.5})
+        # Improves but not by min_delta → counts as no improvement
+        cb.on_validation_end(t, epoch=1, metrics={"val_metrics/mAP": 0.55})
         assert t._stop_training
 
 
-class TestCOCOEvaluator:
-    @pytest.fixture
-    def tiny_coco_ann(self, tmp_path):
-        """Write a minimal valid COCO annotations JSON with 2 images + 2 annotations."""
-        ann = {
-            "images": [
-                {"id": 1, "file_name": "a.jpg", "width": 100, "height": 100},
-                {"id": 2, "file_name": "b.jpg", "width": 100, "height": 100},
-            ],
-            "annotations": [
-                {
-                    "id": 10, "image_id": 1, "category_id": 5,
-                    "bbox": [10, 10, 20, 20], "area": 400, "iscrowd": 0,
-                },
-                {
-                    "id": 11, "image_id": 2, "category_id": 7,
-                    "bbox": [30, 30, 10, 10], "area": 100, "iscrowd": 0,
-                },
-            ],
-            "categories": [
-                {"id": 5, "name": "cat_a"},
-                {"id": 7, "name": "cat_b"},
-            ],
+class TestDetectionMetrics:
+    """Tests for DetectionMetrics (torchmetrics-backed COCO-style mAP)."""
+
+    def _make_perfect_pred(self, boxes: torch.Tensor, labels: torch.Tensor) -> dict:
+        return {
+            "boxes":  boxes.float(),
+            "scores": torch.ones(len(boxes)),
+            "labels": labels.int(),
         }
-        path = tmp_path / "ann.json"
-        with path.open("w") as f:
-            json.dump(ann, f)
-        return path
 
-    def test_init_builds_label_mapping(self, tiny_coco_ann):
-        ev = COCOEvaluator(tiny_coco_ann)
-        # Categories sorted: [5, 7] → labels {0:5, 1:7}
-        assert ev.label_to_cat_id == {0: 5, 1: 7}
-        assert ev.results == []
+    def _make_target(self, boxes: torch.Tensor, labels: torch.Tensor) -> dict:
+        return {"boxes": boxes.float(), "labels": labels.int()}
 
-    def test_update_and_reset(self, tiny_coco_ann):
-        ev = COCOEvaluator(tiny_coco_ann)
-        boxes = [torch.tensor([[10.0, 10.0, 30.0, 30.0]])]
-        scores = [torch.tensor([0.9])]
-        cids = [torch.tensor([0])]
-        ev.update(image_ids=[1], boxes=boxes, scores=scores, class_ids=cids)
-        assert len(ev.results) == 1
-        entry = ev.results[0]
-        assert entry["image_id"] == 1
-        assert entry["category_id"] == 5  # label 0 → cat_id 5
-        assert entry["bbox"] == [10.0, 10.0, 20.0, 20.0]  # x,y,w,h
-        assert entry["score"] == pytest.approx(0.9)
+    def test_compute_returns_expected_keys(self):
+        metrics = DetectionMetrics()
+        boxes   = torch.tensor([[10.0, 10.0, 30.0, 30.0]])
+        labels  = torch.tensor([0])
+        metrics.update([self._make_perfect_pred(boxes, labels)], [self._make_target(boxes, labels)])
+        result = metrics.compute()
+        assert set(result.keys()) == {"mAP", "mAP_50", "mAR_100"}
+        assert all(isinstance(v, float) for v in result.values())
 
-        ev.reset()
-        assert ev.results == []
-
-    def test_evaluate_empty_returns_zeros(self, tiny_coco_ann):
-        ev = COCOEvaluator(tiny_coco_ann)
-        result = ev.evaluate()
-        assert result == {"mAP": 0.0, "mAP_50": 0.0, "mAP_75": 0.0}
-
-    def test_evaluate_perfect_predictions(self, tiny_coco_ann):
-        ev = COCOEvaluator(tiny_coco_ann)
-        # Match both GT annotations exactly
-        ev.update(
-            image_ids=[1, 2],
-            boxes=[
-                torch.tensor([[10.0, 10.0, 30.0, 30.0]]),  # matches ann #10
-                torch.tensor([[30.0, 30.0, 40.0, 40.0]]),  # matches ann #11
+    def test_perfect_predictions_give_map50_one(self):
+        metrics = DetectionMetrics()
+        # Two images, each with one GT box; predictions match exactly.
+        boxes_a = torch.tensor([[10.0, 10.0, 30.0, 30.0]])
+        boxes_b = torch.tensor([[50.0, 50.0, 80.0, 80.0]])
+        metrics.update(
+            preds=[
+                self._make_perfect_pred(boxes_a, torch.tensor([0])),
+                self._make_perfect_pred(boxes_b, torch.tensor([1])),
             ],
-            scores=[torch.tensor([0.99]), torch.tensor([0.99])],
-            class_ids=[torch.tensor([0]), torch.tensor([1])],
+            targets=[
+                self._make_target(boxes_a, torch.tensor([0])),
+                self._make_target(boxes_b, torch.tensor([1])),
+            ],
         )
-        result = ev.evaluate()
-        # Perfect box matches → mAP_50 should be 1.0
+        result = metrics.compute()
         assert result["mAP_50"] == pytest.approx(1.0)
+
+    def test_no_predictions_gives_zero_map(self):
+        metrics = DetectionMetrics()
+        boxes = torch.tensor([[10.0, 10.0, 30.0, 30.0]])
+        # Empty predictions against a real target → zero recall, zero mAP
+        metrics.update(
+            preds=[{"boxes": torch.zeros(0, 4), "scores": torch.zeros(0), "labels": torch.zeros(0, dtype=torch.int)}],
+            targets=[self._make_target(boxes, torch.tensor([0]))],
+        )
+        result = metrics.compute()
+        assert result["mAP"] == pytest.approx(0.0)
+        assert result["mAP_50"] == pytest.approx(0.0)
+
+    def test_reset_clears_state(self):
+        metrics = DetectionMetrics()
+        boxes  = torch.tensor([[10.0, 10.0, 30.0, 30.0]])
+        labels = torch.tensor([0])
+        metrics.update([self._make_perfect_pred(boxes, labels)], [self._make_target(boxes, labels)])
+        # After perfect update mAP_50 is 1.0 — confirm state was accumulated
+        assert metrics.compute()["mAP_50"] == pytest.approx(1.0)
+
+        metrics.reset()
+
+        # After reset, a completely wrong prediction (box far from GT) → mAP_50 = 0
+        wrong_pred = {
+            "boxes":  torch.tensor([[200.0, 200.0, 250.0, 250.0]]),  # no overlap with GT
+            "scores": torch.tensor([0.99]),
+            "labels": torch.tensor([0], dtype=torch.int),
+        }
+        metrics.update([wrong_pred], [self._make_target(boxes, labels)])
+        result = metrics.compute()
+        assert result["mAP_50"] == pytest.approx(0.0)

@@ -1,6 +1,8 @@
 # Example detection config
 # CLI flags override these values
 model: yolo_nas_s
+# weights: runs/train/best.pt   # path to a custom checkpoint; comment out to use pretrained
+# num-classes: 3                # must match the checkpoint when weights is set
 conf: 0.25
 iou: 0.7
 device: cuda

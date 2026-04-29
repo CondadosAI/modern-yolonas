@@ -3,14 +3,54 @@
 Each transform operates on ``(image, targets)`` where:
 - image: HWC uint8 BGR numpy array
 - targets: ``[N, 5]`` numpy array with ``[class_id, x_center, y_center, w, h]`` (normalized)
+
+HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, and
+RandomChannelSwap are backed by `Albumentations <https://albumentations.ai>`_
+(MIT license, v2+).
+Mosaic, Mixup, LetterboxResize, and Normalize use native implementations
+because they have no direct Albumentations equivalent.
 """
 
 from __future__ import annotations
 
 import random
 
+import albumentations as A
 import cv2
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Helpers: convert between our [N, 5] format and Albumentations bbox API
+# ---------------------------------------------------------------------------
+
+def _to_albu(targets: np.ndarray) -> tuple[list, list]:
+    """Split ``[N, 5]`` targets into ``(bboxes, class_labels)`` for Albumentations."""
+    if len(targets) == 0:
+        return [], []
+    return targets[:, 1:].tolist(), targets[:, 0].astype(int).tolist()
+
+
+def _from_albu(bboxes: list, labels: list, dtype) -> np.ndarray:
+    """Re-assemble Albumentations ``(bboxes, labels)`` into ``[N, 5]`` targets."""
+    if not bboxes:
+        return np.zeros((0, 5), dtype=dtype)
+    return np.concatenate(
+        [np.array(labels, dtype=dtype).reshape(-1, 1), np.array(bboxes, dtype=dtype)],
+        axis=1,
+    )
+
+
+_BBOX_PARAMS = A.BboxParams(
+    format="yolo",
+    label_fields=["class_labels"],
+    # Discard boxes smaller than 2×2 pixels after spatial transforms (wh_thr=2 from SG recipe).
+    # filter_invalid_bboxes=True activates pixel-unit min_width / min_height filtering.
+    filter_invalid_bboxes=True,
+    min_width=2,
+    min_height=2,
+    clip=True,
+)
 
 
 class Compose:
@@ -31,33 +71,35 @@ class Compose:
 
 
 class HSVAugment:
-    """Randomly adjust hue, saturation, and value channels.
+    """Randomly adjust hue, saturation, and value via Albumentations.
 
     Args:
-        h_gain: Maximum hue shift factor.
-        s_gain: Maximum saturation shift factor.
-        v_gain: Maximum value shift factor.
+        hgain: Max hue shift in degrees (Albumentations ``hue_shift_limit``).
+              Matches the super-gradients ``hgain`` recipe param. Default: 18.
+        sgain: Max saturation shift in absolute units (``sat_shift_limit``).
+              Default: 30.
+        vgain: Max value shift in absolute units (``val_shift_limit``).
+              Default: 30.
+        p: Probability of applying the transform.
     """
 
-    def __init__(self, h_gain: float = 0.015, s_gain: float = 0.7, v_gain: float = 0.4):
-        self.h_gain = h_gain
-        self.s_gain = s_gain
-        self.v_gain = v_gain
+    def __init__(self, hgain: int = 18, sgain: int = 30, vgain: int = 30, p: float = 0.5):
+        self._aug = A.HueSaturationValue(
+            hue_shift_limit=hgain,
+            sat_shift_limit=sgain,
+            val_shift_limit=vgain,
+            p=p,
+        )
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        r = np.random.uniform(-1, 1, 3) * [self.h_gain, self.s_gain, self.v_gain] + 1
-        hue, sat, val = cv2.split(cv2.cvtColor(image, cv2.COLOR_BGR2HSV))
-        x = np.arange(0, 256, dtype=np.int16)
-        lut_hue = ((x * r[0]) % 180).astype(np.uint8)
-        lut_sat = np.clip(x * r[1], 0, 255).astype(np.uint8)
-        lut_val = np.clip(x * r[2], 0, 255).astype(np.uint8)
-        hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
-        image = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-        return image, targets
+        # Albumentations expects RGB; our pipeline carries BGR images
+        rgb = image[:, :, ::-1].copy()
+        result = self._aug(image=rgb)
+        return result["image"][:, :, ::-1].copy(), targets
 
 
 class HorizontalFlip:
-    """Randomly flip the image and targets horizontally.
+    """Randomly flip the image and bounding boxes horizontally via Albumentations.
 
     Args:
         p: Probability of applying the flip.
@@ -65,21 +107,18 @@ class HorizontalFlip:
 
     def __init__(self, p: float = 0.5):
         self.p = p
+        self._aug = A.Compose([A.HorizontalFlip(p=1.0)], bbox_params=_BBOX_PARAMS)
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if random.random() < self.p:
-            image = np.fliplr(image).copy()
-            if len(targets):
-                targets = targets.copy()
-                targets[:, 1] = 1.0 - targets[:, 1]  # flip x_center
-        return image, targets
+        if random.random() >= self.p:
+            return image, targets
+        bboxes, labels = _to_albu(targets)
+        r = self._aug(image=image, bboxes=bboxes, class_labels=labels)
+        return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
 
 class RandomAffine:
-    """Apply random rotation, scaling, translation, and shear.
-
-    Transforms both the image and bounding box targets, filtering out
-    boxes that become too small after the transform.
+    """Apply random rotation, scale, translation, and shear via Albumentations.
 
     Args:
         degrees: Maximum rotation in degrees.
@@ -91,75 +130,114 @@ class RandomAffine:
     def __init__(
         self,
         degrees: float = 0.0,
-        translate: float = 0.1,
+        translate: float = 0.25,
         scale: tuple[float, float] = (0.5, 1.5),
         shear: float = 0.0,
     ):
-        self.degrees = degrees
-        self.translate = translate
-        self.scale = scale
-        self.shear = shear
+        self._aug = A.Compose(
+            [
+                A.Affine(
+                    scale=scale,
+                    translate_percent={"x": (-translate, translate), "y": (-translate, translate)},
+                    rotate=(-degrees, degrees),
+                    shear=(-shear, shear),
+                    border_mode=cv2.BORDER_CONSTANT,
+                    fill=114,
+                    p=1.0,
+                )
+            ],
+            bbox_params=_BBOX_PARAMS,
+        )
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        h, w = image.shape[:2]
+        bboxes, labels = _to_albu(targets)
+        r = self._aug(image=image, bboxes=bboxes, class_labels=labels)
+        return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
-        # Rotation + scale
-        angle = random.uniform(-self.degrees, self.degrees)
-        s = random.uniform(*self.scale)
-        M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, s)
 
-        # Translation
-        M[0, 2] += random.uniform(-self.translate, self.translate) * w
-        M[1, 2] += random.uniform(-self.translate, self.translate) * h
+class RandomResizedCrop:
+    """Randomly crop a region of the image and resize it to ``size`` via Albumentations.
 
-        image = cv2.warpAffine(image, M, (w, h), borderValue=(114, 114, 114))
+    Mirrors ``torchvision.transforms.RandomResizedCrop`` but is bounding-box
+    aware.  Boxes whose area falls below ``min_width`` / ``min_height`` pixels
+    after cropping are automatically discarded by ``_BBOX_PARAMS``.
 
-        if len(targets):
-            targets = targets.copy()
-            # Convert normalized xywh to pixel xyxy
-            boxes = np.zeros((len(targets), 4))
-            boxes[:, 0] = (targets[:, 1] - targets[:, 3] / 2) * w
-            boxes[:, 1] = (targets[:, 2] - targets[:, 4] / 2) * h
-            boxes[:, 2] = (targets[:, 1] + targets[:, 3] / 2) * w
-            boxes[:, 3] = (targets[:, 2] + targets[:, 4] / 2) * h
+    Args:
+        size: Output square side length in pixels.
+        scale: Range of fraction of the original image area to crop.
+              Default ``(0.08, 1.0)`` matches the torchvision default.
+        ratio: Range of aspect ratio of the crop.
+              Default ``(0.75, 1.333)`` matches the torchvision default.
+        interpolation: OpenCV interpolation flag (default ``cv2.INTER_LINEAR``).
+        p: Probability of applying the transform.
+    """
 
-            # Transform corners
-            corners = np.array([
-                [boxes[:, 0], boxes[:, 1]],
-                [boxes[:, 2], boxes[:, 1]],
-                [boxes[:, 2], boxes[:, 3]],
-                [boxes[:, 0], boxes[:, 3]],
-            ]).transpose(2, 0, 1).reshape(-1, 2)
+    def __init__(
+        self,
+        size: int = 640,
+        scale: tuple[float, float] = (0.08, 1.0),
+        ratio: tuple[float, float] = (0.75, 1.333),
+        interpolation: int = cv2.INTER_LINEAR,
+        p: float = 1.0,
+    ):
+        self._aug = A.Compose(
+            [
+                A.RandomResizedCrop(
+                    size=(size, size),
+                    scale=scale,
+                    ratio=ratio,
+                    interpolation=interpolation,
+                    p=1.0,
+                )
+            ],
+            bbox_params=_BBOX_PARAMS,
+        )
+        self.p = p
 
-            ones = np.ones((corners.shape[0], 1))
-            corners = np.hstack([corners, ones])
-            transformed = (M @ corners.T).T.reshape(-1, 4, 2)
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if random.random() >= self.p:
+            return image, targets
+        bboxes, labels = _to_albu(targets)
+        r = self._aug(image=image, bboxes=bboxes, class_labels=labels)
+        return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
-            new_boxes = np.zeros((len(targets), 4))
-            new_boxes[:, 0] = transformed[:, :, 0].min(axis=1)
-            new_boxes[:, 1] = transformed[:, :, 1].min(axis=1)
-            new_boxes[:, 2] = transformed[:, :, 0].max(axis=1)
-            new_boxes[:, 3] = transformed[:, :, 1].max(axis=1)
 
-            # Clip and convert back to normalized xywh
-            new_boxes[:, 0] = np.clip(new_boxes[:, 0], 0, w)
-            new_boxes[:, 1] = np.clip(new_boxes[:, 1], 0, h)
-            new_boxes[:, 2] = np.clip(new_boxes[:, 2], 0, w)
-            new_boxes[:, 3] = np.clip(new_boxes[:, 3], 0, h)
+class RandomChannelSwap:
+    """Randomly swap BGR channel order to RGB (and vice-versa) via Albumentations.
 
-            box_w = new_boxes[:, 2] - new_boxes[:, 0]
-            box_h = new_boxes[:, 3] - new_boxes[:, 1]
-            valid = (box_w > 2) & (box_h > 2)
+    Adds photometric variety without touching bounding boxes.
 
-            targets = targets[valid]
-            new_boxes = new_boxes[valid]
-            if len(targets):
-                targets[:, 1] = ((new_boxes[:, 0] + new_boxes[:, 2]) / 2) / w
-                targets[:, 2] = ((new_boxes[:, 1] + new_boxes[:, 3]) / 2) / h
-                targets[:, 3] = (new_boxes[:, 2] - new_boxes[:, 0]) / w
-                targets[:, 4] = (new_boxes[:, 3] - new_boxes[:, 1]) / h
+    Args:
+        p: Probability of swapping channels.
+    """
 
-        return image, targets
+    def __init__(self, p: float = 0.5):
+        self._aug = A.ChannelShuffle(p=p)
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return self._aug(image=image)["image"], targets
+
+
+class CenterCrop:
+    """Crop the center of the image to ``size`` × ``size`` pixels.
+
+    Bounding boxes that fall outside the cropped region are discarded;
+    those that overlap are clipped to the new canvas by ``_BBOX_PARAMS``.
+
+    Args:
+        size: Output square side length in pixels.
+    """
+
+    def __init__(self, size: int = 640):
+        self._aug = A.Compose(
+            [A.CenterCrop(height=size, width=size, p=1.0)],
+            bbox_params=_BBOX_PARAMS,
+        )
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        bboxes, labels = _to_albu(targets)
+        r = self._aug(image=image, bboxes=bboxes, class_labels=labels)
+        return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
 
 class Mosaic:
@@ -231,21 +309,61 @@ class Mosaic:
 
 
 class Mixup:
-    """Mixup augmentation for detection."""
+    """Mixup augmentation for detection.
 
-    def __init__(self, dataset, alpha: float = 1.5, beta: float = 1.5):
+    Should be placed in the pipeline **after** ``LetterboxResize`` and
+    **before** ``Normalize``, so both images are already square uint8.
+
+    Args:
+        dataset: Dataset exposing a ``load_raw(index)`` method.
+        p: Per-sample probability of applying mixup.
+        alpha: Beta distribution ``alpha`` parameter.
+        beta: Beta distribution ``beta`` parameter.
+    """
+
+    def __init__(self, dataset, p: float = 0.5, alpha: float = 1.5, beta: float = 1.5):
         self.dataset = dataset
+        self.p = p
         self.alpha = alpha
         self.beta = beta
 
-    def __call__(self, image: np.ndarray, targets: np.ndarray, index: int) -> tuple[np.ndarray, np.ndarray]:
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if random.random() >= self.p:
+            return image, targets
+
         idx2 = random.randint(0, len(self.dataset) - 1)
-        img2, targets2 = self.dataset[idx2]
+        img2, targets2 = self.dataset.load_raw(idx2)
+
+        # Letterbox the second image to match the (already resized) first image
+        target_h, target_w = image.shape[:2]
+        h2, w2 = img2.shape[:2]
+        if (h2, w2) != (target_h, target_w):
+            scale = min(target_h / h2, target_w / w2)
+            new_h, new_w = int(round(h2 * scale)), int(round(w2 * scale))
+            img2 = cv2.resize(img2, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            top  = (target_h - new_h) // 2
+            left = (target_w - new_w) // 2
+            padded = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
+            padded[top:top + new_h, left:left + new_w] = img2
+            img2 = padded
+            if len(targets2):
+                targets2 = targets2.copy()
+                targets2[:, 1] = (targets2[:, 1] * new_w + left) / target_w
+                targets2[:, 2] = (targets2[:, 2] * new_h + top)  / target_h
+                targets2[:, 3] = targets2[:, 3] * new_w / target_w
+                targets2[:, 4] = targets2[:, 4] * new_h / target_h
 
         r = np.random.beta(self.alpha, self.beta)
-        image = (image * r + img2 * (1 - r)).astype(np.uint8)
-        targets = np.concatenate([targets, targets2], 0) if len(targets2) else targets
-        return image, targets
+        mixed = (image.astype(np.float32) * r + img2.astype(np.float32) * (1 - r)).astype(np.uint8)
+
+        if len(targets) and len(targets2):
+            combined = np.concatenate([targets, targets2], 0)
+        elif len(targets):
+            combined = targets
+        else:
+            combined = targets2
+
+        return mixed, combined
 
 
 class LetterboxResize:
