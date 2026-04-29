@@ -1,7 +1,11 @@
 """Export YOLO-NAS to ONNX and validate with ONNX Runtime.
 
 Usage:
+    # pretrained COCO weights
     python examples/export_onnx.py --model yolo_nas_s --output model.onnx
+
+    # custom-trained checkpoint
+    python examples/export_onnx.py --model yolo_nas_s --checkpoint runs/train/best.pt --num-classes 3 --output custom.onnx
 """
 
 from __future__ import annotations
@@ -11,19 +15,29 @@ import argparse
 import numpy as np
 import torch
 
-from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
+from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l, load_checkpoint
 
 
 def main():
     parser = argparse.ArgumentParser(description="Export YOLO-NAS to ONNX")
     parser.add_argument("--model", default="yolo_nas_s", choices=["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"])
+    parser.add_argument("--checkpoint", default=None, help="Path to a custom-trained .pt checkpoint (skips pretrained download).")
+    parser.add_argument("--num-classes", type=int, default=80, help="Number of classes (must match the checkpoint; default 80 for COCO).")
     parser.add_argument("--output", default="yolo_nas_s.onnx")
     parser.add_argument("--input-size", type=int, default=640)
     parser.add_argument("--opset", type=int, default=17)
     args = parser.parse_args()
 
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
-    model = builders[args.model](pretrained=True).eval()
+
+    if args.checkpoint:
+        model = builders[args.model](pretrained=False, num_classes=args.num_classes)
+        load_checkpoint(model, args.checkpoint)
+        print(f"Loaded custom checkpoint: {args.checkpoint}")
+    else:
+        model = builders[args.model](pretrained=True, num_classes=args.num_classes)
+
+    model.eval()
 
     # Fuse RepVGG branches for inference
     for m in model.modules():

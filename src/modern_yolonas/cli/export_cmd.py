@@ -31,6 +31,7 @@ def export(
     input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
     opset: Annotated[int, typer.Option(help="ONNX opset version.")] = 17,
     checkpoint: Annotated[str | None, typer.Option(help="Custom checkpoint path.")] = None,
+    num_classes: Annotated[int, typer.Option(help="Number of classes (must match checkpoint; default 80 for COCO).")] = 80,
     target: Annotated[ExportTarget, typer.Option(help="Export target.")] = ExportTarget.generic,
     conf_threshold: Annotated[float, typer.Option(help="Confidence threshold (frigate target).")] = 0.25,
     iou_threshold: Annotated[float, typer.Option(help="IoU threshold for NMS (frigate target).")] = 0.45,
@@ -40,7 +41,7 @@ def export(
     import torch
     from rich.console import Console
 
-    from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
+    from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l, load_checkpoint
 
     console = Console()
 
@@ -53,12 +54,10 @@ def export(
     console.print(f"Loading {model.value}...")
 
     if checkpoint:
-        yolo_model = builders[model.value](pretrained=False)
-        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        sd = ckpt.get("model_state_dict", ckpt)
-        yolo_model.load_state_dict(sd)
+        yolo_model = builders[model.value](pretrained=False, num_classes=num_classes)
+        load_checkpoint(yolo_model, checkpoint)
     else:
-        yolo_model = builders[model.value](pretrained=True)
+        yolo_model = builders[model.value](pretrained=True, num_classes=num_classes)
 
     yolo_model.eval()
 

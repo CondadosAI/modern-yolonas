@@ -98,6 +98,33 @@ def load_pretrained(
     return model
 
 
+def load_checkpoint(
+    model: nn.Module,
+    checkpoint_path: str,
+    strict: bool = True,
+    map_location: str = "cpu",
+) -> nn.Module:
+    """Load a custom-trained ``.pt`` checkpoint into *model*.
+
+    Handles both plain state-dicts and the richer checkpoint dicts produced by
+    :class:`~modern_yolonas.training.trainer.Trainer` (which store the state
+    under the ``"model_state_dict"`` key).
+
+    Args:
+        model: A ``YoloNAS`` instance whose architecture matches the checkpoint.
+        checkpoint_path: Path to the ``.pt`` file.
+        strict: Require exact key matching (default ``True``).
+        map_location: Device string passed to :func:`torch.load`.
+
+    Returns:
+        The model with loaded weights.
+    """
+    ckpt = torch.load(checkpoint_path, map_location=map_location, weights_only=True)
+    sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+    model.load_state_dict(sd, strict=strict)
+    return model
+
+
 def transfer_to(
     variant: str,
     num_classes: int,
