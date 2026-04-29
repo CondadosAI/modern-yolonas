@@ -33,6 +33,11 @@ def _write_coco_annotations(path: Path, image_name: str = "a.jpg") -> None:
                 "id": 11, "image_id": 1, "category_id": 5,
                 "bbox": [50, 50, 10, 10], "area": 100, "iscrowd": 1,
             },
+            {
+                # Second category used so cat_id_to_label includes both {5:0, 7:1}
+                "id": 12, "image_id": 1, "category_id": 7,
+                "bbox": [30, 30, 15, 15], "area": 225, "iscrowd": 0,
+            },
         ],
         "categories": [{"id": 5, "name": "cat_a"}, {"id": 7, "name": "cat_b"}],
     }
@@ -121,9 +126,9 @@ class TestCOCODetectionDataset:
         ds = COCODetectionDataset(root=img_dir, ann_file=ann)
         image, targets = ds.load_raw(0)
         assert image.shape == (100, 100, 3)
-        # 2 annotations total, 1 is crowd → 1 kept
-        assert targets.shape == (1, 5)
-        # Class label is 0 (cat_id 5 → label 0)
+        # 3 annotations total (ids 10, 11, 12); 1 is crowd (id 11) → 2 kept
+        assert targets.shape == (2, 5)
+        # First kept annotation: cat_id 5 → label 0, bbox [10,10,20,20]
         assert targets[0, 0] == 0
         # Normalized center of bbox [10, 10, 20, 20] → ((10+10)/100, (10+10)/100)
         assert targets[0, 1] == pytest.approx(0.2)
@@ -152,7 +157,7 @@ class TestCOCODetectionDataset:
                 "annotations": [],
                 "categories": [{"id": 5, "name": "cat_a"}],
             }, f)
-        ds = COCODetectionDataset(root=img_dir, ann_file=ann)
+        ds = COCODetectionDataset(root=img_dir, ann_file=ann, ignore_empty_annotations=False)
         _, targets = ds.load_raw(0)
         assert targets.shape == (0, 5)
 
@@ -173,13 +178,13 @@ class TestYOLODetectionDataset:
         return tmp_path
 
     def test_discovers_images_only(self, yolo_root):
-        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        ds = YOLODetectionDataset(root=yolo_root, split="train", ignore_empty_annotations=False)
         assert len(ds) == 2
         suffixes = {p.suffix for p in ds.images}
         assert ".txt" not in suffixes
 
     def test_load_raw_with_labels(self, yolo_root):
-        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        ds = YOLODetectionDataset(root=yolo_root, split="train", ignore_empty_annotations=False)
         # First image is sorted by filename; find the one with labels
         image, targets = ds.load_raw(0)  # a.jpg
         assert image.shape == (100, 100, 3)
@@ -187,7 +192,7 @@ class TestYOLODetectionDataset:
         assert targets.dtype == np.float32
 
     def test_load_raw_missing_label_file(self, yolo_root):
-        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        ds = YOLODetectionDataset(root=yolo_root, split="train", ignore_empty_annotations=False)
         # b.png has no label file → empty targets
         image, targets = ds.load_raw(1)
         assert image.shape == (100, 100, 3)
@@ -196,10 +201,17 @@ class TestYOLODetectionDataset:
     def test_getitem_applies_transforms(self, yolo_root):
         def _noop(image, targets):
             return image, targets + 0  # forces evaluation
-        ds = YOLODetectionDataset(root=yolo_root, split="train", transforms=_noop)
+        ds = YOLODetectionDataset(root=yolo_root, split="train", transforms=_noop, ignore_empty_annotations=False)
         image, targets = ds[0]
         assert image.shape == (100, 100, 3)
         assert targets.shape[1] == 5
+
+    def test_ignore_empty_annotations_filters_unannotated(self, yolo_root):
+        # Default: ignore_empty_annotations=True → only a.jpg (has labels) remains
+        ds = YOLODetectionDataset(root=yolo_root, split="train")
+        assert len(ds) == 1
+        _, targets = ds.load_raw(0)
+        assert len(targets) > 0
 
 
 class TestRandomAffine:
@@ -275,9 +287,9 @@ class TestMosaic:
 class TestMixup:
     def test_output_shape_and_dtype(self):
         ds = _FakeRawDataset(n=3)
-        mixup = Mixup(ds, alpha=1.0, beta=1.0)
+        mixup = Mixup(ds, p=1.0, alpha=1.0, beta=1.0)
         img1, tgt1 = ds.load_raw(0)
-        mixed_img, mixed_tgt = mixup(img1, tgt1, index=0)
+        mixed_img, mixed_tgt = mixup(img1, tgt1)
         assert mixed_img.shape == img1.shape
         assert mixed_img.dtype == np.uint8
         # Mixup concatenates targets
@@ -285,15 +297,15 @@ class TestMixup:
 
     def test_preserves_targets_when_partner_empty(self):
         class _EmptyPartnerDS(_FakeRawDataset):
-            def __getitem__(self, idx):
-                img, _ = super().__getitem__(idx)
+            def load_raw(self, idx):
+                img, _ = super().load_raw(idx)
                 return img, np.zeros((0, 5), dtype=np.float32)
 
         ds = _EmptyPartnerDS(n=3)
-        mixup = Mixup(ds, alpha=1.0, beta=1.0)
+        mixup = Mixup(ds, p=1.0, alpha=1.0, beta=1.0)
         # Shape must match the dataset's own images (80×80) for the blend
         img = np.full((80, 80, 3), 128, dtype=np.uint8)
         tgt = np.array([[0, 0.5, 0.5, 0.3, 0.3]], dtype=np.float32)
-        _, mixed_tgt = mixup(img, tgt, index=0)
+        _, mixed_tgt = mixup(img, tgt)
         # Partner empty → original targets preserved
         assert len(mixed_tgt) == 1

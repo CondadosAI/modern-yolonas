@@ -10,9 +10,12 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from rich.console import Console
 
+from modern_yolonas.inference.postprocess import postprocess
+from modern_yolonas.inference.visualize import annotate_validation_sample
 from modern_yolonas.training.callbacks import Callback
 from modern_yolonas.training.loss import PPYoloELoss
 from modern_yolonas.training.ema import ModelEMA
+from modern_yolonas.training.metrics import DetectionMetrics
 from modern_yolonas.training.optimizer import create_optimizer
 from modern_yolonas.training.scheduler import cosine_with_warmup
 
@@ -37,6 +40,13 @@ class Trainer:
         output_dir: Directory for checkpoints.
         device: Training device.
         local_rank: Local rank for DDP (-1 for single GPU).
+        class_names: Optional list of class names used when drawing validation
+            images.  When ``None`` the visualiser falls back to COCO names.
+        val_freq: Run validation every *n* epochs (default: 10).  Set to 1 to
+            validate after every epoch, or to a larger value to reduce overhead.
+        val_vis_images: Number of sample images to annotate and log to
+            WandB / TensorBoard during each validation run.  Set to 0 to
+            disable image logging.
     """
 
     def __init__(
@@ -56,6 +66,10 @@ class Trainer:
         device: str | torch.device = "cuda",
         local_rank: int = -1,
         callbacks: list[Callback] | None = None,
+        class_names: list[str] | None = None,
+        val_freq: int = 10,
+        val_vis_images: int = 8,
+        gradient_accum: int = 1,
     ):
         self.epochs = epochs
         self.callbacks = callbacks or []
@@ -65,9 +79,11 @@ class Trainer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.is_main = local_rank <= 0
+        self.gradient_accum = max(1, gradient_accum)
 
         # DDP setup
         if local_rank >= 0:
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = model.to(self.device)
             model = DDP(model, device_ids=[local_rank])
         else:
@@ -96,11 +112,23 @@ class Trainer:
         self.use_amp = use_amp
         self.scaler = torch.amp.GradScaler("cuda", enabled=use_amp) if use_amp else None
 
+        # Speed: let cuDNN auto-select fastest convolution algorithms for
+        # the fixed input size used throughout training.
+        # if self.device.type == "cuda":
+        #     torch.backends.cudnn.benchmark = True
+
         # EMA
         self.ema = ModelEMA(raw_model) if use_ema else None
 
         self.start_epoch = 0
         self.best_map = 0.0
+        # Global optimisation step counter (incremented once per batch).
+        # Persisted through checkpoints so that loggers keep a monotonic x-axis
+        # when training is resumed.
+        self.global_step = 0
+        self.class_names = class_names
+        self.val_freq = val_freq
+        self.val_vis_images = val_vis_images
 
     def _fire(self, hook: str, *args, **kwargs):
         for cb in self.callbacks:
@@ -125,37 +153,46 @@ class Trainer:
                 console.print(f"\n[bold]Epoch {epoch + 1}/{self.epochs}[/bold]")
 
             for batch_idx, (images, targets) in enumerate(self.train_loader):
+                is_last_batch = (batch_idx + 1 == len(self.train_loader))
+                should_step = (batch_idx + 1) % self.gradient_accum == 0 or is_last_batch
+
+                if batch_idx % self.gradient_accum == 0:
+                    self.optimizer.zero_grad(set_to_none=True)
+
                 images = images.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
 
-                with torch.amp.autocast("cuda", enabled=self.use_amp):
+                with torch.amp.autocast(str(self.device), enabled=self.use_amp):
                     predictions = self.model(images)
                     loss, loss_dict = self.criterion(
                         predictions, targets,
                         input_size=(images.shape[2], images.shape[3]),
                         epoch=epoch,
                     )
+                    loss = loss / self.gradient_accum
 
-                # Backward
-                self.optimizer.zero_grad()
                 if self.scaler is not None:
                     self.scaler.scale(loss).backward()
-                    self.scaler.step(self.optimizer)
-                    self.scaler.update()
+                    if should_step:
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
                 else:
                     loss.backward()
-                    self.optimizer.step()
+                    if should_step:
+                        self.optimizer.step()
 
                 self.scheduler.step()
 
-                if self.ema is not None:
+                if should_step and self.ema is not None:
                     raw_model = self.model.module if isinstance(self.model, DDP) else self.model
                     self.ema.update(raw_model)
 
-                epoch_loss += loss.item()
+                unscaled_loss = loss.item() * self.gradient_accum
+                epoch_loss += unscaled_loss
                 num_batches += 1
+                self.global_step += 1
 
-                self._fire("on_batch_end", epoch, batch_idx, loss.item(), loss_dict)
+                self._fire("on_batch_end", epoch, batch_idx, unscaled_loss, loss_dict)
 
                 if self.is_main and (batch_idx + 1) % 50 == 0:
                     avg_loss = epoch_loss / num_batches
@@ -176,7 +213,7 @@ class Trainer:
             self._fire("on_epoch_end", epoch, avg_loss)
 
             # Validation
-            if self.val_loader is not None and self.is_main and (epoch + 1) % 10 == 0:
+            if self.val_loader is not None and self.is_main and (epoch + 1) % self.val_freq == 0:
                 self._validate(epoch)
 
             # Save checkpoint
@@ -186,20 +223,150 @@ class Trainer:
         self._fire("on_train_end")
 
     @torch.no_grad()
-    def _validate(self, epoch: int):
-        eval_model = self.ema.ema if self.ema is not None else self.model
-        eval_model.eval()
+    def _validate(self, epoch: int) -> dict[str, float]:
+        """Run one pass over the validation set, computing losses and detection metrics.
 
+        The model is called in training mode (so raw predictions are available for
+        the loss) but inside :func:`torch.no_grad`, so no gradients are accumulated.
+        Predicted boxes decoded in eval mode are used separately for mAP/mAR.
+
+        Args:
+            epoch: Zero-based epoch index (used for logging only).
+
+        Returns:
+            Dict with keys ``"val/loss"``, ``"val/cls_loss"``, ``"val/iou_loss"``,
+            ``"val/dfl_loss"`` (averaged over batches) plus ``"val metrics/mAP"``,
+            ``"val metrics/mAP_50"``, ``"val metrics/mAR_100"``.
+        """
+        raw_model = self.model.module if isinstance(self.model, DDP) else self.model
+        eval_model = self.ema.ema if self.ema is not None else raw_model
+
+        # Training mode gives raw predictions needed for the loss; no gradients
+        # are computed because we are inside torch.no_grad().
+        eval_model.train()
+
+        det_metrics = DetectionMetrics(device=self.device)
         num_batches = 0
+        vis_images: list = []
 
-        for images, _targets in self.val_loader:
-            images = images.to(self.device, non_blocking=True)
-            eval_model(images)
+        loss_sum: dict[str, float] = {"total": 0.0, "cls": 0.0, "iou": 0.0, "dfl": 0.0}
+
+        for images, targets in self.val_loader:
+            images  = images.to(self.device, non_blocking=True)
+            targets = targets.to(self.device, non_blocking=True)
+
+            with torch.amp.autocast(str(self.device), enabled=self.use_amp):
+                predictions = eval_model(images)
+                loss, loss_dict = self.criterion(
+                    predictions, targets,
+                    input_size=(images.shape[2], images.shape[3]),
+                    epoch=epoch,
+                )
+
+            loss_sum["total"] += loss.item()
+            loss_sum["cls"]   += loss_dict.get("cls_loss", 0.0)
+            loss_sum["iou"]   += loss_dict.get("iou_loss", 0.0)
+            loss_sum["dfl"]   += loss_dict.get("dfl_loss", 0.0)
+
+            # Decoded predictions (pred_bboxes, pred_scores) are the first element
+            pred_bboxes, pred_scores = predictions[0]
+            detections = postprocess(pred_bboxes, pred_scores)
+            preds = [
+                {
+                    "boxes":  boxes.float(),
+                    "scores": scores.float(),
+                    "labels": labels.int(),
+                }
+                for boxes, scores, labels in detections
+            ]
+
+            # Convert collated targets [sum_N, 6] → per-image xyxy dicts
+            batch_size = images.shape[0]
+            img_h, img_w = images.shape[2], images.shape[3]
+            target_list: list[dict] = []
+            for i in range(batch_size):
+                mask = targets[:, 0] == i
+                t = targets[mask]
+                if t.shape[0] == 0:
+                    target_list.append({
+                        "boxes":  torch.zeros(0, 4, device=self.device),
+                        "labels": torch.zeros(0, dtype=torch.int, device=self.device),
+                    })
+                else:
+                    cx = t[:, 2] * img_w
+                    cy = t[:, 3] * img_h
+                    bw = t[:, 4] * img_w
+                    bh = t[:, 5] * img_h
+                    boxes = torch.stack(
+                        [cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], dim=-1
+                    )
+                    target_list.append({
+                        "boxes":  boxes,
+                        "labels": t[:, 1].int(),
+                    })
+
+            det_metrics.update(preds, target_list)
             num_batches += 1
 
-        console.print(f"  Validation done ({num_batches} batches)")
+            # Collect visual samples from the first batch only
+            if num_batches == 1 and self.val_vis_images > 0:
+                import numpy as np
+                n_vis = min(self.val_vis_images, images.shape[0])
+                imgs_np = images[:n_vis].cpu().numpy()
+                for idx in range(n_vis):
+                    p_boxes  = preds[idx]["boxes"].cpu().numpy()
+                    p_scores = preds[idx]["scores"].cpu().numpy()
+                    p_labels = preds[idx]["labels"].cpu().numpy()
+                    g_boxes  = target_list[idx]["boxes"].cpu().numpy()
+                    g_labels = target_list[idx]["labels"].cpu().numpy()
+                    vis_images.append(
+                        annotate_validation_sample(
+                            imgs_np[idx], p_boxes, p_scores, p_labels, g_boxes, g_labels,
+                            class_names=self.class_names,
+                        )
+                    )
 
-    def _save_checkpoint(self, epoch: int):
+        # Restore eval mode for any subsequent inference
+        eval_model.eval()
+
+        n = max(num_batches, 1)
+        map_results = det_metrics.compute()
+
+        results = {
+            # Losses — averaged across all validation batches
+            "val/loss":     loss_sum["total"] / n,
+            "val/cls_loss": loss_sum["cls"]   / n,
+            "val/iou_loss": loss_sum["iou"]   / n,
+            "val/dfl_loss": loss_sum["dfl"]   / n,
+            # Detection metrics — in their own group
+            "val_metrics/mAP":     map_results["mAP"],
+            "val_metrics/mAP_50":  map_results["mAP_50"],
+            "val_metrics/mAR_100": map_results["mAR_100"],
+        }
+
+        if self.is_main:
+            console.print(
+                f"  Val [{num_batches} batches] "
+                f"loss={results['val/loss']:.4f}  "
+                f"cls={results['val/cls_loss']:.4f}  "
+                f"iou={results['val/iou_loss']:.4f}  "
+                f"dfl={results['val/dfl_loss']:.4f}  "
+                f"mAP={results['val_metrics/mAP']:.4f}  "
+                f"mAP_50={results['val_metrics/mAP_50']:.4f}  "
+                f"mAR_100={results['val_metrics/mAR_100']:.4f}"
+            )
+
+        # Persist the best checkpoint when mAP_50 improves
+        if results["val_metrics/mAP_50"] > self.best_map:
+            self.best_map = results["val_metrics/mAP_50"]
+            self._save_checkpoint(epoch, is_best=True)
+
+        self._fire("on_validation_end", epoch, results)
+        if vis_images:
+            self._fire("on_validation_images", epoch, vis_images)
+        return results
+
+    def _save_checkpoint(self, epoch: int, *, is_best: bool = False):
         raw_model = self.model.module if isinstance(self.model, DDP) else self.model
         state = {
             "epoch": epoch + 1,
@@ -207,6 +374,7 @@ class Trainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "best_map": self.best_map,
+            "global_step": self.global_step,
         }
         if self.ema is not None:
             state["ema"] = self.ema.state_dict()
@@ -214,6 +382,8 @@ class Trainer:
             state["scaler_state_dict"] = self.scaler.state_dict()
 
         torch.save(state, self.output_dir / "last.pt")
+        if is_best:
+            torch.save(state, self.output_dir / "best.pt")
         if (epoch + 1) % 50 == 0:
             torch.save(state, self.output_dir / f"epoch_{epoch + 1}.pt")
 
@@ -227,6 +397,7 @@ class Trainer:
         self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         self.start_epoch = ckpt["epoch"]
         self.best_map = ckpt.get("best_map", 0.0)
+        self.global_step = ckpt.get("global_step", self.start_epoch * len(self.train_loader))
 
         if self.ema is not None and "ema" in ckpt:
             self.ema.load_state_dict(ckpt["ema"])

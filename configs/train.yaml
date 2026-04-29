@@ -1,11 +1,23 @@
-# Example training config
-# CLI flags override these values
-model: yolo_nas_s
-epochs: 300
-batch-size: 32
-lr: 0.0002
-device: cuda
-input-size: 640
-workers: 8
-pretrained: true
-output: runs/train
+# Example training config — pass with: yolonas train --config configs/train.yaml
+# CLI flags always override values defined here.
+model:
+  type: yolo_nas_s
+  num_classes: 3      # 0 = auto-detect from dataset
+  input-size: 320
+
+train:
+  epochs: 300
+  batch-size: 16
+  lr: 2e-4
+  gradient_accum: 16
+  device: cuda
+  workers: 8
+  pretrained: true
+  output: runs/yolonas_v2_320
+  val-freq: 10      # run validation every N epochs
+  compile: false   # set true for ~20% speedup on PyTorch 2+ (adds ~1 min warm-up)
+  amp: true        # automatic mixed precision (fp16) — disable if you hit NaN losses
+  num-gpus: 1      # GPUs for DDP (>1 spawns subprocesses via torch.multiprocessing)
+  ignore-empty: true   # skip images with zero annotations (background-only samples)
+  early-stopping-patience: 5    # stop if mAP doesn't improve for N val rounds (0 = disabled)
+  early-stopping-min-delta: 1e-4
