@@ -60,8 +60,8 @@ def detect(
 
     if source_path.is_dir():
         all_files = sorted(glob.glob(f"{str(source_path)}/**", recursive=True))
-        image_files = [f for f in all_files if Path(f).suffix.lower() in IMAGE_EXTENSIONS]
-        video_files = [f for f in all_files if Path(f).suffix.lower() in VIDEO_EXTENSIONS]
+        image_files = [Path(f) for f in all_files if Path(f).suffix.lower() in IMAGE_EXTENSIONS]
+        video_files = [Path(f) for f in all_files if Path(f).suffix.lower() in VIDEO_EXTENSIONS]
         if image_files:
             _detect_images(det, image_files, out_dir, console)
         for video_file in video_files:
