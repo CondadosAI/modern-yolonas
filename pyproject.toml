@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Modern YOLO-NAS object detection — clean reimplementation"
 license = "MIT"
 authors = [{name = "Luis Condados"}]
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24",
     "opencv-python-headless>=4.8",
