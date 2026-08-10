@@ -15,6 +15,7 @@ def from_hub(
     num_classes: int = 80,
     filename: str = "model.safetensors",
     revision: str | None = None,
+    strict: bool = True,
 ) -> nn.Module:
     """Load a YOLO-NAS model from Hugging Face Hub.
 
@@ -24,15 +25,29 @@ def from_hub(
         num_classes: Number of classes in the checkpoint.
         filename: Checkpoint filename in the repository.
         revision: Git revision (branch, tag, or commit hash).
+        strict: Require the checkpoint to match the architecture exactly. Set to
+            ``False`` only when you intend a partial load — e.g. reusing a backbone
+            under a differently-shaped head. A non-strict load leaves any unmatched
+            parameter at its initial value, and the model will still run.
 
     Returns:
         Loaded YoloNAS model.
+
+    Raises:
+        RuntimeError: If ``strict`` and the checkpoint does not match the architecture.
+            Usually means ``variant`` or ``num_classes`` is wrong for this checkpoint.
     """
     from modern_yolonas.model import YoloNAS
+    from modern_yolonas.weights import filter_loadable
 
     path = hf_hub_download(repo_id=repo_id, filename=filename, revision=revision)
     model = YoloNAS.from_config(variant, num_classes=num_classes)
-    model.load_state_dict(load_file(path), strict=False)
+
+    sd = load_file(path)
+    if not strict:
+        sd, _ = filter_loadable(sd, model)
+
+    model.load_state_dict(sd, strict=strict)
     return model
 
 
