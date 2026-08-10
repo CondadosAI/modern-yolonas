@@ -66,6 +66,6 @@ pred_bboxes, pred_scores = model(x)
 
 | Model | Params | mAP (COCO val) |
 |---|---|---|
-| `yolo_nas_s` | ~12M | 47.5 |
-| `yolo_nas_m` | ~31M | 51.5 |
-| `yolo_nas_l` | ~44M | 52.2 |
+| `yolo_nas_s` | 19.05M | 47.5 |
+| `yolo_nas_m` | 51.18M | 51.5 |
+| `yolo_nas_l` | 66.98M | 52.2 |
