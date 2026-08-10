@@ -1,0 +1,236 @@
+[
+  {
+    "runtime": "PyTorch",
+    "device": "CPU i7-12700H",
+    "precision": "FP32",
+    "input": 256,
+    "median_ms": 43.884508000019196,
+    "fps": 22.787084681445275,
+    "error": null
+  },
+  {
+    "runtime": "PyTorch",
+    "device": "dGPU RTX 3060",
+    "precision": "FP32",
+    "input": 256,
+    "median_ms": 6.829157999845847,
+    "fps": 146.43093629149783,
+    "error": null
+  },
+  {
+    "runtime": "PyTorch",
+    "device": "dGPU RTX 3060",
+    "precision": "FP16",
+    "input": 256,
+    "median_ms": 7.3530950000986195,
+    "fps": 135.9971549376947,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "CPU i7-12700H",
+    "precision": "FP32",
+    "input": 256,
+    "median_ms": 9.618622999823856,
+    "fps": 103.96498542653276,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "iGPU Iris Xe",
+    "precision": "FP32",
+    "input": 256,
+    "median_ms": 17.74695950007299,
+    "fps": 56.34768028832698,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "CPU i7-12700H",
+    "precision": "FP16",
+    "input": 256,
+    "median_ms": 9.968621500092922,
+    "fps": 100.31477270861157,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "iGPU Iris Xe",
+    "precision": "FP16",
+    "input": 256,
+    "median_ms": 14.417978499977835,
+    "fps": 69.35785068631759,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "CPU i7-12700H",
+    "precision": "INT8",
+    "input": 256,
+    "median_ms": 3.696691499953886,
+    "fps": 270.51215932205173,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "iGPU Iris Xe",
+    "precision": "INT8",
+    "input": 256,
+    "median_ms": 10.507211500225822,
+    "fps": 95.17272969888424,
+    "error": null
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "-",
+    "input": 256,
+    "median_ms": null,
+    "fps": null,
+    "error": "import: AttributeError"
+  },
+  {
+    "runtime": "PyTorch",
+    "device": "CPU i7-12700H",
+    "precision": "FP32",
+    "input": 640,
+    "median_ms": 125.01216999999087,
+    "fps": 7.999221195824958,
+    "error": null
+  },
+  {
+    "runtime": "PyTorch",
+    "device": "dGPU RTX 3060",
+    "precision": "FP32",
+    "input": 640,
+    "median_ms": 13.111093000134133,
+    "fps": 76.27129179769905,
+    "error": null
+  },
+  {
+    "runtime": "PyTorch",
+    "device": "dGPU RTX 3060",
+    "precision": "FP16",
+    "input": 640,
+    "median_ms": 8.05888050035719,
+    "fps": 124.0867140238247,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "CPU i7-12700H",
+    "precision": "FP32",
+    "input": 640,
+    "median_ms": 55.23630850007066,
+    "fps": 18.104033871103475,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "iGPU Iris Xe",
+    "precision": "FP32",
+    "input": 640,
+    "median_ms": 56.14377900019463,
+    "fps": 17.811412373871974,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "CPU i7-12700H",
+    "precision": "FP16",
+    "input": 640,
+    "median_ms": 56.85749849999411,
+    "fps": 17.58782968617769,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "iGPU Iris Xe",
+    "precision": "FP16",
+    "input": 640,
+    "median_ms": 47.20891400029359,
+    "fps": 21.182440248334903,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "CPU i7-12700H",
+    "precision": "INT8",
+    "input": 640,
+    "median_ms": 17.800834499894336,
+    "fps": 56.177141583218244,
+    "error": null
+  },
+  {
+    "runtime": "OpenVINO",
+    "device": "iGPU Iris Xe",
+    "precision": "INT8",
+    "input": 640,
+    "median_ms": 58.44897900010437,
+    "fps": 17.108938720695434,
+    "error": null
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "-",
+    "input": 640,
+    "median_ms": null,
+    "fps": null,
+    "error": "import: AttributeError"
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "FP32",
+    "input": 256,
+    "median_ms": 1.7975309997382283,
+    "fps": 556.3186393701296,
+    "error": null
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "FP16",
+    "input": 256,
+    "median_ms": 0.8727719998660177,
+    "fps": 1145.7746125603405,
+    "error": null
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "INT8",
+    "input": 256,
+    "median_ms": null,
+    "fps": null,
+    "error": "not measured: TRT 11 removed the INT8 calibrator API; needs a QDQ ONNX"
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "FP32",
+    "input": 640,
+    "median_ms": 5.583510499945987,
+    "fps": 179.09879456834076,
+    "error": null
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "FP16",
+    "input": 640,
+    "median_ms": 2.1604949999982637,
+    "fps": 462.8568915923451,
+    "error": null
+  },
+  {
+    "runtime": "TensorRT",
+    "device": "dGPU RTX 3060",
+    "precision": "INT8",
+    "input": 640,
+    "median_ms": null,
+    "fps": null,
+    "error": "not measured: TRT 11 removed the INT8 calibrator API; needs a QDQ ONNX"
+  }
+]
