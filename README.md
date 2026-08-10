@@ -142,6 +142,8 @@ Or the standalone scripts in [`examples/`](examples/):
 
 - [`parity_check.py`](examples/parity_check.py) — verify this implementation matches
   super-gradients (writes [`output/parity.md`](output/parity.md))
+- [`bench_devices.py`](examples/bench_devices.py) — latency across CPU / Intel iGPU /
+  NVIDIA dGPU and FP32 / FP16 / INT8 (writes [`output/latency_matrix.md`](output/latency_matrix.md))
 - [`detect_image.py`](examples/detect_image.py) — run detection on a single image
 - [`detect_video.py`](examples/detect_video.py) — run detection on a video file
 - [`detect_webcam.py`](examples/detect_webcam.py) — live webcam detection
