@@ -8,6 +8,35 @@ from modern_yolonas.inference.preprocess import letterbox, preprocess
 from modern_yolonas.inference.postprocess import postprocess, rescale_boxes
 
 
+class TestPreprocessChannelOrder:
+    """Regression: ``preprocess`` must hand the model RGB, not BGR.
+
+    The weights expect RGB — training normalizes to RGB and the Frigate export swaps
+    channels in-graph. Feeding BGR costs 3.4 mAP on COCO val2017 (0.4420 vs 0.4761
+    for yolo_nas_s), and it degrades quietly rather than failing, so only a test
+    catches it.
+    """
+
+    def test_swaps_bgr_input_to_rgb_tensor(self):
+        # Distinct per-channel values in OpenCV's BGR order.
+        blue, green, red = 10, 120, 240
+        bgr = np.zeros((640, 640, 3), dtype=np.uint8)
+        bgr[:, :, 0], bgr[:, :, 1], bgr[:, :, 2] = blue, green, red
+
+        tensor, _, _ = preprocess(bgr, 640)
+
+        # Sample the image interior; letterbox pads the border with 114.
+        channels = tensor[0, :, 320, 320]
+        assert channels[0] == pytest.approx(red / 255.0, abs=1e-3), "channel 0 must be R"
+        assert channels[1] == pytest.approx(green / 255.0, abs=1e-3), "channel 1 must be G"
+        assert channels[2] == pytest.approx(blue / 255.0, abs=1e-3), "channel 2 must be B"
+
+    def test_output_is_contiguous(self):
+        # The channel swap introduces a negative stride, which torch.from_numpy rejects.
+        tensor, _, _ = preprocess(np.zeros((480, 640, 3), dtype=np.uint8), 640)
+        assert tensor.is_contiguous()
+
+
 class TestPreprocess:
     def test_letterbox_square(self):
         img = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
