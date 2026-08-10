@@ -71,6 +71,23 @@ def _download(variant: str, repo_id: str, revision: str | None) -> str:
     return hf_hub_download(repo_id=repo_id, filename=WEIGHT_FILES[variant], revision=revision)
 
 
+def filter_loadable(sd: dict[str, torch.Tensor], model: nn.Module) -> tuple[dict[str, torch.Tensor], list[str]]:
+    """Keep only checkpoint entries that match the model in both key and shape.
+
+    ``load_state_dict(..., strict=False)`` tolerates missing and unexpected keys but
+    still raises on a shape mismatch, so dropping the mismatched entries here is what
+    makes a partial load actually work — notably when ``num_classes`` differs from the
+    checkpoint's and the classification heads are a different shape.
+
+    Returns:
+        The filtered state dict, and the sorted names of entries dropped for shape.
+    """
+    model_sd = model.state_dict()
+    kept = {k: v for k, v in sd.items() if k in model_sd and v.shape == model_sd[k].shape}
+    mismatched = sorted(k for k, v in sd.items() if k in model_sd and v.shape != model_sd[k].shape)
+    return kept, mismatched
+
+
 def load_pretrained(
     model: nn.Module,
     variant: str,
@@ -83,7 +100,9 @@ def load_pretrained(
     Args:
         model: A ``YoloNAS`` instance (or any nn.Module with matching keys).
         variant: One of ``"yolo_nas_s"``, ``"yolo_nas_m"``, ``"yolo_nas_l"``.
-        strict: Require exact key matching.
+        strict: Require exact key matching. Pass ``False`` for a partial load — e.g.
+            fine-tuning with a different ``num_classes``, where the classification
+            heads cannot be reused and stay at their initial values.
         repo_id: HF Hub repo (default :data:`HF_REPO_ID`, overridable via the
             ``YOLONAS_HF_REPO`` env var or this arg).
         revision: Git ref (branch / tag / commit) of the repo.
@@ -95,8 +114,18 @@ def load_pretrained(
     raw_sd = load_file(path)
     sd = remap_state_dict(raw_sd)
 
-    model_keys = set(model.state_dict().keys())
-    sd = {k: v for k, v in sd.items() if k in model_keys}
+    if strict:
+        model_keys = set(model.state_dict().keys())
+        sd = {k: v for k, v in sd.items() if k in model_keys}
+    else:
+        sd, mismatched = filter_loadable(sd, model)
+        if mismatched:
+            logger.info(
+                "Skipped %d checkpoint tensor(s) whose shape differs from the model "
+                "(e.g. %s); these keep their initial values.",
+                len(mismatched),
+                ", ".join(mismatched[:3]),
+            )
 
     model.load_state_dict(sd, strict=strict)
     return model

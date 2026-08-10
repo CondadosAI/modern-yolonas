@@ -9,7 +9,7 @@ A clean, minimal Python reimplementation of [YOLO-NAS](https://github.com/Deci-A
 - **CLI** — `yolonas detect`, `yolonas train`, `yolonas export`, `yolonas eval`
 - **ONNX / OpenVINO export** — including Frigate-compatible graph surgery
 - **Training** — full training loop with DDP, AMP, EMA, cosine LR
-- **All 3 variants** — S (~12M), M (~31M), L (~44M)
+- **All 3 variants** — S (19.05M), M (51.18M), L (66.98M)
 
 ## Quick install
 

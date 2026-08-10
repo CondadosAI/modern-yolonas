@@ -2,10 +2,12 @@
 
 import torch
 
+from modern_yolonas.model import YoloNAS
 from modern_yolonas.weights import (
     HF_REPO_ID,
     WEIGHT_FILES,
     _strip_prefix,
+    filter_loadable,
     remap_state_dict,
 )
 
@@ -77,3 +79,55 @@ class TestWeightFiles:
 
     def test_default_repo_id(self):
         assert "/" in HF_REPO_ID
+
+
+class TestFilterLoadable:
+    def test_keeps_matching_entries(self):
+        model = YoloNAS.from_config("yolo_nas_s", num_classes=80)
+        kept, mismatched = filter_loadable(model.state_dict(), model)
+        assert kept.keys() == model.state_dict().keys()
+        assert mismatched == []
+
+    def test_drops_unknown_keys(self):
+        model = YoloNAS.from_config("yolo_nas_s", num_classes=80)
+        sd = {"not.a.real.key": torch.randn(4)}
+        kept, mismatched = filter_loadable(sd, model)
+        assert kept == {}
+        # An unknown key is not a shape mismatch — it is simply absent.
+        assert mismatched == []
+
+    def test_reports_shape_mismatches(self):
+        model = YoloNAS.from_config("yolo_nas_s", num_classes=80)
+        key = "heads.head1.cls_pred.weight"
+        sd = {key: torch.randn(3, 64, 1, 1)}
+        kept, mismatched = filter_loadable(sd, model)
+        assert kept == {}
+        assert mismatched == [key]
+
+
+class TestPartialLoadAcrossNumClasses:
+    """Regression: a checkpoint with a different ``num_classes`` must load partially.
+
+    ``load_state_dict(strict=False)`` tolerates missing/unexpected keys but still
+    raises on a shape mismatch, so the reshaped classification heads have to be
+    dropped before loading. This is the documented fine-tuning path.
+    """
+
+    def test_partial_load_succeeds_and_transfers_backbone(self):
+        pretrained_sd = YoloNAS.from_config("yolo_nas_s", num_classes=80).state_dict()
+        model = YoloNAS.from_config("yolo_nas_s", num_classes=3)
+
+        stem = "backbone.stem.conv.branch_3x3.conv.weight"
+        before = model.state_dict()[stem].clone()
+
+        kept, mismatched = filter_loadable(pretrained_sd, model)
+        model.load_state_dict(kept, strict=False)
+
+        # The reshaped heads were skipped, the backbone was not.
+        assert any("cls_pred" in k for k in mismatched)
+        assert stem not in mismatched
+        assert torch.equal(model.state_dict()[stem], pretrained_sd[stem])
+        assert not torch.equal(model.state_dict()[stem], before)
+
+        # Head keeps its new class count, still at initialization.
+        assert model.state_dict()["heads.head1.cls_pred.weight"].shape[0] == 3

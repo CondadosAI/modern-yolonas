@@ -133,7 +133,12 @@ model:
 
 ## Examples
 
-See the [`examples/`](examples/) directory:
+Start with the notebook — install, detect, visualize, and inspect the raw model output in
+one pass:
+
+- [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb)
+
+Or the standalone scripts in [`examples/`](examples/):
 
 - [`detect_image.py`](examples/detect_image.py) — run detection on a single image
 - [`detect_video.py`](examples/detect_video.py) — run detection on a video file
@@ -143,9 +148,12 @@ See the [`examples/`](examples/) directory:
 
 | Model | Params | Input | mAP (COCO val) |
 |---|---|---|---|
-| YOLO-NAS S | ~12M | 640 | 47.5 |
-| YOLO-NAS M | ~31M | 640 | 51.5 |
-| YOLO-NAS L | ~44M | 640 | 52.2 |
+| YOLO-NAS S | 19.05M | 640 | 47.5 |
+| YOLO-NAS M | 51.18M | 640 | 51.5 |
+| YOLO-NAS L | 66.98M | 640 | 52.2 |
+
+Parameter counts are measured with `sum(p.numel() for p in model.parameters())`. The mAP
+column is Deci's published figure, which this project has not independently re-measured.
 
 ## Development
 

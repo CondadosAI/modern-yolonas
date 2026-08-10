@@ -61,6 +61,6 @@ load directly with only DDP/EMA prefix stripping.
 
 | Variant | `concat_intermediates` | Head `width_mult` | Params |
 |---|---|---|---|
-| S | False everywhere | 0.5 | ~12M |
-| M | True in stages 1-3 | 0.75 | ~31M |
-| L | True everywhere | 1.0 | ~44M |
+| S | False everywhere | 0.5 | 19.05M |
+| M | True in stages 1-3 | 0.75 | 51.18M |
+| L | True everywhere | 1.0 | 66.98M |
