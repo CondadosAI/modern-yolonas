@@ -140,6 +140,8 @@ one pass:
 
 Or the standalone scripts in [`examples/`](examples/):
 
+- [`parity_check.py`](examples/parity_check.py) — verify this implementation matches
+  super-gradients (writes [`output/parity.md`](output/parity.md))
 - [`detect_image.py`](examples/detect_image.py) — run detection on a single image
 - [`detect_video.py`](examples/detect_video.py) — run detection on a video file
 - [`detect_webcam.py`](examples/detect_webcam.py) — live webcam detection
