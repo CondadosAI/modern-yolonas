@@ -88,8 +88,21 @@ from modern_yolonas.model import YoloNAS
 model = YoloNAS.from_config("yolo_nas_s", num_classes=5)
 ```
 
-Note: when changing `num_classes`, pretrained weights for the classification
-heads won't match (different tensor shapes). Load with `strict=False`:
+When changing `num_classes`, the pretrained classification heads no longer match
+(different tensor shapes). The preferred way to handle this is `transfer_to()`,
+which loads the backbone and neck **strictly** and then swaps in freshly
+initialised heads:
+
+```python
+from modern_yolonas.weights import transfer_to
+
+model = transfer_to("yolo_nas_s", num_classes=5)
+```
+
+Because the pretrained part is loaded strictly, nothing can be silently skipped.
+
+The alternative is a partial load, which keeps every tensor whose shape matches
+the model and leaves the reshaped heads at their initial values:
 
 ```python
 from modern_yolonas.weights import load_pretrained
@@ -97,3 +110,7 @@ from modern_yolonas.weights import load_pretrained
 model = YoloNAS.from_config("yolo_nas_s", num_classes=5)
 load_pretrained(model, "yolo_nas_s", strict=False)
 ```
+
+Prefer `transfer_to()` unless you specifically need the partial-load behaviour — a
+non-strict load will also quietly tolerate a checkpoint that does not belong to
+this architecture at all.
