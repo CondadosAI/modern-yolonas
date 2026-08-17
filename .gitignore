@@ -32,3 +32,8 @@ site/
 .coverage
 coverage.xml
 htmlcov/
+
+# Generated at build time by hatch-vcs. Tracking it made every build see a
+# dirty tree, so setuptools-scm fell back to guess-next-dev and every tagged
+# release published as X.Y.Z+1.dev0 instead of X.Y.Z.
+src/modern_yolonas/_version.py
