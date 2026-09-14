@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   duplicate `dev` definition that declared two different `pytest` floors
 
 ### Removed
+- The `auto-tag` CI job, which tagged a patch bump on every push to `main`. Releases are
+  now cut by pushing a `v*` tag, which `publish.yml` already listens for. Every merge was
+  a release, minor and major bumps were impossible without intervention, and this
+  changelog went stale at `0.1.0` while tags reached `v0.3.0` as a result.
 - `onnxscript` from the core dependencies; it is only needed by the ONNX exporter
   and remains in the `onnx` extra
 

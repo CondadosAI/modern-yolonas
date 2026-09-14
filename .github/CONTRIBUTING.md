@@ -74,6 +74,12 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) for commit and 
 titles — `feat:`, `fix:`, `docs:`, `perf:`, `refactor:`, `test:`, `chore:`. The
 release notes are drafted from PR titles, so the title is what users will read.
 
+## Releases
+
+Releases are cut deliberately, not on every merge. Pushing a `v*` tag triggers
+`publish.yml`, which builds and publishes to PyPI via trusted publishing. Pick the
+version by what changed: at `0.x`, a breaking change is a minor bump.
+
 ## Supported Python versions
 
 `requires-python` is `>=3.10`, and CI runs both ends of that range. Ruff is configured
