@@ -12,7 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — breaking
+- `Detector` now returns [`supervision.Detections`](https://supervision.roboflow.com/latest/detection/core/)
+  instead of the project's own `Detection` dataclass. Field names follow supervision:
+  `boxes` → `xyxy`, `scores` → `confidence`, `class_ids` → `class_id`. Results filter by
+  slicing (`detections[detections.confidence > 0.5]`) and work directly with supervision's
+  annotators, trackers, zones and metrics.
+- `Detector.detect_video` yields `(frame_index, frame, detections)`. `sv.Detections` does
+  not carry the source image, so the frame is yielded alongside it; the `retain_image`
+  argument is gone.
+- `result.save(path)` and `result.visualize()` are replaced by
+  `Detector.annotate(image, detections)`, which returns the annotated frame for the caller
+  to display or write.
+- `Detection` is no longer exported from `modern_yolonas`.
+- `Detector` accepts `class_names`; names default to COCO only when `num_classes` is 80.
+
 ### Added
+- `supervision>=0.30` as a core dependency. Releases before 0.30 required
+  `opencv-python`, which conflicts with this project's `opencv-python-headless`; 0.30
+  dropped that dependency, which is what makes this practical.
 - Package metadata for PyPI: `readme`, `keywords`, classifiers, and project URLs
 - Community docs: `CONTRIBUTING.md` (with API design principles),
   `CODE_OF_CONDUCT.md`, issue forms, `CITATION.cff`, Dependabot config

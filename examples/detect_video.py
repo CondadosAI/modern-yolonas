@@ -49,10 +49,11 @@ def main():
     # --- Option 2: Iterate frames with a generator (commented out) ---
     # This is useful when you need custom per-frame logic:
     #
-    # for frame_idx, result in det.detect_video(args.video):
-    #     print(f"Frame {frame_idx}: {len(result.boxes)} detections")
-    #     # Access result.boxes, result.scores, result.class_ids
-    #     # Or get annotated frame: annotated = result.visualize()
+    # for frame_idx, frame, detections in det.detect_video(args.video):
+    #     print(f"Frame {frame_idx}: {len(detections)} detections")
+    #     # detections.xyxy / .confidence / .class_id, and filtering:
+    #     #   people = detections[detections.class_id == 0]
+    #     # Or get an annotated frame: det.annotate(frame, detections)
 
 
 if __name__ == "__main__":

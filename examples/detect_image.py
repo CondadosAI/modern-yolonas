@@ -7,6 +7,8 @@ Usage:
 
 import argparse
 
+import cv2
+
 from modern_yolonas.inference.detect import Detector
 
 
@@ -23,20 +25,20 @@ def main():
     # Create detector (downloads pretrained weights on first run)
     det = Detector(args.model, device=args.device, conf_threshold=args.conf, iou_threshold=args.iou)
 
-    # Run detection
-    result = det(args.image)
+    image = cv2.imread(args.image)
+    if image is None:
+        raise SystemExit(f"Cannot read image: {args.image}")
 
-    # Print results
-    print(f"Found {len(result.boxes)} objects:")
-    from modern_yolonas.inference.visualize import COCO_NAMES
+    # Run detection -> an sv.Detections
+    detections = det(image)
 
-    for box, score, cls_id in zip(result.boxes, result.scores, result.class_ids):
-        name = COCO_NAMES[int(cls_id)]
+    print(f"Found {len(detections)} objects:")
+    for box, score, name in zip(detections.xyxy, detections.confidence, detections.data["class_name"]):
         x1, y1, x2, y2 = box
         print(f"  {name}: {score:.2f} [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
 
     # Save annotated image
-    result.save(args.output)
+    cv2.imwrite(args.output, det.annotate(image, detections))
     print(f"Saved to {args.output}")
 
 
