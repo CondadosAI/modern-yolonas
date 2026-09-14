@@ -1,0 +1,56 @@
+name: Bug report
+description: Something behaves differently than documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if the numbers differ from super-gradients, please run
+        `python examples/parity_check.py` and attach the report — that isolates
+        a model-parity bug from an inference-pipeline bug.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The shortest script or CLI invocation that shows the problem.
+      render: python
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: modern-yolonas version
+      description: "`python -c 'import modern_yolonas; print(modern_yolonas.__version__)'`"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: "OS, Python, torch version, and device (CPU / CUDA / OpenVINO)."
+      placeholder: |
+        OS: Ubuntu 24.04
+        Python: 3.12.3
+        torch: 2.7.1+cu130
+        Device: NVIDIA RTX 4070
+    validations:
+      required: true
+
+  - type: dropdown
+    id: model
+    attributes:
+      label: Model variant
+      options: ["yolo_nas_s", "yolo_nas_m", "yolo_nas_l", "not model-specific"]
+    validations:
+      required: true

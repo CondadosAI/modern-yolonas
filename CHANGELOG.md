@@ -5,13 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+> **Note on maintenance.** Releases between `v0.1.0` and `v0.3.0` were tagged
+> automatically on every push to `main`, so this file does not describe them
+> individually. See the [releases page](https://github.com/CondadosAI/modern-yolonas/releases)
+> for the commit-level history of that range.
+
 ## [Unreleased]
 
 ### Added
-- OpenVINO export support (`yolonas export --format openvino`)
-- Automated PyPI publishing via GitHub Actions (trusted publishing)
-- Dynamic versioning via `hatch-vcs` (git tag based)
+- Package metadata for PyPI: `readme`, `keywords`, classifiers, and project URLs
+- Community docs: `CONTRIBUTING.md` (with API design principles),
+  `CODE_OF_CONDUCT.md`, issue forms, `CITATION.cff`, Dependabot config
+- Benchmark artifacts are now published on the docs site under `docs/benchmarks/`
 
+### Changed
+- CI now tests both ends of the supported Python range (3.10 and 3.13) instead of
+  3.13 only; `ruff` and `mypy` target 3.10 to match `requires-python`
+- Development and docs tooling moved to PEP 735 dependency groups, removing a
+  duplicate `dev` definition that declared two different `pytest` floors
+
+### Removed
+- `onnxscript` from the core dependencies; it is only needed by the ONNX exporter
+  and remains in the `onnx` extra
+
+## [0.1.0] - 2025-06-01
 ## [0.1.0] - 2025-06-01
 
 ### Added

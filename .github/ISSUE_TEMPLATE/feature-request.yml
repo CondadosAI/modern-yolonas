@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a capability this project should have.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project stays deliberately small: a faithful YOLO-NAS with a clean
+        training, inference, and export path. Features that generalise beyond
+        YOLO-NAS usually belong in a model-agnostic library such as
+        [supervision](https://github.com/roboflow/supervision) instead.
+        See the API design principles in CONTRIBUTING.md.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case, not the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: How would you want to call it?
+      render: python
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Can this be done today by composing existing pieces?
