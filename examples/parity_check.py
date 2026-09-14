@@ -4,7 +4,7 @@ Loads ONE set of safetensors weights into both implementations and compares thei
 forward passes on identical input tensors. Because both sides get byte-identical
 weights, the comparison isolates the architecture from weight loading.
 
-Writes `output/parity.md` and `output/parity_summary.csv`.
+Writes `docs/benchmarks/parity.md` and `docs/benchmarks/parity_summary.csv`.
 
 Why the weights are side-loaded rather than downloaded
 ------------------------------------------------------
@@ -130,7 +130,7 @@ def main() -> None:
     ap.add_argument("--precision-sweep", action="store_true",
                     help="also run yolo_nas_s in float64 (slow, but distinguishes "
                          "rounding from a genuine formula difference)")
-    ap.add_argument("--out", default="output")
+    ap.add_argument("--out", default="docs/benchmarks")
     args = ap.parse_args()
 
     rows = []

@@ -1,5 +1,14 @@
 # Export Guide
 
+## Install the export extras
+
+Exporting is not part of the base install. Pull in the runtime you are targeting:
+
+```bash
+pip install "modern-yolonas[onnx]"      # ONNX export and onnxruntime
+pip install "modern-yolonas[openvino]"  # OpenVINO IR export
+```
+
 ## ONNX export
 
 ```bash

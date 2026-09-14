@@ -100,7 +100,7 @@ yolonas train --model yolo_nas_s --data /path/to/dataset --format yolo --epochs 
 # Evaluation
 yolonas eval --model yolo_nas_s --data /path/to/coco --split val2017
 
-# Export
+# Export (needs the extras: pip install "modern-yolonas[onnx]" / [openvino])
 yolonas export --model yolo_nas_s --format onnx --output model.onnx
 yolonas export --model yolo_nas_s --format openvino --output model.xml
 
@@ -136,17 +136,17 @@ model:
 Start with the notebook — install, detect, visualize, and inspect the raw model output in
 one pass:
 
-- [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb)
+- [`notebooks/quickstart.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/notebooks/quickstart.ipynb)
 
-Or the standalone scripts in [`examples/`](examples/):
+Or the standalone scripts in [`examples/`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/):
 
-- [`parity_check.py`](examples/parity_check.py) — verify this implementation matches
-  super-gradients (writes [`output/parity.md`](output/parity.md))
-- [`bench_devices.py`](examples/bench_devices.py) — latency across CPU / Intel iGPU /
-  NVIDIA dGPU and FP32 / FP16 / INT8 (writes [`output/latency_matrix.md`](output/latency_matrix.md))
-- [`detect_image.py`](examples/detect_image.py) — run detection on a single image
-- [`detect_video.py`](examples/detect_video.py) — run detection on a video file
-- [`detect_webcam.py`](examples/detect_webcam.py) — live webcam detection
+- [`parity_check.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/parity_check.py) — verify this implementation matches
+  super-gradients (writes [`docs/benchmarks/parity.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/parity.md))
+- [`bench_devices.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/bench_devices.py) — latency across CPU / Intel iGPU /
+  NVIDIA dGPU and FP32 / FP16 / INT8 (writes [`docs/benchmarks/latency_matrix.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/latency_matrix.md))
+- [`detect_image.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_image.py) — run detection on a single image
+- [`detect_video.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_video.py) — run detection on a video file
+- [`detect_webcam.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_webcam.py) — live webcam detection
 
 ## Variants
 

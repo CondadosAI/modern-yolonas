@@ -41,6 +41,9 @@ nav:
     - Export: guides/export.md
     - Extending: guides/extending.md
   - Architecture: architecture.md
+  - Benchmarks:
+    - Parity vs super-gradients: benchmarks/parity.md
+    - Latency matrix: benchmarks/latency_matrix.md
 
 plugins:
   - search
