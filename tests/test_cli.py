@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+import supervision as sv
 from typer.testing import CliRunner
 
 from modern_yolonas.cli import app
@@ -99,14 +100,8 @@ class TestDetectIntegration:
             with patch("modern_yolonas.inference.detect.Detector") as mock_cls:
                 # Mock detector to avoid weight download
                 mock_det = mock_cls.return_value
-                mock_result = type("Detection", (), {
-                    "boxes": np.zeros((0, 4)),
-                    "scores": np.zeros(0),
-                    "class_ids": np.zeros(0),
-                    "image": img,
-                    "save": lambda self, path, **kw: cv2.imwrite(str(path), img),
-                })()
-                mock_det.return_value = mock_result
+                mock_det.return_value = sv.Detections.empty()
+                mock_det.annotate.side_effect = lambda image, detections: image
 
                 result = runner.invoke(app, [
                     "detect",
@@ -130,14 +125,8 @@ class TestDetectIntegration:
 
             with patch("modern_yolonas.inference.detect.Detector") as mock_cls:
                 mock_det = mock_cls.return_value
-                mock_result = type("Detection", (), {
-                    "boxes": np.zeros((0, 4)),
-                    "scores": np.zeros(0),
-                    "class_ids": np.zeros(0),
-                    "image": np.zeros((32, 32, 3), dtype=np.uint8),
-                    "save": lambda self, path, **kw: cv2.imwrite(str(path), np.zeros((32, 32, 3), dtype=np.uint8)),
-                })()
-                mock_det.return_value = mock_result
+                mock_det.return_value = sv.Detections.empty()
+                mock_det.annotate.side_effect = lambda image, detections: image
 
                 result = runner.invoke(app, [
                     "detect",

@@ -23,9 +23,8 @@ def main():
     det = Detector(args.model, device=args.device, conf_threshold=args.conf)
 
     print("Press 'q' to quit")
-    for frame_idx, result in det.detect_video(source=args.camera):
-        annotated = result.visualize()
-        cv2.imshow("YOLO-NAS", annotated)
+    for _frame_idx, frame, detections in det.detect_video(source=args.camera):
+        cv2.imshow("YOLO-NAS", det.annotate(frame, detections))
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 

@@ -1,44 +1,26 @@
-"""High-level detection API for images and video."""
+"""High-level detection API for images and video.
+
+Results are returned as :class:`supervision.Detections`, the interchange format used
+across the computer vision ecosystem. That buys filtering (``detections[detections.confidence > 0.5]``),
+merging, and every supervision annotator, tracker and zone for free, instead of this
+project growing its own versions of them.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generator
 
 import numpy as np
+import supervision as sv
 import torch
 
 from modern_yolonas.inference.preprocess import preprocess
 from modern_yolonas.inference.postprocess import postprocess, rescale_boxes
-from modern_yolonas.inference.visualize import draw_detections
+from modern_yolonas.inference.visualize import COCO_NAMES
 from modern_yolonas.validation import validate_confidence, validate_device, validate_input_size, validate_iou_threshold, validate_model_name
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
-
-
-@dataclass
-class Detection:
-    """Detection results for a single image/frame."""
-
-    boxes: np.ndarray  # [D, 4] x1y1x2y2
-    scores: np.ndarray  # [D]
-    class_ids: np.ndarray  # [D]
-    image: np.ndarray | None = field(default=None, repr=False)
-
-    def visualize(self, class_names: list[str] | None = None) -> np.ndarray:
-        """Draw detections on the original image."""
-        if self.image is None:
-            raise ValueError("Original image not stored; pass retain_image=True to Detector")
-        return draw_detections(self.image, self.boxes, self.scores, self.class_ids, class_names)
-
-    def save(self, path: str | Path, class_names: list[str] | None = None):
-        """Visualize and save to file."""
-        import cv2
-
-        img = self.visualize(class_names)
-        if not cv2.imwrite(str(path), img):
-            raise IOError(f"Failed to save image to {path}. Check the path and directory exist.")
 
 
 class Detector:
@@ -49,15 +31,21 @@ class Detector:
         det = Detector("yolo_nas_s", device="cuda")
 
         # Single image
-        result = det("image.jpg")
-        result.save("output.jpg")
+        image = cv2.imread("image.jpg")
+        detections = det(image)
+        cv2.imwrite("output.jpg", det.annotate(image, detections))
+
+        # Filter like any supervision result
+        people = detections[detections.class_id == 0]
+        confident = detections[detections.confidence > 0.5]
 
         # From a custom checkpoint trained with --num-classes 3
-        det = Detector("yolo_nas_s", weights="runs/train/best.pt", num_classes=3)
+        det = Detector("yolo_nas_s", weights="runs/train/best.pt", num_classes=3,
+                       class_names=["cat", "dog", "bird"])
 
         # Video (yields per-frame results)
-        for frame_idx, result in det.detect_video("video.mp4"):
-            print(f"Frame {frame_idx}: {len(result.boxes)} detections")
+        for frame_idx, frame, detections in det.detect_video("video.mp4"):
+            print(f"Frame {frame_idx}: {len(detections)} detections")
     """
 
     def __init__(
@@ -72,6 +60,7 @@ class Detector:
         precision: str = "fp32",
         weights: str | Path | None = None,
         num_classes: int = 80,
+        class_names: list[str] | None = None,
     ):
         from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
 
@@ -82,6 +71,11 @@ class Detector:
 
         if precision not in ("fp32", "fp16"):
             raise ValueError(f"precision must be 'fp32' or 'fp16', got {precision!r}")
+
+        if class_names is not None and len(class_names) != num_classes:
+            raise ValueError(
+                f"class_names has {len(class_names)} entries but num_classes is {num_classes}"
+            )
 
         builders = {
             "yolo_nas_s": yolo_nas_s,
@@ -95,6 +89,15 @@ class Detector:
         self.input_size = input_size
         self.multi_label = multi_label
         self.precision = precision
+        # Only the 80-class default can be named without being told; a fine-tuned
+        # model with a different head gets unlabelled ids unless the caller says.
+        if class_names is not None:
+            self.class_names: list[str] | None = class_names
+        else:
+            self.class_names = COCO_NAMES if num_classes == len(COCO_NAMES) else None
+
+        self._box_annotator = sv.BoxAnnotator()
+        self._label_annotator = sv.LabelAnnotator()
 
         if weights is not None:
             # Load a custom checkpoint saved by Trainer._save_checkpoint.
@@ -116,21 +119,46 @@ class Detector:
             self.model = self.model.half()
         self.model.eval()
 
+    def _to_detections(self, boxes: torch.Tensor, scores: torch.Tensor, class_ids: torch.Tensor) -> sv.Detections:
+        """Wrap raw postprocessed tensors as an ``sv.Detections``."""
+        if len(boxes) == 0:
+            return sv.Detections.empty()
+
+        class_id = class_ids.cpu().numpy().astype(int)
+        detections = sv.Detections(
+            xyxy=boxes.cpu().numpy().astype(np.float32),
+            confidence=scores.cpu().numpy().astype(np.float32),
+            class_id=class_id,
+        )
+        if self.class_names is not None:
+            # sv.LabelAnnotator reads this key, so labels need no lookup table.
+            detections.data["class_name"] = np.array(
+                [self.class_names[i] if i < len(self.class_names) else f"class_{i}" for i in class_id]
+            )
+        return detections
+
+    def annotate(self, image: np.ndarray, detections: sv.Detections) -> np.ndarray:
+        """Draw boxes and labels on a copy of ``image``.
+
+        A convenience wrapper over ``sv.BoxAnnotator`` and ``sv.LabelAnnotator``. Build
+        your own annotators when you want different styling.
+        """
+        annotated = self._box_annotator.annotate(image.copy(), detections)
+        return self._label_annotator.annotate(annotated, detections)
+
     @torch.no_grad()
     def __call__(
         self,
         source: str | Path | np.ndarray,
         conf_threshold: float | None = None,
         iou_threshold: float | None = None,
-        retain_image: bool = True,
-    ) -> Detection:
+    ) -> sv.Detections:
         """Run detection on a single image.
 
         Args:
             source: File path or BGR numpy array.
             conf_threshold: Override instance default.
             iou_threshold: Override instance default.
-            retain_image: Store original image in result for visualization.
         """
         import cv2
 
@@ -156,12 +184,7 @@ class Detector:
         boxes, scores, class_ids = results[0]
         boxes = rescale_boxes(boxes, scale, pad, image.shape[:2])
 
-        return Detection(
-            boxes=boxes.cpu().numpy(),
-            scores=scores.cpu().numpy(),
-            class_ids=class_ids.cpu().numpy(),
-            image=image if retain_image else None,
-        )
+        return self._to_detections(boxes, scores, class_ids)
 
     @torch.no_grad()
     def detect_batch(
@@ -169,18 +192,16 @@ class Detector:
         sources: list[str | Path | np.ndarray],
         conf_threshold: float | None = None,
         iou_threshold: float | None = None,
-        retain_image: bool = True,
-    ) -> list[Detection]:
+    ) -> list[sv.Detections]:
         """Run detection on a batch of images in a single forward pass.
 
         Args:
             sources: List of file paths or BGR numpy arrays.
             conf_threshold: Override instance default.
             iou_threshold: Override instance default.
-            retain_image: Store original image in result for visualization.
 
         Returns:
-            List of Detection results, one per input image.
+            One ``sv.Detections`` per input image, in input order.
         """
         import cv2
 
@@ -213,12 +234,7 @@ class Detector:
         detections = []
         for i, (boxes, scores, class_ids) in enumerate(results):
             boxes = rescale_boxes(boxes, scales[i], pads[i], images[i].shape[:2])
-            detections.append(Detection(
-                boxes=boxes.cpu().numpy(),
-                scores=scores.cpu().numpy(),
-                class_ids=class_ids.cpu().numpy(),
-                image=images[i] if retain_image else None,
-            ))
+            detections.append(self._to_detections(boxes, scores, class_ids))
         return detections
 
     def detect_video(
@@ -226,20 +242,22 @@ class Detector:
         source: str | Path | int,
         conf_threshold: float | None = None,
         iou_threshold: float | None = None,
-        retain_image: bool = True,
         skip_frames: int = 0,
-    ) -> Generator[tuple[int, Detection], None, None]:
+    ) -> Generator[tuple[int, np.ndarray, sv.Detections], None, None]:
         """Run detection on each frame of a video.
+
+        Reads with OpenCV rather than ``sv.get_video_frames_generator`` because that
+        one takes a file path only, and this accepts a camera index too.
 
         Args:
             source: Video file path or camera index (0 for webcam).
             conf_threshold: Override instance default.
             iou_threshold: Override instance default.
-            retain_image: Store frame in each Detection result.
             skip_frames: Process every N-th frame (0 = every frame).
 
         Yields:
-            ``(frame_index, Detection)`` for each processed frame.
+            ``(frame_index, frame, detections)`` for each processed frame. The frame is
+            the BGR array as read, so it can be annotated or written directly.
         """
         import cv2
 
@@ -258,8 +276,8 @@ class Detector:
                     frame_idx += 1
                     continue
 
-                result = self(frame, conf_threshold=conf_threshold, iou_threshold=iou_threshold, retain_image=retain_image)
-                yield frame_idx, result
+                detections = self(frame, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
+                yield frame_idx, frame, detections
                 frame_idx += 1
         finally:
             cap.release()
@@ -270,7 +288,6 @@ class Detector:
         output: str | Path,
         conf_threshold: float | None = None,
         iou_threshold: float | None = None,
-        class_names: list[str] | None = None,
         codec: str = "mp4v",
         skip_frames: int = 0,
     ) -> dict[str, int | float]:
@@ -281,7 +298,6 @@ class Detector:
             output: Output video path.
             conf_threshold: Override instance default.
             iou_threshold: Override instance default.
-            class_names: Class names for labels (defaults to COCO).
             codec: FourCC codec string.
             skip_frames: Process every N-th frame (0 = every frame).
                 Skipped frames are written without annotations.
@@ -317,11 +333,10 @@ class Detector:
                 should_process = skip_frames == 0 or frame_idx % (skip_frames + 1) == 0
 
                 if should_process:
-                    result = self(frame, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
-                    annotated = draw_detections(frame, result.boxes, result.scores, result.class_ids, class_names)
-                    writer.write(annotated)
+                    detections = self(frame, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
+                    writer.write(self.annotate(frame, detections))
                     processed += 1
-                    total_detections += len(result.boxes)
+                    total_detections += len(detections)
                 else:
                     writer.write(frame)
 

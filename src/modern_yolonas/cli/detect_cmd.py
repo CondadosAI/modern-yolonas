@@ -80,12 +80,18 @@ def detect(
 
 def _detect_images(det, files: list[Path], out_dir: Path, console):
     """Run detection on a list of image files."""
+    import cv2
+
     for f in files:
         console.print(f"Processing {f.name}...")
-        result = det(str(f))
+        image = cv2.imread(str(f))
+        if image is None:
+            raise FileNotFoundError(f"Cannot read image: {f}")
+        detections = det(image)
         out_path = out_dir / f.name
-        result.save(out_path)
-        console.print(f"  {len(result.boxes)} detections -> {out_path}")
+        if not cv2.imwrite(str(out_path), det.annotate(image, detections)):
+            raise OSError(f"Failed to write {out_path}")
+        console.print(f"  {len(detections)} detections -> {out_path}")
 
     console.print(f"[green]Done! {len(files)} images saved to {out_dir}[/green]")
 

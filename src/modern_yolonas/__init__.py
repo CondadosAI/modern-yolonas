@@ -3,7 +3,7 @@
 from modern_yolonas._version import __version__
 from modern_yolonas.model import YoloNAS
 from modern_yolonas.weights import load_pretrained, load_checkpoint, transfer_to
-from modern_yolonas.inference.detect import Detector, Detection
+from modern_yolonas.inference.detect import Detector
 
 
 def yolo_nas_s(pretrained: bool = False, num_classes: int = 80) -> YoloNAS:
@@ -40,5 +40,4 @@ __all__ = [
     "load_checkpoint",
     "transfer_to",
     "Detector",
-    "Detection",
 ]

@@ -7,6 +7,8 @@
 
 A clean, minimal Python reimplementation of [YOLO-NAS](https://github.com/Deci-AI/super-gradients) object detection. No factory patterns, no registries, no OmegaConf — just PyTorch.
 
+Results come back as [`supervision`](https://github.com/roboflow/supervision) `Detections`, so every annotator, tracker, zone and metric in that ecosystem works on them out of the box.
+
 ## Install
 
 ```bash
@@ -20,21 +22,40 @@ pip install modern-yolonas
 ### Detect objects in an image
 
 ```python
+import cv2
 from modern_yolonas import Detector
 
 det = Detector("yolo_nas_s", device="cuda")
-result = det("image.jpg")
 
-# Print detections
-from modern_yolonas.inference.visualize import COCO_NAMES
+image = cv2.imread("image.jpg")
+detections = det(image)  # an sv.Detections
 
-for box, score, cls_id in zip(result.boxes, result.scores, result.class_ids):
-    name = COCO_NAMES[int(cls_id)]
+for box, score, name in zip(detections.xyxy, detections.confidence, detections.data["class_name"]):
     x1, y1, x2, y2 = box
     print(f"{name}: {score:.2f} [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
 
 # Save annotated image
-result.save("output.jpg")
+cv2.imwrite("output.jpg", det.annotate(image, detections))
+```
+
+Because the result is a `supervision` container, filtering is slicing:
+
+```python
+people = detections[detections.class_id == 0]
+confident = detections[detections.confidence > 0.5]
+big = detections[detections.box_area > 5000]
+```
+
+and it plugs straight into the rest of the ecosystem:
+
+```python
+import supervision as sv
+
+zone = sv.PolygonZone(polygon=my_polygon)
+inside = detections[zone.trigger(detections)]
+
+heatmap_annotator = sv.HeatMapAnnotator()
+frame = heatmap_annotator.annotate(frame, detections)
 ```
 
 ### Detect objects in a video
@@ -49,10 +70,10 @@ stats = det.detect_video_to_file("input.mp4", "output.mp4")
 print(f"{stats['total_detections']} detections across {stats['total_frames']} frames")
 
 # Option 2: Iterate frames for custom logic
-for frame_idx, result in det.detect_video("input.mp4"):
-    print(f"Frame {frame_idx}: {len(result.boxes)} objects")
-    # result.boxes, result.scores, result.class_ids are numpy arrays
-    # result.visualize() returns the annotated frame as BGR numpy array
+for frame_idx, frame, detections in det.detect_video("input.mp4"):
+    print(f"Frame {frame_idx}: {len(detections)} objects")
+    # detections.xyxy, .confidence, .class_id are numpy arrays
+    # det.annotate(frame, detections) returns the annotated BGR frame
 ```
 
 ### Live webcam detection
@@ -63,8 +84,8 @@ from modern_yolonas import Detector
 
 det = Detector("yolo_nas_s", device="cuda")
 
-for frame_idx, result in det.detect_video(source=0):  # 0 = default camera
-    cv2.imshow("YOLO-NAS", result.visualize())
+for frame_idx, frame, detections in det.detect_video(source=0):  # 0 = default camera
+    cv2.imshow("YOLO-NAS", det.annotate(frame, detections))
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 cv2.destroyAllWindows()
