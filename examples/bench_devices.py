@@ -62,7 +62,7 @@ def calib_batches(video, size, n=48):
 ap = argparse.ArgumentParser()
 ap.add_argument("--sizes", default="256,640")
 ap.add_argument("--calib-video", default="worker-zone-detection.mp4")
-ap.add_argument("--out", default="matrix.json")
+ap.add_argument("--out", default="docs/benchmarks/latency_matrix.json")
 args = ap.parse_args()
 
 for size in [int(s) for s in args.sizes.split(",")]:

@@ -10,8 +10,11 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.13"]
+        # Both ends of the range promised by requires-python. The middle versions
+        # share a grammar with 3.10, so ruff at target-version py310 covers them.
+        python-version: ["3.10", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -20,9 +23,11 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Each cell downloads ~2GB of CUDA-built torch; without this the matrix
+          # spends more time fetching wheels than running tests.
+          enable-cache: true
 
       - name: Install dependencies
         run: uv sync --dev
@@ -32,32 +37,3 @@ jobs:
 
       - name: Test
         run: uv run pytest tests/ -v --tb=short --cov=modern_yolonas --cov-report=term-missing --cov-report=xml
-
-  auto-tag:
-    needs: lint-and-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
-
-      - name: Bump patch version and tag
-        run: |
-          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
-          if [ -z "$latest" ]; then
-            next="v0.1.0"
-          else
-            # Strip leading 'v', split on '.', bump patch
-            version="${latest#v}"
-            major=$(echo "$version" | cut -d. -f1)
-            minor=$(echo "$version" | cut -d. -f2)
-            patch=$(echo "$version" | cut -d. -f3)
-            next="v${major}.${minor}.$((patch + 1))"
-          fi
-          echo "Tagging $next"
-          git tag "$next"
-          git push origin "$next"

@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: modern-yolonas
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Luis
+    family-names: Condados
+repository-code: "https://github.com/CondadosAI/modern-yolonas"
+url: "https://condadosai.github.io/modern-yolonas/"
+abstract: >-
+  A clean, minimal Python reimplementation of YOLO-NAS object
+  detection, state_dict-compatible with the original
+  super-gradients checkpoints, with ONNX/OpenVINO export for
+  edge deployment.
+keywords:
+  - object detection
+  - computer vision
+  - yolo-nas
+  - edge ai
+license: MIT

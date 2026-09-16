@@ -31,7 +31,6 @@ def demo(
     import numpy as np
 
     from modern_yolonas.inference.detect import Detector
-    from modern_yolonas.inference.visualize import COCO_NAMES
 
     detectors: dict[str, Detector] = {}
 
@@ -55,18 +54,18 @@ def demo(
         # Gradio provides RGB, convert to BGR
         bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         det = get_detector(model_name)
-        result = det(bgr, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
+        detections = det(bgr, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
 
+        names = detections.data.get("class_name", detections.class_id.astype(str))
         lines = []
-        for box, score, cls_id in zip(result.boxes, result.scores, result.class_ids):
-            name = COCO_NAMES[int(cls_id)] if int(cls_id) < len(COCO_NAMES) else f"class_{int(cls_id)}"
+        for box, score, name in zip(detections.xyxy, detections.confidence, names):
             x1, y1, x2, y2 = box
             lines.append(f"{name}: {score:.2f} [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
 
-        annotated = result.visualize()
+        annotated = det.annotate(bgr, detections)
         annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
 
-        summary = f"Found {len(result.boxes)} objects\n" + "\n".join(lines)
+        summary = f"Found {len(detections)} objects\n" + "\n".join(lines)
         return annotated_rgb, summary
 
     interface = gr.Interface(

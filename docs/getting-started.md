@@ -21,13 +21,24 @@ pip install modern-yolonas[openvino]
 ## First detection
 
 ```python
+import cv2
 from modern_yolonas import Detector
 
 det = Detector("yolo_nas_s", device="cuda")
-result = det("photo.jpg")
 
-print(f"Found {len(result.boxes)} objects")
-result.save("output.jpg")
+image = cv2.imread("photo.jpg")
+detections = det(image)
+
+print(f"Found {len(detections)} objects")
+cv2.imwrite("output.jpg", det.annotate(image, detections))
+```
+
+`detections` is a [`supervision.Detections`](https://supervision.roboflow.com/latest/detection/core/),
+so it filters by slicing and works with every supervision annotator, tracker and zone:
+
+```python
+people = detections[detections.class_id == 0]
+confident = detections[detections.confidence > 0.5]
 ```
 
 ## Using the CLI

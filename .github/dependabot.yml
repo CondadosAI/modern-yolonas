@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore"
+    # Torch moves fast and every bump is a ~2GB CI download; pin bumps are
+    # reviewed deliberately rather than proposed automatically.
+    ignore:
+      - dependency-name: "torch"
+      - dependency-name: "torchvision"

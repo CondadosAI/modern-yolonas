@@ -70,10 +70,10 @@ def create_app(
         if image is None:
             return JSONResponse(status_code=400, content={"error": "Invalid image"})
 
-        result = detector(image, conf_threshold=conf, iou_threshold=iou, retain_image=False)
+        result = detector(image, conf_threshold=conf, iou_threshold=iou)
 
         detections: list[dict[str, Any]] = []
-        for box, score, cls_id in zip(result.boxes, result.scores, result.class_ids):
+        for box, score, cls_id in zip(result.xyxy, result.confidence, result.class_id):
             detections.append({
                 "box": [float(x) for x in box],
                 "score": float(score),

@@ -2,9 +2,36 @@
 name = "modern-yolonas"
 dynamic = ["version"]
 description = "Modern YOLO-NAS object detection — clean reimplementation"
+readme = "README.md"
 license = "MIT"
 authors = [{name = "Luis Condados"}]
 requires-python = ">=3.10"
+keywords = [
+    "object-detection",
+    "yolo",
+    "yolo-nas",
+    "computer-vision",
+    "deep-learning",
+    "pytorch",
+    "onnx",
+    "openvino",
+    "edge-ai",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy>=1.24",
     "opencv-python-headless>=4.8",
@@ -19,15 +46,20 @@ dependencies = [
     "safetensors>=0.4",
     "torchmetrics>=1.3",
     "albumentations==1.4.24",
-    "onnxscript>=0.6.0",
+    "supervision>=0.30",
 ]
 
+[project.urls]
+Homepage = "https://github.com/CondadosAI/modern-yolonas"
+Documentation = "https://condadosai.github.io/modern-yolonas/"
+Repository = "https://github.com/CondadosAI/modern-yolonas"
+Changelog = "https://github.com/CondadosAI/modern-yolonas/blob/main/CHANGELOG.md"
+Issues = "https://github.com/CondadosAI/modern-yolonas/issues"
+
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "pytest-cov>=6.0", "ruff>=0.4", "mypy>=1.0", "pre-commit"]
-docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.24", "mkdocs-gen-files>=0.5", "mkdocs-literate-nav>=0.6"]
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
 demo = ["gradio>=4.0"]
-onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.1"]
+onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.6.0"]
 openvino = ["openvino>=2024.0"]
 wandb = ["wandb>=0.16"]
 tensorboard = ["tensorboard>=2.15"]
@@ -52,7 +84,7 @@ version-file = "src/modern_yolonas/_version.py"
 packages = ["src/modern_yolonas"]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
@@ -85,7 +117,7 @@ exclude_lines = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py310"
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -101,4 +133,12 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=6.0",
     "ruff>=0.15.0",
+    "mypy>=1.0",
+    "pre-commit",
+]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+    "mkdocs-gen-files>=0.5",
+    "mkdocs-literate-nav>=0.6",
 ]
