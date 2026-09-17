@@ -6,6 +6,11 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "chore"
+    # One PR a month for all action bumps. Ungrouped, the first run opened five
+    # separate PRs for five one-line version bumps.
+    groups:
+      github-actions:
+        patterns: ["*"]
 
   - package-ecosystem: "uv"
     directory: "/"
@@ -13,6 +18,10 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "chore"
+    # Same reasoning as above: one PR a month for the whole lockfile.
+    groups:
+      python-packages:
+        patterns: ["*"]
     # Torch moves fast and every bump is a ~2GB CI download; pin bumps are
     # reviewed deliberately rather than proposed automatically.
     ignore:
