@@ -12,6 +12,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — breaking
+- **License: MIT → Apache-2.0.** The source is Apache-2.0 from this branch on; `v0.4.0`
+  and everything before it shipped under MIT. The pretrained COCO weights are unaffected
+  either way — they come from Deci and carry their own non-commercial terms, which
+  `weights.py` prints at download time.
+- Training runs on [PyTorch Lightning](https://lightning.ai/). The hand-written `Trainer`,
+  `ModelEMA` and the manual callback system (`CSVLoggerCallback`, `EarlyStoppingCallback`,
+  `RichProgressCallback`, `TensorBoardCallback`, `WandbCallback`) are gone; Lightning's own
+  loggers and callbacks replace them. `yolonas train` keeps its full flag surface — `--amp`
+  now picks the precision, `--num-gpus` the device count and ddp strategy, `--val-freq` the
+  validation interval.
+- `Mixup(dataset, p=...)` is now `Mixup(dataset, prob=...)`, matching `Mosaic`.
+
+### Added
+- Quantization: `yolonas quantize` (post-training) and `yolonas qat`
+  (quantization-aware training), built on `torch.ao.quantization` FX graph mode.
+- `yolonas benchmark-dataset coco` and `yolonas benchmark-dataset rf100vl` — train and
+  report mAP. Distinct from `yolonas benchmark`, which measures inference latency.
+- `--close-mosaic-epochs`: train the final N epochs without Mosaic/Mixup, as the
+  super-gradients recipes do.
+- `Detector.annotate(..., show_fps=True)` and `Detector.last_inference_ms` for an inference
+  speed overlay; `detect_video_to_file(show_fps=True)` burns it into the output.
+- Dataset-aware augmentation: `Mosaic`, `Mixup` with inner transforms, `VerticalFlip`,
+  `RandomCrop`, `RandomChannelShuffle`, and a recipe-driven `build_transforms`.
+- `data/dataset_config.py` reads YOLO/Roboflow `data.yaml`; `data/fiftyone.py` and
+  `data/download.py` fetch COCO and RF100-VL.
+- Tutorial notebooks for ONNX export/inference, quantization (PTQ and QAT), FiftyOne and
+  Roboflow workflows.
+
+### Changed
+- `extract_model_state_dict` moved to `weights.py` and is what every consumer now uses, so
+  inference, evaluation and export all read Lightning `.ckpt` files as well as the legacy
+  trainer's format and plain state-dicts.
+- CI runs on `dev` as well as `main`.
+
 ## [0.4.0] - 2026-09-18
 
 ### Changed — breaking

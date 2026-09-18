@@ -218,7 +218,7 @@ If you use modern-yolonas in your research or project, please cite it:
   author       = {Condados, Luis},
   title        = {modern-yolonas: A Clean Reimplementation of YOLO-NAS},
   year         = {2025},
-  url          = {https://github.com/lcondados/modern-yolonas},
+  url          = {https://github.com/CondadosAI/modern-yolonas},
   license      = {Apache-2.0}
 }
 ```
