@@ -24,7 +24,7 @@ pip install modern-yolonas
 import cv2
 from modern_yolonas import Detector
 
-det = Detector("yolo_nas_s", device="cuda")
+det = Detector("yolo_nas_s")
 
 image = cv2.imread("image.jpg")
 detections = det(image)

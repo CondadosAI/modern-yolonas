@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Modern YOLO-NAS object detection — clean reimplementation"
 readme = "README.md"
 license = "Apache-2.0"
-authors = [{name = "Luis Condados"}]
+authors = [{name = "Luis Condados"}, {name = "Alan Neves"}]
 requires-python = ">=3.10"
 keywords = [
     "object-detection",

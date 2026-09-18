@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-18
+
 ### Changed — breaking
 - **License: MIT → Apache-2.0.** The source is Apache-2.0 from this branch on; `v0.4.0`
   and everything before it shipped under MIT. The pretrained COCO weights are unaffected
@@ -45,7 +47,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `extract_model_state_dict` moved to `weights.py` and is what every consumer now uses, so
   inference, evaluation and export all read Lightning `.ckpt` files as well as the legacy
   trainer's format and plain state-dicts.
-- CI runs on `dev` as well as `main`.
+- Gradient clipping is on by default at norm 10 (`--grad-clip`), which the training review
+  calls the usual cause of a from-scratch run that NaNs in its first epoch.
+- Accuracy is now measured rather than quoted. The README table carries this project's own
+  COCO val2017 numbers — 47.3 / 51.3 / 52.0 AP for S / M / L — alongside parameters, FLOPs
+  and latency, all regenerable with `uv run examples/model_table.py`.
+- Example scripts are invoked as `uv run <script>`; the previous `python examples/...`
+  only worked with a virtualenv already activated.
+- CI runs on `dev` as well as `main`, and `main` accepts pull requests only from `dev`.
+
+### Fixed
+- **Mosaic emitted every box at half size.** Cropping the 2s×2s canvas to s×s renormalises
+  coordinates by 2; the centres were scaled and the widths and heights were not. With
+  mosaic at probability 1.0 in the COCO recipe, every training sample taught the model to
+  predict boxes half as large as the objects. Boxes are now clipped to the crop window as
+  well, rather than only filtered by centre.
+- **Validation overwrote BatchNorm running statistics.** The validation step flipped the
+  model to `train()` to get the raw predictions the loss needs; `torch.no_grad` stops
+  gradients but not buffer updates, so validation-set statistics were written into the
+  checkpoint. `NDFLHeads.return_raw_outputs` returns them without touching any module's
+  training flag.
+- **`COCOEvaluator` was missing**, so every path that computes mAP — validation with
+  annotations, `yolonas eval`, both dataset benchmarks — raised `ImportError` on its lazy
+  import.
+- **Predictions were never mapped out of letterboxed space** before being compared with
+  ground truth in original image pixels, which put every mAP this project could produce
+  near zero. Measured on a fixed checkpoint: 0.008 → 0.588.
+- `yolonas train` letterboxes for validation instead of centre-cropping. A centre crop
+  deletes objects at the edges and raises outright on any image smaller than the input
+  size, which is most of COCO val2017 at 640.
+- The checkpoint callback monitors `val/mAP` when annotations are present; it previously
+  hardcoded `val/loss`, which is not logged in that case, so `--format coco` died at the
+  first validation.
 
 ## [0.4.0] - 2026-09-18
 
