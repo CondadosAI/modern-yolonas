@@ -392,15 +392,30 @@ class Mosaic:
 
         if len(targets):
             targets = targets.copy()
+            # Targets are normalized to the 2s x 2s canvas; the crop is s x s, so every
+            # coordinate is renormalized by 2. Widths and heights need that factor just
+            # as much as the centres do — omitting it emits every box at half size.
             targets[:, 1] = targets[:, 1] * 2 - crop_x / s
             targets[:, 2] = targets[:, 2] * 2 - crop_y / s
+            targets[:, 3] = targets[:, 3] * 2
+            targets[:, 4] = targets[:, 4] * 2
 
-            # Filter out-of-bounds
-            valid = (
+            # Clip to the crop window, then drop boxes whose centre left it or that
+            # survive only as a sliver.
+            x1 = np.clip(targets[:, 1] - targets[:, 3] / 2, 0.0, 1.0)
+            y1 = np.clip(targets[:, 2] - targets[:, 4] / 2, 0.0, 1.0)
+            x2 = np.clip(targets[:, 1] + targets[:, 3] / 2, 0.0, 1.0)
+            y2 = np.clip(targets[:, 2] + targets[:, 4] / 2, 0.0, 1.0)
+            centre_inside = (
                 (targets[:, 1] > 0) & (targets[:, 1] < 1)
                 & (targets[:, 2] > 0) & (targets[:, 2] < 1)
-                & (targets[:, 3] > 0.002) & (targets[:, 4] > 0.002)
             )
+            targets[:, 1] = (x1 + x2) / 2
+            targets[:, 2] = (y1 + y2) / 2
+            targets[:, 3] = x2 - x1
+            targets[:, 4] = y2 - y1
+
+            valid = centre_inside & (targets[:, 3] > 0.002) & (targets[:, 4] > 0.002)
             targets = targets[valid]
 
         return mosaic_img, targets

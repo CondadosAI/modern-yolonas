@@ -49,6 +49,7 @@ def train(
     early_stopping_patience: Annotated[int, typer.Option(help="Stop training if train loss doesn't improve for N epochs (0 = disabled).")] = 0,
     early_stopping_min_delta: Annotated[float, typer.Option(help="Minimum improvement in train loss to count as progress.")] = 1e-4,
     close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close).")] = 0,
+    grad_clip: Annotated[float, typer.Option(help="Clip gradients to this max norm (0 = disabled).")] = 10.0,
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
     num_gpus: Annotated[int, typer.Option(help="Number of GPUs for DDP training. 1 = single GPU. Values >1 spawn child processes via torchrun.")] = 1,
     ignore_empty: Annotated[bool, typer.Option("--ignore-empty/--no-ignore-empty", help="Skip images with zero annotations (background-only samples).")] = True,
@@ -113,13 +114,14 @@ def train(
         early_stopping_patience  = int(_pick(early_stopping_patience,  "early-stopping-patience",  0))
         early_stopping_min_delta = float(_pick(early_stopping_min_delta, "early-stopping-min-delta", 1e-4))
         close_mosaic_epochs = int(_pick(close_mosaic_epochs, "close-mosaic-epochs", 0))
+        grad_clip = float(_pick(grad_clip, "grad-clip", 10.0))
         amp      = bool(_pick(amp,      "amp",       True))
         num_gpus = int(_pick(num_gpus,  "num-gpus",  1))
         ignore_empty = bool(_pick(ignore_empty, "ignore-empty", True))
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, CenterCrop, RandomChannelSwap, Normalize, Mixup
+    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, LetterboxResize, RandomChannelSwap, Normalize, Mixup
     import lightning as L
     from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
@@ -139,9 +141,12 @@ def train(
         # Mixup is appended here after the dataset is created (needs dataset reference)
         Normalize(),
     ])
+    # Validation must see the whole image, aspect preserved — that is what detection
+    # mAP is defined over, and it is what `yolonas eval` and the inference path use.
+    # A CenterCrop here deletes edge objects, and raises outright on any image smaller
+    # than input_size (most of COCO val2017 at 640).
     val_transforms = Compose([
-        CenterCrop(size=input_size),
-        # LetterboxResize(target_size=input_size),
+        LetterboxResize(target_size=input_size),
         Normalize()
     ])
 
@@ -283,6 +288,7 @@ def train(
         strategy="ddp" if num_gpus > 1 else "auto",
         precision="16-mixed" if amp else "32-true",
         accumulate_grad_batches=gradient_accum,
+        gradient_clip_val=grad_clip or None,
         check_val_every_n_epoch=val_freq,
         callbacks=callbacks,
         logger=loggers,

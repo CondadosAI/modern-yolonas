@@ -123,12 +123,24 @@ class YoloNASLightningModule(L.LightningModule):
             class_ids_list = [r[2] for r in results]
             self._evaluator.update(image_ids, boxes_list, scores_list, class_ids_list)
         else:
-            # No mAP evaluator — run model in eval mode and compute loss
-            # by forcing training mode temporarily for loss computation.
-            self.model.train()
-            predictions = self.model(images)
-            loss, loss_dict = self.criterion(predictions, targets)
-            self.model.eval()
+            # The loss needs the raw, undecoded predictions, which the head normally
+            # returns only in training mode. Flipping the model to train() to get them
+            # would let BatchNorm overwrite its running statistics with validation-set
+            # statistics — `torch.no_grad` stops gradients, not buffer updates — and
+            # then persist them into the checkpoint. `return_raw_outputs` changes the
+            # return value without touching any module's training flag.
+            heads = getattr(self.model, "heads", None)
+            if heads is None:
+                raise AttributeError(
+                    "validation loss needs raw predictions from NDFLHeads, but the model "
+                    "has no `heads` attribute"
+                )
+            heads.return_raw_outputs = True
+            try:
+                predictions = self.model(images)
+                loss, loss_dict = self.criterion(predictions, targets)
+            finally:
+                heads.return_raw_outputs = False
 
             self.log("val/loss", loss, prog_bar=True, sync_dist=True)
             self.log("val/cls_loss", loss_dict["cls_loss"], sync_dist=True)

@@ -38,6 +38,7 @@ nav:
     - Weights: api/weights.md
   - Guides:
     - Training: guides/training.md
+    - Training code review (2026-09-13): guides/training-review-2026-09-13.md
     - Export: guides/export.md
     - Extending: guides/extending.md
   - Architecture: architecture.md

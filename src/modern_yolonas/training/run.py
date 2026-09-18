@@ -220,6 +220,8 @@ def run_training(
         devices=devices,
         strategy="auto",
         precision=recipe.get("precision", "16-mixed"),
+        # From-scratch training with AMP NaNs in the first epoch without this.
+        gradient_clip_val=recipe.get("grad_clip", 10.0) or None,
         callbacks=callbacks,
         logger=logger_instance,
         default_root_dir=str(output_dir),
