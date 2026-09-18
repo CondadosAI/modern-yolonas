@@ -106,18 +106,13 @@ class Detector:
         self._label_annotator = sv.LabelAnnotator()
 
         if weights is not None:
-            # Load a custom checkpoint saved by Trainer._save_checkpoint.
             # Build the architecture for the requested num_classes (no pretrained
-            # weights), then overwrite with the checkpoint's model_state_dict.
+            # weights), then overwrite it with whatever the checkpoint holds —
+            # Lightning .ckpt, a legacy trainer dict, or a plain state_dict.
+            from modern_yolonas.weights import extract_model_state_dict
+
             self.model = builders[model](pretrained=False, num_classes=num_classes).to(self.device)
-            ckpt = torch.load(weights, map_location=self.device, weights_only=True)
-            state_dict = ckpt.get("ema", {}).get("ema") or ckpt.get("model_state_dict")
-            if state_dict is None:
-                raise KeyError(
-                    f"Checkpoint {weights!r} does not contain 'model_state_dict' or 'ema'. "
-                    "Make sure it was saved by the Trainer."
-                )
-            self.model.load_state_dict(state_dict)
+            self.model.load_state_dict(extract_model_state_dict(weights, map_location=str(self.device)))
         else:
             self.model = builders[model](pretrained=pretrained, num_classes=num_classes).to(self.device)
 

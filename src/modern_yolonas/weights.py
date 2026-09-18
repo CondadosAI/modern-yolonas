@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 import os
 
+from pathlib import Path
+
 import torch
 from huggingface_hub import hf_hub_download
 from safetensors.torch import load_file
@@ -139,9 +141,8 @@ def load_checkpoint(
 ) -> nn.Module:
     """Load a custom-trained ``.pt`` checkpoint into *model*.
 
-    Handles both plain state-dicts and the richer checkpoint dicts produced by
-    :class:`~modern_yolonas.training.trainer.Trainer` (which store the state
-    under the ``"model_state_dict"`` key).
+    Accepts every format :func:`extract_model_state_dict` knows: Lightning ``.ckpt``
+    files, the legacy trainer's ``model_state_dict``/EMA dicts, and plain state-dicts.
 
     Args:
         model: A ``YoloNAS`` instance whose architecture matches the checkpoint.
@@ -152,10 +153,44 @@ def load_checkpoint(
     Returns:
         The model with loaded weights.
     """
-    ckpt = torch.load(checkpoint_path, map_location=map_location, weights_only=True)
-    sd = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+    sd = extract_model_state_dict(checkpoint_path, map_location=map_location)
     model.load_state_dict(sd, strict=strict)
     return model
+
+
+def extract_model_state_dict(checkpoint_path: str | Path, map_location: str = "cpu") -> dict:
+    """Load model weights from either a Lightning .ckpt or legacy .pt checkpoint.
+
+    Handles:
+    - Lightning format: state_dict keys prefixed with ``model.``
+    - Legacy format: ``model_state_dict`` key or EMA ``ema.ema_state_dict``
+    - Plain state_dict (e.g. from super-gradients pretrained weights)
+    """
+    ckpt = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+
+    # Lightning checkpoint format
+    if "state_dict" in ckpt:
+        sd = ckpt["state_dict"]
+        # Strip 'model.' prefix added by LightningModule
+        prefix = "model."
+        stripped = {}
+        for k, v in sd.items():
+            if k.startswith(prefix):
+                stripped[k[len(prefix):]] = v
+            else:
+                stripped[k] = v
+        return stripped
+
+    # Legacy format with EMA (prefer EMA weights if available)
+    if "ema" in ckpt and "ema_state_dict" in ckpt["ema"]:
+        return ckpt["ema"]["ema_state_dict"]
+
+    # Legacy format with model_state_dict key
+    if "model_state_dict" in ckpt:
+        return ckpt["model_state_dict"]
+
+    # Plain state_dict
+    return ckpt
 
 
 def transfer_to(

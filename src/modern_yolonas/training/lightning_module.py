@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import lightning as L
-import torch
 from torch import nn
 
 from modern_yolonas.training.loss import PPYoloELoss
 from modern_yolonas.training.optimizer import create_optimizer
 from modern_yolonas.training.scheduler import cosine_with_warmup
+from modern_yolonas.weights import extract_model_state_dict
+
+__all__ = ["YoloNASLightningModule", "extract_model_state_dict"]
 
 
 class YoloNASLightningModule(L.LightningModule):
@@ -159,38 +161,3 @@ class YoloNASLightningModule(L.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
-
-
-def extract_model_state_dict(checkpoint_path: str | Path) -> dict:
-    """Load model weights from either a Lightning .ckpt or legacy .pt checkpoint.
-
-    Handles:
-    - Lightning format: state_dict keys prefixed with ``model.``
-    - Legacy format: ``model_state_dict`` key or EMA ``ema.ema_state_dict``
-    - Plain state_dict (e.g. from super-gradients pretrained weights)
-    """
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-
-    # Lightning checkpoint format
-    if "state_dict" in ckpt:
-        sd = ckpt["state_dict"]
-        # Strip 'model.' prefix added by LightningModule
-        prefix = "model."
-        stripped = {}
-        for k, v in sd.items():
-            if k.startswith(prefix):
-                stripped[k[len(prefix):]] = v
-            else:
-                stripped[k] = v
-        return stripped
-
-    # Legacy format with EMA (prefer EMA weights if available)
-    if "ema" in ckpt and "ema_state_dict" in ckpt["ema"]:
-        return ckpt["ema"]["ema_state_dict"]
-
-    # Legacy format with model_state_dict key
-    if "model_state_dict" in ckpt:
-        return ckpt["model_state_dict"]
-
-    # Plain state_dict
-    return ckpt

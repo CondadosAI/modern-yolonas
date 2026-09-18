@@ -69,6 +69,16 @@ class Compose:
             image, targets = t(image, targets)
         return image, targets
 
+    def disable_mosaic_mixup(self):
+        """Turn off any Mosaic or Mixup in the chain (called by CloseMosaicCallback).
+
+        ``TrainTransformPipeline`` holds them in named slots; a plain Compose just has
+        them somewhere in the list, so find them by type. Idempotent.
+        """
+        for t in self.transforms:
+            if isinstance(t, (Mosaic, Mixup)):
+                t.enabled = False
+
 
 class HSVAugment:
     """Randomly adjust hue, saturation, and value via Albumentations.
