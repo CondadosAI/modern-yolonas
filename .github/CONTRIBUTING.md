@@ -86,10 +86,12 @@ This is checked in three places, because each catches a different thing:
   `default_install_hook_types`, so the plain `install` is enough.
 - **`pr-title.yml`** — validates the *pull request title*. This is the one that matters
   for history: a squash merge takes its subject from the PR title, not from your commits.
-- **release-drafter's autolabeler** — reads the PR title and applies the label that
-  decides the version bump. `feat:` and any `!` give `minor`; everything else gives
-  `patch`. Without it every release drafts as a patch, which is how `v0.4.0` — a
-  `feat!` — drafted as one.
+- **release-drafter** — resolves the version bump from the title directly. `feat:` and
+  any `!` give `minor`; everything else gives `patch`. Something has to: before this,
+  nothing set the labels the resolver read, so every release drafted as a patch — which
+  is how `v0.4.0`, a `feat!`, drafted as one. The autolabeler still runs, but only to
+  apply descriptive labels for filtering, so a wrong one costs a mislabelled row rather
+  than a wrong release number.
 
 The release notes are drafted from PR titles, so the title is what users will read.
 
@@ -99,8 +101,13 @@ Releases are cut by merging `dev` into `main` and tagging. They are deliberate, 
 automatic on every merge. Pushing a `v*` tag triggers
 `publish.yml`, which builds and publishes to PyPI via trusted publishing. Pick the
 version by what changed: at `0.x`, a breaking change is a minor bump, and `major` stays
-unused until there is a stability contract to break. The `major` label exists for that
-day; when it comes, move the `!` rule in `.github/release-drafter.yml` onto it.
+unused until there is a stability contract to break. When that day comes, change the
+`semver-increment` on the `breaking: true` rule in `.github/release-drafter.yml`.
+
+The `dev` -> `main` release pull request is the exception: its title is `release: ...`,
+which matches no type, so **label it `minor` (or `major`) by hand before merging** or it
+resolves to a patch. A label can only raise the bump, never lower it — the highest
+matching increment wins.
 
 ## Supported Python versions
 

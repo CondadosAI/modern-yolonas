@@ -41,10 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   provenance and the scope of that obligation. The source code is unaffected.
 - Conventional Commits are now enforced, and drive the release bump. A `commitizen`
   `commit-msg` hook checks the message as you write it, `pr-title.yml` checks the pull
-  request title (which is what a squash merge actually records), and release-drafter's
-  autolabeler turns that title into the `minor`/`patch` label its version-resolver reads.
-  Previously no rule applied those labels, so every release drafted as a patch — including
-  `v0.4.0`, which was a `feat!`.
+  request title (which is what a squash merge actually records), and release-drafter reads
+  the bump from that title. Previously the bump came from `major`/`minor`/`patch` labels
+  that no rule ever applied, so every release drafted as a patch — including `v0.4.0`,
+  which was a `feat!`. Labels are now descriptive only, except as a manual override on the
+  release pull request.
 - Quantization: `yolonas quantize` (post-training) and `yolonas qat`
   (quantization-aware training), built on `torch.ao.quantization` FX graph mode.
 - `yolonas benchmark-dataset coco` and `yolonas benchmark-dataset rf100vl` — train and
