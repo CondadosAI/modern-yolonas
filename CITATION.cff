@@ -7,6 +7,10 @@ type: software
 authors:
   - given-names: Luis
     family-names: Condados
+    alias: Gabriellgpc
+  - given-names: Alan
+    family-names: Neves
+    alias: alancneves
 repository-code: "https://github.com/CondadosAI/modern-yolonas"
 url: "https://condadosai.github.io/modern-yolonas/"
 abstract: >-
