@@ -15,6 +15,11 @@ jobs:
   conventional:
     name: Conventional Commits
     runs-on: ubuntu-latest
+    # Dependabot is configured with `commit-message.prefix: chore`, so its titles
+    # are conventional — but it capitalises the subject about half the time
+    # ("chore: Bump the github-actions group with 5 updates", #22 and #23), which
+    # the lowercase rule below would reject. Its titles are not ours to rewrite.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
       - uses: amannn/action-semantic-pull-request@v6.1.1
         env:
