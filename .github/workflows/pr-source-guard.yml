@@ -1,0 +1,39 @@
+# `main` only takes pull requests from `dev`.
+#
+# GitHub cannot express this: neither branch protection nor rulesets restrict a pull
+# request's *source* branch. So it becomes a status check, which protection can require.
+#
+# `pull_request_target` rather than `pull_request` so the workflow definition always comes
+# from the base branch — a pull request cannot disable its own guard by editing this file.
+# It needs no repository access at all, hence the empty permissions.
+name: PR source guard
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, edited, synchronize]
+
+permissions: {}
+
+jobs:
+  base-main-comes-from-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the source branch
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error::Pull requests into main must come from $BASE_REPO:dev, not from a fork ($HEAD_REPO)."
+            echo "Open it against dev instead — dev is where contributions land."
+            exit 1
+          fi
+          if [ "$HEAD_REF" != "dev" ]; then
+            echo "::error::main only accepts pull requests from dev; this one is from '$HEAD_REF'."
+            echo "Retarget it at dev. Releases reach main by merging dev, so main stays a"
+            echo "fast-forward of a branch that has already run CI."
+            exit 1
+          fi
+          echo "Source branch is dev."

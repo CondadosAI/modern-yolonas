@@ -67,8 +67,13 @@ Tests that need model weights or heavy computation are marked `slow`; run
 
 ## Branches and commits
 
-Branch off `main` with a prefixed name: `feat/`, `fix/`, `docs/`, `chore/`, `test/`,
-or `refactor/` (e.g. `fix/inference-channel-order`).
+**Branch off `dev`**, with a prefixed name: `feat/`, `fix/`, `docs/`, `chore/`, `test/`,
+or `refactor/` (e.g. `fix/inference-channel-order`). Open the pull request against `dev`.
+
+`dev` is where work lands; `main` is what has been released. Both are protected — neither
+takes a direct push, and CI has to pass before a merge. `main` additionally accepts pull
+requests **only from `dev`**, enforced by the `PR source guard` check, so everything on
+`main` has already been integrated and tested together on `dev`.
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) for commit and PR
 titles — `feat:`, `fix:`, `docs:`, `perf:`, `refactor:`, `test:`, `chore:`. The
@@ -76,7 +81,8 @@ release notes are drafted from PR titles, so the title is what users will read.
 
 ## Releases
 
-Releases are cut deliberately, not on every merge. Pushing a `v*` tag triggers
+Releases are cut by merging `dev` into `main` and tagging. They are deliberate, not
+automatic on every merge. Pushing a `v*` tag triggers
 `publish.yml`, which builds and publishes to PyPI via trusted publishing. Pick the
 version by what changed: at `0.x`, a breaking change is a minor bump.
 

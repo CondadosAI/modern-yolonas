@@ -1,8 +1,8 @@
 """Example: Run YOLO-NAS inference on a video file.
 
 Usage:
-    python examples/detect_video.py path/to/video.mp4
-    python examples/detect_video.py path/to/video.mp4 --output output.mp4 --model yolo_nas_l
+    uv run examples/detect_video.py path/to/video.mp4
+    uv run examples/detect_video.py path/to/video.mp4 --output output.mp4 --model yolo_nas_l
 """
 
 import argparse
