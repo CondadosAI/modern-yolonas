@@ -186,14 +186,33 @@ Or the standalone scripts in [`examples/`](https://github.com/CondadosAI/modern-
 
 ## Variants
 
-| Model | Params | Input | mAP (COCO val) |
-|---|---|---|---|
-| YOLO-NAS S | 19.05M | 640 | 47.5 |
-| YOLO-NAS M | 51.18M | 640 | 51.5 |
-| YOLO-NAS L | 66.98M | 640 | 52.2 |
+Box AP on COCO val2017, all 5000 images, at 640×640.
 
-Parameter counts are measured with `sum(p.numel() for p in model.parameters())`. The mAP
-column is Deci's published figure, which this project has not independently re-measured.
+| Model | Params | GFLOPs | Latency (ms) | AP | AP50 | AP75 | AP_S | AP_M | AP_L |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| YOLO-NAS-S | 19.05M | 33.9 | 9.39 | 47.2 | 64.7 | 51.3 | 28.4 | 52.7 | 63.5 |
+| YOLO-NAS-M | 51.18M | 94.2 | 14.05 | 51.2 | 68.5 | 55.6 | 33.5 | 56.9 | 68.0 |
+| YOLO-NAS-L | 66.98M | 129.0 | 17.79 | 51.9 | 69.4 | 56.5 | 34.5 | 57.3 | 68.3 |
+
+Every column is measured by this project, not quoted — regenerate the whole table with
+`uv run python examples/model_table.py --coco <coco-root> --half`. Latency is PyTorch
+FP16 on an RTX 3060 Laptop, batch 1, model forward only (no preprocessing, no NMS), median
+of 30 runs; TensorRT on the same GPU is roughly an order of magnitude faster. Leaderboards
+that publish T4 TensorRT latency are not measuring the same thing, so those columns should
+not be read side by side.
+
+The weights are Deci's pretrained COCO checkpoints, so this measures the architecture as
+reimplemented here, not weights trained by this project. Deci publishes 47.5 / 51.5 / 52.2;
+the 0.3 shortfall is identical across all three variants, which points at the evaluation
+protocol rather than the implementation — `iscrowd` annotations are dropped instead of
+being marked *ignore*. [Full protocol and analysis](docs/benchmarks/model_table.md), and
+[numeric parity against super-gradients](docs/benchmarks/parity.md), where class scores
+are bit-identical.
+
+## Roadmap
+
+What is planned, what is blocked and what is deliberately out of scope:
+[ROADMAP.md](ROADMAP.md).
 
 ## Development
 

@@ -43,6 +43,7 @@ nav:
     - Extending: guides/extending.md
   - Architecture: architecture.md
   - Benchmarks:
+    - Model table: benchmarks/model_table.md
     - Parity vs super-gradients: benchmarks/parity.md
     - Latency matrix: benchmarks/latency_matrix.md
 

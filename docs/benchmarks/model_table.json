@@ -1,0 +1,44 @@
+[
+  {
+    "model": "YOLO-NAS-S",
+    "params_m": 19.05,
+    "gflops": 33.9,
+    "input_size": 640,
+    "mAP": 47.2,
+    "mAP_50": 64.7,
+    "mAP_75": 51.3,
+    "mAP_small": 28.4,
+    "mAP_medium": 52.7,
+    "mAP_large": 63.5,
+    "latency_ms": 9.39,
+    "latency_precision": "fp16"
+  },
+  {
+    "model": "YOLO-NAS-M",
+    "params_m": 51.18,
+    "gflops": 94.2,
+    "input_size": 640,
+    "mAP": 51.2,
+    "mAP_50": 68.5,
+    "mAP_75": 55.6,
+    "mAP_small": 33.5,
+    "mAP_medium": 56.9,
+    "mAP_large": 68.0,
+    "latency_ms": 14.05,
+    "latency_precision": "fp16"
+  },
+  {
+    "model": "YOLO-NAS-L",
+    "params_m": 66.98,
+    "gflops": 129.0,
+    "input_size": 640,
+    "mAP": 51.9,
+    "mAP_50": 69.4,
+    "mAP_75": 56.5,
+    "mAP_small": 34.5,
+    "mAP_medium": 57.3,
+    "mAP_large": 68.3,
+    "latency_ms": 17.79,
+    "latency_precision": "fp16"
+  }
+]
