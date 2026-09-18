@@ -195,7 +195,7 @@ Box AP on COCO val2017, all 5000 images, at 640×640.
 | YOLO-NAS-L | 66.98M | 129.0 | 17.89 | 52.0 | 69.1 | 56.9 | 34.5 | 57.4 | 68.5 |
 
 Every column is measured by this project, not quoted — regenerate the whole table with
-`uv run python examples/model_table.py --coco <coco-root> --half`. Latency is PyTorch
+`uv run examples/model_table.py --coco <coco-root> --half`. Latency is PyTorch
 FP16 on an RTX 3060 Laptop, batch 1, model forward only (no preprocessing, no NMS), median
 of 30 runs; TensorRT on the same GPU is roughly an order of magnitude faster. Leaderboards
 that publish T4 TensorRT latency are not measuring the same thing, so those columns should

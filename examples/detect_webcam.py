@@ -3,8 +3,8 @@
 """Example: Run YOLO-NAS live on webcam feed.
 
 Usage:
-    python examples/detect_webcam.py
-    python examples/detect_webcam.py --model yolo_nas_m --device cuda
+    uv run examples/detect_webcam.py
+    uv run examples/detect_webcam.py --model yolo_nas_m --device cuda
 """
 
 import argparse

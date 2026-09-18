@@ -1,8 +1,8 @@
 """Example: Run YOLO-NAS inference on a single image.
 
 Usage:
-    python examples/detect_image.py path/to/image.jpg
-    python examples/detect_image.py path/to/image.jpg --model yolo_nas_l --device cpu
+    uv run examples/detect_image.py path/to/image.jpg
+    uv run examples/detect_image.py path/to/image.jpg --model yolo_nas_l --device cpu
 """
 
 import argparse

@@ -3,7 +3,7 @@
 Every column is measured here rather than quoted, so the table can be regenerated
 on any machine and disagreements are reproducible:
 
-    uv run python examples/model_table.py --coco ~/datasets/coco
+    uv run examples/model_table.py --coco ~/datasets/coco
 
 Without `--coco` the accuracy columns are skipped and only the static columns
 (parameters, FLOPs) and latency are produced.

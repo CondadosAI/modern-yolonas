@@ -1,7 +1,7 @@
 """Train YOLO-NAS on a custom YOLO-format dataset.
 
 Usage:
-    python examples/train_custom_dataset.py --data /path/to/dataset --epochs 50
+    uv run examples/train_custom_dataset.py --data /path/to/dataset --epochs 50
 """
 
 from __future__ import annotations
