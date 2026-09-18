@@ -2,73 +2,69 @@
 
 from __future__ import annotations
 
-import click
+from enum import Enum
+from typing import Annotated
+
+import typer
+
+from modern_yolonas.cli.train_cmd import DataFormat, ModelName
 
 
-@click.command()
-@click.option("--model", default="yolo_nas_s", type=click.Choice(["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"]))
-@click.option("--data", required=True, help="Path to calibration dataset root.")
-@click.option("--format", "data_format", default="yolo", type=click.Choice(["yolo", "coco"]))
-@click.option("--num-batches", default=100, help="Number of calibration batches.")
-@click.option("--batch-size", default=32, help="Batch size for calibration.")
-@click.option("--backend", default="x86", type=click.Choice(["x86", "qnnpack", "onednn"]))
-@click.option("--input-size", default=640, help="Model input size.")
-@click.option("--output", default="model_ptq.onnx", help="Output file (.onnx or .pt).")
-@click.option("--checkpoint", default=None, help="Custom checkpoint path.")
-@click.option("--device", default="cpu", help="Calibration device.")
-@click.option("--workers", default=4, help="DataLoader workers.")
+class Backend(str, Enum):
+    x86 = "x86"
+    qnnpack = "qnnpack"
+    onednn = "onednn"
+
+
 def quantize(
-    model: str,
-    data: str,
-    data_format: str,
-    num_batches: int,
-    batch_size: int,
-    backend: str,
-    input_size: int,
-    output: str,
-    checkpoint: str | None,
-    device: str,
-    workers: int,
+    data: Annotated[str, typer.Option(help="Path to calibration dataset root.")],
+    model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    data_format: Annotated[DataFormat, typer.Option("--format", help="Dataset format.")] = DataFormat.yolo,
+    num_batches: Annotated[int, typer.Option(help="Number of calibration batches.")] = 100,
+    batch_size: Annotated[int, typer.Option(help="Batch size for calibration.")] = 32,
+    backend: Annotated[Backend, typer.Option(help="Quantization backend.")] = Backend.x86,
+    input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
+    output: Annotated[str, typer.Option(help="Output file (.onnx or .pt).")] = "model_ptq.onnx",
+    checkpoint: Annotated[str | None, typer.Option(help="Custom checkpoint path.")] = None,
+    device: Annotated[str, typer.Option(help="Calibration device.")] = "cpu",
+    workers: Annotated[int, typer.Option(help="DataLoader workers.")] = 4,
 ):
     """Run Post-Training Quantization (PTQ) on a YOLO-NAS model."""
     from pathlib import Path
 
     import torch
     from rich.console import Console
+    from torch.utils.data import DataLoader
 
-    from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, LetterboxResize, Normalize
+    from modern_yolonas import yolo_nas_l, yolo_nas_m, yolo_nas_s
     from modern_yolonas.data.collate import detection_collate_fn
+    from modern_yolonas.data.transforms import Compose, LetterboxResize, Normalize
     from modern_yolonas.quantization import (
-        prepare_model_ptq,
-        run_calibration,
         convert_quantized,
         export_quantized_onnx,
+        prepare_model_ptq,
+        run_calibration,
     )
+    from modern_yolonas.weights import extract_model_state_dict
 
     console = Console()
 
-    # Build model
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
-    console.print(f"Loading {model}...")
+    console.print(f"Loading {model.value}...")
 
     if checkpoint:
-        yolo_model = builders[model](pretrained=False)
-        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        sd = ckpt.get("model_state_dict", ckpt)
-        yolo_model.load_state_dict(sd)
+        yolo_model = builders[model.value](pretrained=False)
+        yolo_model.load_state_dict(extract_model_state_dict(checkpoint))
     else:
-        yolo_model = builders[model](pretrained=True)
+        yolo_model = builders[model.value](pretrained=True)
 
-    # Prepare for PTQ
-    console.print(f"Preparing model for PTQ (backend={backend})...")
+    console.print(f"Preparing model for PTQ (backend={backend.value})...")
     example_input = torch.randn(1, 3, input_size, input_size)
-    ptq_model = prepare_model_ptq(yolo_model, backend=backend, example_input=example_input)
+    ptq_model = prepare_model_ptq(yolo_model, backend=backend.value, example_input=example_input)
 
-    # Build calibration dataloader
     transforms = Compose([LetterboxResize(target_size=input_size), Normalize()])
 
-    if data_format == "yolo":
+    if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
 
         dataset = YOLODetectionDataset(data, split="val", transforms=transforms, input_size=input_size)
@@ -83,8 +79,6 @@ def quantize(
             input_size=input_size,
         )
 
-    from torch.utils.data import DataLoader
-
     cal_loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -94,14 +88,11 @@ def quantize(
         pin_memory=False,
     )
 
-    # Calibrate
     run_calibration(ptq_model, cal_loader, num_batches=num_batches, device=device)
 
-    # Convert
     console.print("Converting to quantized model...")
     quantized_model = convert_quantized(ptq_model)
 
-    # Export
     console.print(f"Exporting to {output}...")
     if output.endswith(".onnx"):
         export_quantized_onnx(quantized_model, output, input_size=input_size)

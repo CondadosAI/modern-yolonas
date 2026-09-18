@@ -2,44 +2,36 @@
 
 from __future__ import annotations
 
-import click
+from enum import Enum
+from typing import Annotated
+
+import typer
+
+from modern_yolonas.cli.quantize_cmd import Backend
+from modern_yolonas.cli.train_cmd import DataFormat, ModelName
 
 
-@click.command()
-@click.option("--model", default="yolo_nas_s", type=click.Choice(["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"]))
-@click.option("--data", required=True, help="Path to dataset root.")
-@click.option("--format", "data_format", default="yolo", type=click.Choice(["yolo", "coco"]))
-@click.option("--epochs", default=10, help="QAT fine-tuning epochs.")
-@click.option("--batch-size", default=32, help="Batch size.")
-@click.option("--lr", default=2e-5, help="Learning rate (lower than full training).")
-@click.option("--backend", default="x86", type=click.Choice(["x86", "qnnpack", "onednn"]))
-@click.option("--output", default="runs/qat", help="Output directory.")
-@click.option("--checkpoint", default=None, help="Checkpoint to start from.")
-@click.option("--input-size", default=640, help="Model input size.")
-@click.option("--workers", default=8, help="DataLoader workers.")
-@click.option("--pretrained/--no-pretrained", default=True, help="Use pretrained COCO weights.")
-@click.option("--devices", default="auto", help="Devices to use (e.g. 'auto', '1', '0,1').")
-@click.option(
-    "--logger",
-    default="csv",
-    type=click.Choice(["csv", "tensorboard", "wandb"]),
-    help="Logger backend.",
-)
+class LoggerBackend(str, Enum):
+    csv = "csv"
+    tensorboard = "tensorboard"
+    wandb = "wandb"
+
+
 def qat(
-    model: str,
-    data: str,
-    data_format: str,
-    epochs: int,
-    batch_size: int,
-    lr: float,
-    backend: str,
-    output: str,
-    checkpoint: str | None,
-    input_size: int,
-    workers: int,
-    pretrained: bool,
-    devices: str,
-    logger: str,
+    data: Annotated[str, typer.Option(help="Path to dataset root.")],
+    model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    data_format: Annotated[DataFormat, typer.Option("--format", help="Dataset format.")] = DataFormat.yolo,
+    epochs: Annotated[int, typer.Option(help="QAT fine-tuning epochs.")] = 10,
+    batch_size: Annotated[int, typer.Option(help="Batch size.")] = 32,
+    lr: Annotated[float, typer.Option(help="Learning rate (lower than full training).")] = 2e-5,
+    backend: Annotated[Backend, typer.Option(help="Quantization backend.")] = Backend.x86,
+    output: Annotated[str, typer.Option(help="Output directory.")] = "runs/qat",
+    checkpoint: Annotated[str | None, typer.Option(help="Checkpoint to start from.")] = None,
+    input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
+    workers: Annotated[int, typer.Option(help="DataLoader workers.")] = 8,
+    pretrained: Annotated[bool, typer.Option("--pretrained/--no-pretrained", help="Use pretrained COCO weights.")] = True,
+    devices: Annotated[str, typer.Option(help="Devices to use (e.g. 'auto', '1', '0,1').")] = "auto",
+    logger: Annotated[LoggerBackend, typer.Option(help="Logger backend.")] = LoggerBackend.csv,
 ):
     """Run Quantization-Aware Training on a YOLO-NAS model."""
     from pathlib import Path
@@ -51,8 +43,8 @@ def qat(
 
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
     from modern_yolonas.quantization import prepare_model_qat, convert_quantized, export_quantized_onnx
-    from modern_yolonas.training import YoloNASLightningModule, QATCallback, DetectionDataModule
-    from modern_yolonas.training.lightning_module import extract_model_state_dict
+    from modern_yolonas.training import DetectionDataModule, QATCallback, YoloNASLightningModule
+    from modern_yolonas.weights import extract_model_state_dict
     from modern_yolonas.training.recipes import COCO_RECIPE
     from modern_yolonas.training.run import build_transforms
 
@@ -73,25 +65,24 @@ def qat(
 
     # Build model
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
-    console.print(f"Building {model}...")
+    console.print(f"Building {model.value}...")
 
     if checkpoint:
-        yolo_model = builders[model](pretrained=False)
-        sd = extract_model_state_dict(checkpoint)
-        yolo_model.load_state_dict(sd)
+        yolo_model = builders[model.value](pretrained=False)
+        yolo_model.load_state_dict(extract_model_state_dict(checkpoint))
     else:
-        yolo_model = builders[model](pretrained=pretrained)
+        yolo_model = builders[model.value](pretrained=pretrained)
 
     # Prepare for QAT
-    console.print(f"Preparing model for QAT (backend={backend})...")
+    console.print(f"Preparing model for QAT (backend={backend.value})...")
     example_input = torch.randn(1, 3, input_size, input_size)
-    qat_model = prepare_model_qat(yolo_model, backend=backend, example_input=example_input)
+    qat_model = prepare_model_qat(yolo_model, backend=backend.value, example_input=example_input)
 
     # Build datasets
     train_transforms = build_transforms(recipe, train=True)
     val_transforms = build_transforms(recipe, train=False)
 
-    if data_format == "yolo":
+    if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
 
         train_dataset = YOLODetectionDataset(data, split="train", transforms=train_transforms, input_size=input_size)
@@ -132,9 +123,9 @@ def qat(
     )
 
     # Logger
-    if logger == "csv":
+    if logger == LoggerBackend.csv:
         logger_instance = L.pytorch.loggers.CSVLogger(output)
-    elif logger == "tensorboard":
+    elif logger == LoggerBackend.tensorboard:
         logger_instance = L.pytorch.loggers.TensorBoardLogger(output)
     else:
         logger_instance = L.pytorch.loggers.WandbLogger(project="yolonas", save_dir=output)

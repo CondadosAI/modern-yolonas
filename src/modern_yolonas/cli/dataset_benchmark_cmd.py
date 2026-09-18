@@ -1,10 +1,18 @@
-"""CLI: yolonas benchmark (coco / rf100vl)"""
+"""CLI: yolonas benchmark-dataset (coco / rf100vl).
+
+Accuracy benchmarks that train a model and report mAP. The separate
+``yolonas benchmark`` command measures inference latency instead.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
-import click
+import typer
+
+from modern_yolonas.cli.qat_cmd import LoggerBackend
+from modern_yolonas.cli.train_cmd import ModelName
 
 
 def parse_devices(devices: str) -> str | int | list[int]:
@@ -16,35 +24,22 @@ def parse_devices(devices: str) -> str | int | list[int]:
     return int(devices)
 
 
-@click.group()
-def benchmark():
-    """Run standard benchmarks."""
+benchmark_dataset_app = typer.Typer(help="Train on a standard dataset and report mAP.", no_args_is_help=True)
 
 
-@benchmark.command()
-@click.option("--model", default="yolo_nas_s", type=click.Choice(["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"]))
-@click.option("--data", default=None, help="Path to COCO dataset root.")
-@click.option("--download/--no-download", default=False, help="Download COCO via FiftyOne.")
-@click.option("--output", default="runs/benchmark/coco", help="Output directory.")
-@click.option("--devices", default="auto", help="Devices (e.g. 'auto', '1', '0,1').")
-@click.option("--logger", default="csv", type=click.Choice(["csv", "tensorboard", "wandb"]))
-@click.option("--epochs", default=None, type=int, help="Override recipe epochs (default: 100).")
-@click.option("--batch-size", default=None, type=int, help="Override recipe batch size (default: 32).")
-@click.option("--resume", "resume_path", default=None, help="Resume from checkpoint.")
-@click.option("--input-size", default=640, help="Model input size.")
-@click.option("--workers", default=8, help="DataLoader workers.")
+@benchmark_dataset_app.command()
 def coco(
-    model: str,
-    data: str | None,
-    download: bool,
-    output: str,
-    devices: str,
-    logger: str,
-    epochs: int | None,
-    batch_size: int | None,
-    resume_path: str | None,
-    input_size: int,
-    workers: int,
+    model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    data: Annotated[str | None, typer.Option(help="Path to COCO dataset root.")] = None,
+    download: Annotated[bool, typer.Option("--download/--no-download", help="Download COCO via FiftyOne.")] = False,
+    output: Annotated[str, typer.Option(help="Output directory.")] = "runs/benchmark/coco",
+    devices: Annotated[str, typer.Option(help="Devices (e.g. 'auto', '1', '0,1').")] = "auto",
+    logger: Annotated[LoggerBackend, typer.Option(help="Logger backend.")] = LoggerBackend.csv,
+    epochs: Annotated[int | None, typer.Option(help="Override recipe epochs (default: 100).")] = None,
+    batch_size: Annotated[int | None, typer.Option(help="Override recipe batch size (default: 32).")] = None,
+    resume_path: Annotated[str | None, typer.Option("--resume", help="Resume from checkpoint.")] = None,
+    input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
+    workers: Annotated[int, typer.Option(help="DataLoader workers.")] = 8,
 ):
     """Train YOLO-NAS from scratch on COCO and evaluate mAP."""
     from rich.console import Console
@@ -64,7 +59,7 @@ def coco(
         console.print(f"COCO downloaded to {data}")
 
     if data is None:
-        raise click.UsageError("--data is required (or use --download)")
+        raise typer.BadParameter("--data is required (or use --download)")
 
     data_path = Path(data)
 
@@ -92,7 +87,7 @@ def coco(
 
     # Train from scratch
     best_ckpt = run_training(
-        model_name=model,
+        model_name=model.value,
         recipe=recipe,
         train_dataset=train_dataset,
         val_dataset=val_dataset,
@@ -101,7 +96,7 @@ def coco(
         num_classes=80,
         pretrained=False,
         devices=parse_devices(devices),
-        logger=logger,
+        logger=logger.value,
         resume_path=resume_path,
         epochs=epochs,
         batch_size=batch_size,
@@ -115,11 +110,11 @@ def coco(
 
     from modern_yolonas.data.collate import detection_collate_fn
     from modern_yolonas.inference.postprocess import postprocess
-    from modern_yolonas.training.lightning_module import extract_model_state_dict
+    from modern_yolonas.weights import extract_model_state_dict
     from modern_yolonas.training.metrics import COCOEvaluator
     from modern_yolonas.training.run import MODEL_BUILDERS
 
-    builder = MODEL_BUILDERS[model]
+    builder = MODEL_BUILDERS[model.value]
     eval_model = builder(pretrained=False, num_classes=80)
     sd = extract_model_state_dict(best_ckpt)
     eval_model.load_state_dict(sd)
@@ -160,26 +155,17 @@ def coco(
         console.print(f"  {k}: {v:.4f}")
 
 
-@benchmark.command()
-@click.option("--model", default="yolo_nas_s", type=click.Choice(["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"]))
-@click.option("--data", default=None, help="Path to RF100-VL root directory.")
-@click.option("--download/--no-download", default=False, help="Download RF100-VL.")
-@click.option("--output", default="runs/benchmark/rf100vl", help="Output directory.")
-@click.option("--devices", default="auto", help="Devices (e.g. 'auto', '1', '0,1').")
-@click.option("--logger", default="csv", type=click.Choice(["csv", "tensorboard", "wandb"]))
-@click.option("--epochs", default=None, type=int, help="Override recipe epochs (default: 75).")
-@click.option("--batch-size", default=None, type=int, help="Override recipe batch size (default: 16).")
-@click.option("--datasets", "dataset_filter", default=None, help="Comma-separated dataset names to include.")
+@benchmark_dataset_app.command()
 def rf100vl(
-    model: str,
-    data: str | None,
-    download: bool,
-    output: str,
-    devices: str,
-    logger: str,
-    epochs: int | None,
-    batch_size: int | None,
-    dataset_filter: str | None,
+    model: Annotated[ModelName, typer.Option(help="Model variant.")] = ModelName.yolo_nas_s,
+    data: Annotated[str | None, typer.Option(help="Path to RF100-VL root directory.")] = None,
+    download: Annotated[bool, typer.Option("--download/--no-download", help="Download RF100-VL.")] = False,
+    output: Annotated[str, typer.Option(help="Output directory.")] = "runs/benchmark/rf100vl",
+    devices: Annotated[str, typer.Option(help="Devices (e.g. 'auto', '1', '0,1').")] = "auto",
+    logger: Annotated[LoggerBackend, typer.Option(help="Logger backend.")] = LoggerBackend.csv,
+    epochs: Annotated[int | None, typer.Option(help="Override recipe epochs (default: 75).")] = None,
+    batch_size: Annotated[int | None, typer.Option(help="Override recipe batch size (default: 16).")] = None,
+    dataset_filter: Annotated[str | None, typer.Option("--datasets", help="Comma-separated dataset names to include.")] = None,
 ):
     """Train on RF100-VL datasets and report aggregate mAP."""
     from rich.console import Console
@@ -196,16 +182,16 @@ def rf100vl(
         console.print(f"RF100-VL downloaded to {data}")
 
     if data is None:
-        raise click.UsageError("--data is required (or use --download)")
+        raise typer.BadParameter("--data is required (or use --download)")
 
     ds_filter = dataset_filter.split(",") if dataset_filter else None
 
     run_rf100vl_benchmark(
         data_root=data,
-        model_name=model,
+        model_name=model.value,
         output_dir=output,
         devices=parse_devices(devices),
-        logger=logger,
+        logger=logger.value,
         epochs=epochs,
         batch_size=batch_size,
         dataset_filter=ds_filter,

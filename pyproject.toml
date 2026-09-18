@@ -107,6 +107,7 @@ omit = [
     "src/modern_yolonas/hub.py",
     "src/modern_yolonas/serve/app.py",
     "src/modern_yolonas/export/frigate.py",
+    "src/modern_yolonas/data/download.py",
 ]
 
 [tool.coverage.report]

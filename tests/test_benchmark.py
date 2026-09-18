@@ -186,3 +186,35 @@ class TestBuildTransforms:
         transforms = build_transforms(COCO_RECIPE, train=False)
         # Should have only Resize + Normalize
         assert len(transforms.transforms) == 2
+
+
+class TestParseDevices:
+    """Lightning wants "auto", an int, or a list of ints — the CLI passes a string."""
+
+    def test_auto_passes_through(self):
+        from modern_yolonas.cli.dataset_benchmark_cmd import parse_devices
+
+        assert parse_devices("auto") == "auto"
+
+    def test_single_device_becomes_int(self):
+        from modern_yolonas.cli.dataset_benchmark_cmd import parse_devices
+
+        assert parse_devices("1") == 1
+
+    def test_comma_list_becomes_int_list(self):
+        from modern_yolonas.cli.dataset_benchmark_cmd import parse_devices
+
+        assert parse_devices("0,1,3") == [0, 1, 3]
+
+
+class TestBenchmarkDatasetGuards:
+    """Neither benchmark can invent a dataset, so both must refuse without one."""
+
+    @pytest.mark.parametrize("subcommand", ["coco", "rf100vl"])
+    def test_requires_data_or_download(self, subcommand):
+        from typer.testing import CliRunner
+
+        from modern_yolonas.cli import app
+
+        result = CliRunner().invoke(app, ["benchmark-dataset", subcommand])
+        assert result.exit_code != 0
