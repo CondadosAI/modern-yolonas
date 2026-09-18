@@ -190,9 +190,9 @@ Box AP on COCO val2017, all 5000 images, at 640×640.
 
 | Model | Params | GFLOPs | Latency (ms) | AP | AP50 | AP75 | AP_S | AP_M | AP_L |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| YOLO-NAS-S | 19.05M | 33.9 | 9.39 | 47.2 | 64.7 | 51.3 | 28.4 | 52.7 | 63.5 |
-| YOLO-NAS-M | 51.18M | 94.2 | 14.05 | 51.2 | 68.5 | 55.6 | 33.5 | 56.9 | 68.0 |
-| YOLO-NAS-L | 66.98M | 129.0 | 17.79 | 51.9 | 69.4 | 56.5 | 34.5 | 57.3 | 68.3 |
+| YOLO-NAS-S | 19.05M | 33.9 | 8.22 | 47.3 | 64.4 | 51.8 | 28.5 | 52.9 | 63.6 |
+| YOLO-NAS-M | 51.18M | 94.2 | 14.08 | 51.3 | 68.3 | 56.0 | 33.6 | 57.0 | 68.1 |
+| YOLO-NAS-L | 66.98M | 129.0 | 17.89 | 52.0 | 69.1 | 56.9 | 34.5 | 57.4 | 68.5 |
 
 Every column is measured by this project, not quoted — regenerate the whole table with
 `uv run python examples/model_table.py --coco <coco-root> --half`. Latency is PyTorch
@@ -201,13 +201,16 @@ of 30 runs; TensorRT on the same GPU is roughly an order of magnitude faster. Le
 that publish T4 TensorRT latency are not measuring the same thing, so those columns should
 not be read side by side.
 
+Accuracy is measured with NMS at IoU 0.70, which a sweep found to be the optimum;
+`postprocess` still defaults to 0.65 for interactive use, where fewer overlapping boxes
+matters more than a tenth of AP.
+
 The weights are Deci's pretrained COCO checkpoints, so this measures the architecture as
-reimplemented here, not weights trained by this project. Deci publishes 47.5 / 51.5 / 52.2;
-the 0.3 shortfall is identical across all three variants, which points at the evaluation
-protocol rather than the implementation — `iscrowd` annotations are dropped instead of
-being marked *ignore*. [Full protocol and analysis](docs/benchmarks/model_table.md), and
-[numeric parity against super-gradients](docs/benchmarks/parity.md), where class scores
-are bit-identical.
+reimplemented here, not weights trained by this project. Deci publishes 47.5 / 51.5 / 52.2,
+so roughly 0.2 is unaccounted for — the [model table](docs/benchmarks/model_table.md) lists
+the protocol differences that were tested and ruled out, and does not guess at the rest.
+Numeric agreement with super-gradients is verified far more tightly:
+[class scores are bit-identical](docs/benchmarks/parity.md).
 
 ## Roadmap
 

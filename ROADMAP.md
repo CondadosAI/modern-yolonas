@@ -16,26 +16,38 @@ published 47.5 / 51.5 / 52.2. `examples/model_table.py` measures every column, s
 table regenerates rather than being quoted. See
 [the model table](docs/benchmarks/model_table.md).
 
-The constant 0.3 shortfall is the `iscrowd` item below; closing it should close the gap.
+A small residual to Deci's figures remains and is **not** explained by `iscrowd`, which an
+experiment ruled out — see the model table for what was tested and what is still open.
 
 Out of scope: a leaderboard against other detectors. Their published latency uses an
 NVIDIA T4 with TensorRT at batch 1 — hardware RunPod does not offer and we do not have —
 and quoting their accuracy beside latency measured elsewhere would compare two different
 protocols.
 
-### The two blockers on any published mAP — 2026-09-13
+### The blocker on a from-scratch training run — 2026-09-13
 
-Both are described in `docs/guides/training-review-2026-09-13.md`.
+Described in `docs/guides/training-review-2026-09-13.md`.
 
-- **`iscrowd` ground truth is dropped rather than ignored.** COCO marks crowd regions
-  *ignore*; a correct detection inside one currently scores as a false positive, costing
-  roughly a point of AP — **measured at 0.3**, identically for all three variants, which
-  is the entire gap between our numbers and Deci's. The clean fix widens the target tensor
-  from `[N, 5]` to `[N, 6]` and ripples through the collate function and the loss.
-- **Train, validation and deployment see three different geometries.** Training crops to
-  5–80% of image area; validation and inference letterbox the whole frame. Train and eval
-  therefore disagree on object-size prior. Rewriting the recipe toward the
-  super-gradients shape is a design decision, not a bug fix.
+**Train, validation and deployment see three different geometries.** Training crops to
+5–80% of image area; validation and inference letterbox the whole frame. Train and eval
+therefore disagree on object-size prior. Rewriting the recipe toward the super-gradients
+shape is a design decision, not a bug fix, and it gates a COCO run being worth its GPU
+rental.
+
+### `iscrowd` in the training targets — 2026-09-13
+
+`data/coco.py` drops crowd annotations instead of marking them ignore, so the model gets
+no signal in those regions and is implicitly taught they are background.
+
+This was previously listed as a blocker on published accuracy. **It is not**, and the
+earlier claim that it explained the gap to Deci's figures was wrong. Measured: stripping
+crowd annotations from the ground truth *lowers* AP by 0.43, which shows `COCOEvaluator`
+already handles them correctly — it scores against the annotation file, and `pycocotools`
+marks crowd regions ignore. The dataset's targets never reach that number.
+
+It still matters for training quality, and for the `DetectionMetrics` (torchmetrics) path,
+which does build ground truth from dataset targets. The clean fix widens the target tensor
+from `[N, 5]` to `[N, 6]` and ripples through the collate function and the loss.
 
 ### Port the training-audit fixes that remain — 2026-09-13
 
@@ -83,9 +95,6 @@ cannot be published.
 - `ruff format` across the codebase — it rewrites 28 files, so it wants its own PR.
 - `mypy` and `--doctest-modules` in CI.
 - Coverage sits just above its 70% gate; the CLI command bodies are the thin part.
-
-## Not planned
-
-Adopting what larger projects do because they do it: a vendored OpenCV reimplementation,
-VLM output parsers, versioned documentation, analytics widgets, or a two-branch release
-flow. This project is small enough that they cost more than they return.
+- Replace `print` and `console.print` with the `logging` module. A library should not write
+  to stdout on its own initiative, and the CLI's own `--verbose`/`--quiet` flags already
+  configure logging levels that most of the code bypasses.

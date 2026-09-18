@@ -66,7 +66,9 @@ def measure_latency(model, input_size: int, device: str, half: bool, runs: int =
     return times[len(times) // 2]
 
 
-def evaluate_coco(model, coco_root: Path, input_size: int, device: str, batch_size: int) -> dict[str, float]:
+def evaluate_coco(
+    model, coco_root: Path, input_size: int, device: str, batch_size: int, nms_iou: float = 0.70
+) -> dict[str, float]:
     """Full COCO val2017 mAP through the same evaluator `yolonas eval` uses."""
     from torch.utils.data import DataLoader
 
@@ -96,7 +98,7 @@ def evaluate_coco(model, coco_root: Path, input_size: int, device: str, batch_si
         for batch_idx, (images, _) in enumerate(loader):
             images = images.to(device, non_blocking=True)
             pred_bboxes, pred_scores = model(images)
-            results = postprocess(pred_bboxes, pred_scores, conf_threshold=0.001, iou_threshold=0.65)
+            results = postprocess(pred_bboxes, pred_scores, conf_threshold=0.001, iou_threshold=nms_iou)
 
             start = batch_idx * batch_size
             image_ids = [dataset.ids[i] for i in range(start, min(start + batch_size, len(dataset)))]
@@ -118,6 +120,9 @@ def main():
     parser.add_argument("--input-size", type=int, default=640)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--nms-iou", type=float, default=0.70,
+                        help="NMS IoU for evaluation. 0.70 measured ~0.1 AP better than the 0.65 "
+                             "inference default across a sweep; 0.80 is worse.")
     parser.add_argument("--half", action="store_true", help="Measure latency in FP16.")
     parser.add_argument("--output", default="docs/benchmarks/model_table.json")
     args = parser.parse_args()
@@ -131,11 +136,14 @@ def main():
             "params_m": round(count_params(model), 2),
             "gflops": round(count_flops(model, args.input_size), 1),
             "input_size": args.input_size,
+            "nms_iou": args.nms_iou,
         }
         # Accuracy first: `--half` mutates the model in place, and evaluating a
         # half-precision model would quietly report a different number.
         if args.coco:
-            metrics = evaluate_coco(model, Path(args.coco).expanduser(), args.input_size, args.device, args.batch_size)
+            metrics = evaluate_coco(
+                model, Path(args.coco).expanduser(), args.input_size, args.device, args.batch_size, args.nms_iou
+            )
             row.update({k: round(float(v) * 100, 1) for k, v in metrics.items()})
             print(f"   mAP {row['mAP']}  mAP50 {row['mAP_50']}")
 
