@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-09-17
+## [0.4.0] - 2026-09-18
 
 ### Changed — breaking
 - `Detector` now returns [`supervision.Detections`](https://supervision.roboflow.com/latest/detection/core/)
