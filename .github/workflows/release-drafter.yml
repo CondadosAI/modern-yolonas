@@ -3,8 +3,14 @@ name: Release Drafter
 on:
   push:
     branches: [main]
-  pull_request:
-    types: [opened, reopened, synchronize]
+  # `pull_request` resolves to refs/pull/N/merge, an ephemeral merge commit, and
+  # release-drafter forces dry-run on it — so the autolabeler computed labels and
+  # then applied none. `pull_request_target` runs against the base ref with a
+  # write token, which is what the autolabeler needs. It checks out no PR code,
+  # and release-drafter executes none, so the usual pull_request_target caveat
+  # does not apply here.
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
 
 permissions:
   contents: read
