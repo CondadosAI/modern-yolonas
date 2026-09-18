@@ -22,9 +22,9 @@ pip install modern-yolonas[openvino]
 
 ```python
 import cv2
-from modern_yolonas import Detector
+from modern_yolonas import YoloNASDetector
 
-det = Detector("yolo_nas_s")
+det = YoloNASDetector("yolo_nas_s")
 
 image = cv2.imread("photo.jpg")
 detections = det(image)

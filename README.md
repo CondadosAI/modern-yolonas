@@ -16,6 +16,15 @@
 </p>
 
 <p align="center">
+  <img src="https://raw.githubusercontent.com/CondadosAI/modern-yolonas/main/docs/assets/demo.jpg" alt="YOLO-NAS-L detections on a street scene" width="100%">
+</p>
+
+<p align="center">
+  <sub>YOLO-NAS-L, confidence 0.40. Source photo by
+  <a href="https://commons.wikimedia.org/wiki/User:Wilfredor">Wilfredor</a>, <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0</a>.</sub>
+</p>
+
+<p align="center">
   <a href="https://condadosai.github.io/modern-yolonas/"><b>Documentation</b></a> &nbsp;·&nbsp;
   <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/CHANGELOG.md">Changelog</a> &nbsp;·&nbsp;
   <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CONTRIBUTING.md">Contributing</a> &nbsp;·&nbsp;
@@ -24,21 +33,26 @@
 
 ---
 
-Results come back as [`supervision`](https://github.com/roboflow/supervision) `Detections`, so
-every annotator, tracker, zone and metric in that ecosystem works on them out of the box.
-The whole point is that you can read the implementation end to end: a model variant is a
-function, a config is a dataclass, and `state_dict` keys match super-gradients exactly so
-the original pretrained COCO checkpoints load with `strict=True`.
+**modern-yolonas** is YOLO-NAS object detection rewritten so you can read the whole thing:
+a model variant is a function, a config is a dataclass, and there is no layer of indirection
+that exists only to be configurable. `state_dict` keys match
+[super-gradients](https://github.com/Deci-AI/super-gradients) exactly, so the original
+pretrained COCO checkpoints load with `strict=True`.
+
+Detections come back as [`supervision`](https://github.com/roboflow/supervision) `Detections`,
+so every annotator, tracker, zone and metric in that ecosystem works on them out of the box.
+Training runs on Lightning, and the model exports to ONNX and OpenVINO — including a
+self-contained graph for [Frigate](https://frigate.video/).
 
 ---
 
 ## 🚀 Updates
 
-- **[Unreleased]** Training moved to [PyTorch Lightning](https://lightning.ai/); quantization
-  (`yolonas quantize` for PTQ, `yolonas qat` for QAT) on `torch.ao.quantization` FX graph mode;
-  every number in the model table is now measured by this project rather than quoted;
-  license changed from MIT to **Apache-2.0** for the source.
-- **[2026-09-18]** `v0.4.0` — `Detector` returns `supervision.Detections`, so results slice and
+- **[2026-09-18]** `v0.5.0` — training moved to [PyTorch Lightning](https://lightning.ai/);
+  quantization (`yolonas quantize` for PTQ, `yolonas qat` for QAT) on `torch.ao.quantization`
+  FX graph mode; accuracy is now measured by this project rather than quoted; two mAP bugs and
+  a mosaic bug fixed; license changed from MIT to **Apache-2.0** for the source.
+- **[2026-09-18]** `v0.4.0` — `YoloNASDetector` returns `supervision.Detections`, so results slice and
   plug into the supervision ecosystem directly.
 - **[2026-02-05]** `v0.1` — initial release: S/M/L architectures, pretrained weight loading,
   training, COCO evaluation, and ONNX export.
@@ -47,7 +61,9 @@ the original pretrained COCO checkpoints load with `strict=True`.
 
 ## 🏆 Model Zoo
 
-Box AP on COCO val2017, all 5000 images, at 640×640.
+Box AP on COCO val2017, all 5000 images, at 640×640. There is nothing to download by hand —
+`yolo_nas_s(pretrained=True)` and `YoloNASDetector("yolo_nas_s")` fetch and cache Deci's COCO
+checkpoints on first use (they carry Deci's own non-commercial terms — see **License** below).
 
 | Model | Params | GFLOPs | Latency (ms) | AP | AP<sub>50</sub> | AP<sub>75</sub> | AP<sub>S</sub> | AP<sub>M</sub> | AP<sub>L</sub> |
 |:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -74,10 +90,10 @@ matters more than a tenth of AP.
 
 **The weights are Deci's pretrained COCO checkpoints**, so this measures the architecture as
 reimplemented here, not weights trained by this project. Deci publishes 47.5 / 51.5 / 52.2,
-so roughly 0.2 is unaccounted for — the [model table](docs/benchmarks/model_table.md) lists
+so roughly 0.2 is unaccounted for — the [model table](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/model_table.md) lists
 the protocol differences that were tested and ruled out, and does not guess at the rest.
 Numeric agreement with super-gradients is verified far more tightly:
-[class scores are bit-identical](docs/benchmarks/parity.md).
+[class scores are bit-identical](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/parity.md).
 
 </details>
 
@@ -97,16 +113,16 @@ Optional extras: `[onnx]`, `[openvino]`, `[fiftyone]`, `[benchmark]`, `[serve]`,
 
 ## ⚡ Quick Start
 
-`Detector` picks CUDA when it is available and falls back to CPU, so the examples below run
+`YoloNASDetector` picks CUDA when it is available and falls back to CPU, so the examples below run
 anywhere. Pass `device="cuda"`, `"cpu"` or a `torch.device` to choose explicitly.
 
 ### Detect objects in an image
 
 ```python
 import cv2
-from modern_yolonas import Detector
+from modern_yolonas import YoloNASDetector
 
-det = Detector("yolo_nas_s")
+det = YoloNASDetector("yolo_nas_s")
 
 image = cv2.imread("image.jpg")
 detections = det(image)  # an sv.Detections
@@ -141,10 +157,21 @@ frame = heatmap_annotator.annotate(frame, detections)
 
 ### Detect objects in a video
 
-```python
-from modern_yolonas import Detector
+<p align="center">
+  <img src="https://raw.githubusercontent.com/CondadosAI/modern-yolonas/main/docs/assets/demo_video.gif" alt="YOLO-NAS-L detections on the Shibuya crossing" width="100%">
+</p>
 
-det = Detector("yolo_nas_s")
+<p align="center">
+  <sub>YOLO-NAS-L at confidence 0.25, ~70 detections per frame. Clip by
+  <a href="https://commons.wikimedia.org/wiki/User:Basile_Morin">Basile Morin</a>,
+  <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a> — so this
+  clip, unlike the rest of the repository, is CC BY-SA rather than Apache-2.0.</sub>
+</p>
+
+```python
+from modern_yolonas import YoloNASDetector
+
+det = YoloNASDetector("yolo_nas_s")
 
 # Option 1: Write annotated video directly
 stats = det.detect_video_to_file("input.mp4", "output.mp4")
@@ -161,9 +188,9 @@ for frame_idx, frame, detections in det.detect_video("input.mp4"):
 
 ```python
 import cv2
-from modern_yolonas import Detector
+from modern_yolonas import YoloNASDetector
 
-det = Detector("yolo_nas_s")
+det = YoloNASDetector("yolo_nas_s")
 
 for frame_idx, frame, detections in det.detect_video(source=0):  # 0 = default camera
     cv2.imshow("YOLO-NAS", det.annotate(frame, detections))
@@ -244,18 +271,18 @@ model:
 
 ## 📚 Tutorials
 
-Step-by-step notebooks in [`tutorials/`](tutorials/):
+Step-by-step notebooks in [`tutorials/`](https://github.com/CondadosAI/modern-yolonas/tree/main/tutorials/):
 
 | Topic | Notebook | Description |
 |---|---|---|
-| **Roboflow** | [`roboflow/01_explore_dataset.ipynb`](tutorials/roboflow/01_explore_dataset.ipynb) | Download from Roboflow + explore |
-| | [`roboflow/02_finetune.ipynb`](tutorials/roboflow/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
-| **FiftyOne** | [`fiftyone/01_explore_dataset.ipynb`](tutorials/fiftyone/01_explore_dataset.ipynb) | Load from FiftyOne Zoo + explore |
-| | [`fiftyone/02_finetune.ipynb`](tutorials/fiftyone/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
-| **Export** | [`export_onnx.ipynb`](tutorials/export_onnx.ipynb) | ONNX export from any checkpoint |
-| **Quantization** | [`quantization_ptq.ipynb`](tutorials/quantization_ptq.ipynb) | Post-Training Quantization |
-| | [`quantization_qat.ipynb`](tutorials/quantization_qat.ipynb) | Quantization-Aware Training |
-| **Inference** | [`inference_onnx.ipynb`](tutorials/inference_onnx.ipynb) | ONNX Runtime inference |
+| **Roboflow** | [`roboflow/01_explore_dataset.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/roboflow/01_explore_dataset.ipynb) | Download from Roboflow + explore |
+| | [`roboflow/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/roboflow/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| **FiftyOne** | [`fiftyone/01_explore_dataset.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/01_explore_dataset.ipynb) | Load from FiftyOne Zoo + explore |
+| | [`fiftyone/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| **Export** | [`export_onnx.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/export_onnx.ipynb) | ONNX export from any checkpoint |
+| **Quantization** | [`quantization_ptq.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_ptq.ipynb) | Post-Training Quantization |
+| | [`quantization_qat.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_qat.ipynb) | Quantization-Aware Training |
+| **Inference** | [`inference_onnx.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/inference_onnx.ipynb) | ONNX Runtime inference |
 
 ### Examples
 
@@ -286,15 +313,15 @@ uv run pytest tests/ -v
 uv run ruff check src/ tests/
 ```
 
-Contributions are welcome. Please read [CONTRIBUTING.md](.github/CONTRIBUTING.md) — it lists
+Contributions are welcome. Please read [CONTRIBUTING.md](https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CONTRIBUTING.md) — it lists
 the API design principles a change is reviewed against — and the
-[Code of Conduct](.github/CODE_OF_CONDUCT.md).
+[Code of Conduct](https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CODE_OF_CONDUCT.md).
 
 ---
 
 ## 📄 License
 
-Apache-2.0 — **applies to the source code only**. See [LICENSE](./LICENSE).
+Apache-2.0 — **applies to the source code only**. See [LICENSE](https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE).
 
 **Pretrained weights notice:** the pretrained COCO weights downloaded by this library (via
 `pretrained=True`) are provided by Deci AI and are subject to

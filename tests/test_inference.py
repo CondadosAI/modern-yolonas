@@ -135,3 +135,42 @@ class TestPostprocess:
         # (100-10)/2=45, (100-20)/2=40, (200-10)/2=95, (200-20)/2=90
         assert rescaled[0, 0].item() == pytest.approx(45.0)
         assert rescaled[0, 1].item() == pytest.approx(40.0)
+
+
+class TestDetectorRenameAlias:
+    """`Detector` was renamed `YoloNASDetector` in 0.5.0; the old spelling still works.
+
+    The alias is a module-level ``__getattr__`` rather than a subclass, so it warns on
+    attribute access without putting an extra class in the MRO. It has to hold on every
+    path people actually import from, including the one the CLI tests patch.
+    """
+
+    MODULES = [
+        "modern_yolonas",
+        "modern_yolonas.inference",
+        "modern_yolonas.inference.detect",
+    ]
+
+    @pytest.mark.parametrize("module_name", MODULES)
+    def test_alias_is_the_renamed_class_and_warns(self, module_name):
+        import importlib
+
+        from modern_yolonas import YoloNASDetector
+
+        module = importlib.import_module(module_name)
+        with pytest.warns(DeprecationWarning, match="use YoloNASDetector instead"):
+            assert module.Detector is YoloNASDetector
+
+    @pytest.mark.parametrize("module_name", MODULES)
+    def test_unknown_attribute_still_raises(self, module_name):
+        import importlib
+
+        module = importlib.import_module(module_name)
+        with pytest.raises(AttributeError):
+            module.NoSuchThing
+
+    def test_new_name_does_not_warn(self, recwarn):
+        import importlib
+
+        importlib.reload(importlib.import_module("modern_yolonas")).YoloNASDetector
+        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]

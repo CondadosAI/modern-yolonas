@@ -76,15 +76,31 @@ requests **only from `dev`**, enforced by the `PR source guard` check, so everyt
 `main` has already been integrated and tested together on `dev`.
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) for commit and PR
-titles — `feat:`, `fix:`, `docs:`, `perf:`, `refactor:`, `test:`, `chore:`. The
-release notes are drafted from PR titles, so the title is what users will read.
+titles — `feat:`, `fix:`, `docs:`, `perf:`, `refactor:`, `test:`, `chore:`, `ci:`,
+`build:`, `style:`, `revert:`. Mark a breaking change with `!` (`feat!:`).
+
+This is checked in three places, because each catches a different thing:
+
+- **`commitizen`, as a `commit-msg` pre-commit hook** — rejects a bad message while you
+  are writing it. `uv run pre-commit install` wires it up; the config sets
+  `default_install_hook_types`, so the plain `install` is enough.
+- **`pr-title.yml`** — validates the *pull request title*. This is the one that matters
+  for history: a squash merge takes its subject from the PR title, not from your commits.
+- **release-drafter's autolabeler** — reads the PR title and applies the label that
+  decides the version bump. `feat:` and any `!` give `minor`; everything else gives
+  `patch`. Without it every release drafts as a patch, which is how `v0.4.0` — a
+  `feat!` — drafted as one.
+
+The release notes are drafted from PR titles, so the title is what users will read.
 
 ## Releases
 
 Releases are cut by merging `dev` into `main` and tagging. They are deliberate, not
 automatic on every merge. Pushing a `v*` tag triggers
 `publish.yml`, which builds and publishes to PyPI via trusted publishing. Pick the
-version by what changed: at `0.x`, a breaking change is a minor bump.
+version by what changed: at `0.x`, a breaking change is a minor bump, and `major` stays
+unused until there is a stability contract to break. The `major` label exists for that
+day; when it comes, move the `!` rule in `.github/release-drafter.yml` onto it.
 
 ## Supported Python versions
 
@@ -95,4 +111,4 @@ first, in its own pull request.
 ## License
 
 By contributing you agree that your contributions will be licensed under the
-[MIT License](../LICENSE).
+[Apache License 2.0](../LICENSE).

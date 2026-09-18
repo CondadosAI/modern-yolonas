@@ -25,12 +25,12 @@ from modern_yolonas.validation import validate_confidence, validate_device, vali
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
 
 
-class Detector:
+class YoloNASDetector:
     """High-level detector: load model → preprocess → forward → postprocess.
 
     Usage::
 
-        det = Detector("yolo_nas_s", device="cuda")
+        det = YoloNASDetector("yolo_nas_s", device="cuda")
 
         # Single image
         image = cv2.imread("image.jpg")
@@ -42,7 +42,7 @@ class Detector:
         confident = detections[detections.confidence > 0.5]
 
         # From a custom checkpoint trained with --num-classes 3
-        det = Detector("yolo_nas_s", weights="runs/train/best.pt", num_classes=3,
+        det = YoloNASDetector("yolo_nas_s", weights="runs/train/best.pt", num_classes=3,
                        class_names=["cat", "dog", "bird"])
 
         # Video (yields per-frame results)
@@ -373,3 +373,27 @@ class Detector:
             "total_detections": total_detections,
             "fps": fps,
         }
+
+
+def _warn_detector_alias(module_name: str) -> type[YoloNASDetector]:
+    """Back the deprecated `Detector` spelling, kept through one minor release.
+
+    Renamed in 0.5.0 so the ergonomic classes can grow task siblings
+    (`YoloNASSegmenter`, `YoloNASPoseEstimator`) without `YoloNAS*` colliding
+    with the `nn.Module` names those tasks will want.
+    """
+    import warnings
+
+    warnings.warn(
+        f"{module_name}.Detector is deprecated and will be removed in 0.7.0; "
+        "use YoloNASDetector instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return YoloNASDetector
+
+
+def __getattr__(name: str) -> type[YoloNASDetector]:
+    if name == "Detector":
+        return _warn_detector_alias(__name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

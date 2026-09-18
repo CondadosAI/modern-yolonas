@@ -9,7 +9,7 @@ import argparse
 
 import cv2
 
-from modern_yolonas.inference.detect import Detector
+from modern_yolonas.inference.detect import YoloNASDetector
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
     args = parser.parse_args()
 
     # Create detector (downloads pretrained weights on first run)
-    det = Detector(args.model, device=args.device, conf_threshold=args.conf, iou_threshold=args.iou)
+    det = YoloNASDetector(args.model, device=args.device, conf_threshold=args.conf, iou_threshold=args.iou)
 
     image = cv2.imread(args.image)
     if image is None:

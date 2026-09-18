@@ -35,7 +35,7 @@ def detect(
     """Run object detection on images or video."""
     from rich.console import Console
 
-    from modern_yolonas.inference.detect import Detector
+    from modern_yolonas.inference.detect import YoloNASDetector
 
     console = Console()
     out_dir = Path(output)
@@ -46,7 +46,7 @@ def detect(
     else:
         console.print(f"Loading pretrained {model.value}...")
 
-    det = Detector(
+    det = YoloNASDetector(
         model.value,
         device=device,
         conf_threshold=conf,

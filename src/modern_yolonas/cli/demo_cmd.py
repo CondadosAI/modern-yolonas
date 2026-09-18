@@ -30,13 +30,13 @@ def demo(
     import cv2
     import numpy as np
 
-    from modern_yolonas.inference.detect import Detector
+    from modern_yolonas.inference.detect import YoloNASDetector
 
-    detectors: dict[str, Detector] = {}
+    detectors: dict[str, YoloNASDetector] = {}
 
-    def get_detector(model_name: str) -> Detector:
+    def get_detector(model_name: str) -> YoloNASDetector:
         if model_name not in detectors:
-            detectors[model_name] = Detector(model_name, device=device)
+            detectors[model_name] = YoloNASDetector(model_name, device=device)
         return detectors[model_name]
 
     # Pre-load default model

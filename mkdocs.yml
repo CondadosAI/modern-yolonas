@@ -47,6 +47,10 @@ nav:
     - Parity vs super-gradients: benchmarks/parity.md
     - Latency matrix: benchmarks/latency_matrix.md
 
+# Provenance/licensing notes for the image assets; not a site page.
+exclude_docs: |
+  assets/README.md
+
 plugins:
   - search
   - mkdocstrings:

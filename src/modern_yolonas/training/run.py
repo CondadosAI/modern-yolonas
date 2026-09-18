@@ -6,6 +6,7 @@ from pathlib import Path
 
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
+from torch.utils.data import Dataset
 
 from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
 from modern_yolonas.data.transforms import (
@@ -117,8 +118,8 @@ def build_transforms(recipe: dict, *, train: bool, dataset=None):
 def run_training(
     model_name: str,
     recipe: dict,
-    train_dataset,
-    val_dataset,
+    train_dataset: Dataset,
+    val_dataset: Dataset | None,
     val_ann_file: str | Path | None = None,
     output_dir: str | Path = "runs/train",
     num_classes: int = 80,

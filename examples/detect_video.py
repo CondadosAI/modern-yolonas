@@ -8,7 +8,7 @@ Usage:
 import argparse
 from pathlib import Path
 
-from modern_yolonas.inference.detect import Detector
+from modern_yolonas.inference.detect import YoloNASDetector
 
 
 def main():
@@ -30,7 +30,7 @@ def main():
         args.output = str(src.parent / f"{src.stem}_detect{src.suffix}")
 
     # Create detector
-    det = Detector(args.model, device=args.device, conf_threshold=args.conf, iou_threshold=args.iou)
+    det = YoloNASDetector(args.model, device=args.device, conf_threshold=args.conf, iou_threshold=args.iou)
 
     # --- Option 1: Write annotated video directly ---
     print(f"Processing {args.video} ...")

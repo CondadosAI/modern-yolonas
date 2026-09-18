@@ -28,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `Mixup(dataset, p=...)` is now `Mixup(dataset, prob=...)`, matching `Mosaic`.
 
 ### Added
+- **`YoloNASDetector`, the new name for `Detector`.** `Detector` said nothing about which
+  library it came from, and the name was about to become a problem: the planned
+  segmentation, pose and feature-extraction entry points need task siblings, and `YoloNAS*`
+  has to stay free for the `nn.Module` classes those tasks will bring (`YoloNASPose` and
+  friends, matching super-gradients). So the ergonomic layer carries a role suffix —
+  `YoloNASDetector` today, `YoloNASSegmenter` and `YoloNASPoseEstimator` later — and the
+  module layer keeps the bare architecture names.
+- Demo media in `docs/assets/`: an annotated street-scene still (CC0) and a 3-second
+  annotated clip of the Shibuya crossing. The clip's source is CC BY-SA 4.0, so those two
+  media files are CC BY-SA 4.0 rather than Apache-2.0; `docs/assets/README.md` records the
+  provenance and the scope of that obligation. The source code is unaffected.
+- Conventional Commits are now enforced, and drive the release bump. A `commitizen`
+  `commit-msg` hook checks the message as you write it, `pr-title.yml` checks the pull
+  request title (which is what a squash merge actually records), and release-drafter's
+  autolabeler turns that title into the `minor`/`patch` label its version-resolver reads.
+  Previously no rule applied those labels, so every release drafted as a patch — including
+  `v0.4.0`, which was a `feat!`.
 - Quantization: `yolonas quantize` (post-training) and `yolonas qat`
   (quantization-aware training), built on `torch.ao.quantization` FX graph mode.
 - `yolonas benchmark-dataset coco` and `yolonas benchmark-dataset rf100vl` — train and
@@ -55,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Example scripts are invoked as `uv run <script>`; the previous `python examples/...`
   only worked with a virtualenv already activated.
 - CI runs on `dev` as well as `main`, and `main` accepts pull requests only from `dev`.
+
+### Deprecated
+- `Detector`, in favour of `YoloNASDetector`. Nothing breaks yet: the old spelling still
+  resolves from `modern_yolonas`, `modern_yolonas.inference` and
+  `modern_yolonas.inference.detect`, raising `DeprecationWarning` on access. It is removed
+  in 0.7.0, which is where the actual break lands.
 
 ### Fixed
 - **Mosaic emitted every box at half size.** Cropping the 2s×2s canvas to s×s renormalises
