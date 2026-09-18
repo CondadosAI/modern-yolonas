@@ -67,7 +67,7 @@ def eval_cmd(
         collate_fn=detection_collate_fn, pin_memory=True,
     )
 
-    evaluator = COCOEvaluator(ann_file)
+    evaluator = COCOEvaluator(ann_file, input_size=input_size)
 
     console.print(f"Evaluating {model.value} on {split} ({len(dataset)} images)...")
 

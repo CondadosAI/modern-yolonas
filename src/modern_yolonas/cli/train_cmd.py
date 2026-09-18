@@ -226,6 +226,7 @@ def train(
         lr=lr,
         warmup_steps=warmup_steps,
         val_ann_file=val_ann_file,
+        input_size=input_size,
     )
 
     data_module = DetectionDataModule(

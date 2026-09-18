@@ -157,7 +157,7 @@ def run_rf100vl_benchmark(
                 eval_model.load_state_dict(sd)
                 eval_model = eval_model.cuda().eval()
 
-                evaluator = COCOEvaluator(ds_info["val_ann"])
+                evaluator = COCOEvaluator(ds_info["val_ann"], input_size=recipe["input_size"])
                 from torch.utils.data import DataLoader
                 from modern_yolonas.data.collate import detection_collate_fn
 

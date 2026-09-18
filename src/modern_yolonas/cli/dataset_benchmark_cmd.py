@@ -128,7 +128,7 @@ def coco(
         num_workers=workers, collate_fn=detection_collate_fn, pin_memory=True,
     )
 
-    evaluator = COCOEvaluator(val_ann_file)
+    evaluator = COCOEvaluator(val_ann_file, input_size=input_size)
     with torch.no_grad():
         for batch_idx, (images, targets) in enumerate(eval_loader):
             images = images.cuda(non_blocking=True)

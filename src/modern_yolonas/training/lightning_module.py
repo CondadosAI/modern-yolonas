@@ -32,6 +32,9 @@ class YoloNASLightningModule(L.LightningModule):
             If None, extracted from the val dataloader's dataset.
         conf_threshold: Confidence threshold for mAP evaluation.
         iou_threshold: NMS IoU threshold for mAP evaluation.
+        input_size: Square size the images are letterboxed to. The evaluator needs it to
+            map predictions back to original image coordinates before comparing them
+            with the ground truth.
     """
 
     def __init__(
@@ -47,6 +50,7 @@ class YoloNASLightningModule(L.LightningModule):
         val_dataset_ids: list[int] | None = None,
         conf_threshold: float = 0.001,
         iou_threshold: float = 0.65,
+        input_size: int = 640,
     ):
         super().__init__()
         self.model = model
@@ -55,6 +59,7 @@ class YoloNASLightningModule(L.LightningModule):
         self.val_dataset_ids = val_dataset_ids
         self.conf_threshold = conf_threshold
         self.iou_threshold = iou_threshold
+        self.input_size = input_size
         self._evaluator = None
         self.save_hyperparameters(ignore=["model"])
 
@@ -83,7 +88,7 @@ class YoloNASLightningModule(L.LightningModule):
         if self.val_ann_file is not None:
             from modern_yolonas.training.metrics import COCOEvaluator
 
-            self._evaluator = COCOEvaluator(self.val_ann_file)
+            self._evaluator = COCOEvaluator(self.val_ann_file, input_size=self.input_size)
             # Cache image IDs from the val dataset if not provided
             if self.val_dataset_ids is None and self._trainer is not None:
                 val_dl = self.trainer.val_dataloaders

@@ -174,6 +174,7 @@ def run_training(
         val_ann_file=val_ann_file,
         conf_threshold=recipe.get("conf_threshold", 0.001),
         iou_threshold=recipe.get("iou_threshold", 0.65),
+        input_size=recipe["input_size"],
     )
 
     # Data module

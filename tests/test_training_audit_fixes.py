@@ -8,6 +8,7 @@ plausible, and only the final mAP is wrong. See
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 
 from modern_yolonas import yolo_nas_s
@@ -151,3 +152,72 @@ class TestReturnRawOutputs:
         model.heads.return_raw_outputs = True
         model(torch.randn(1, 3, 128, 128))
         assert not model.training
+
+
+class TestEvaluatorUndoesLetterbox:
+    """Predictions come back in letterboxed model space; COCO ground truth is in
+    original image pixels. Comparing the two directly costs almost all of the mAP —
+    measured at 0.008 vs 0.588 on the same overfit model, because a box scaled about
+    the image origin overlaps its own ground truth by well under 0.5 IoU.
+    """
+
+    def _ann_file(self, tmp_path, width: int, height: int):
+        import json
+
+        payload = {
+            "images": [{"id": 1, "file_name": "a.png", "width": width, "height": height}],
+            "annotations": [
+                {"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 40, 40], "area": 1600, "iscrowd": 0}
+            ],
+            "categories": [{"id": 1, "name": "thing"}],
+        }
+        path = tmp_path / "ann.json"
+        path.write_text(json.dumps(payload))
+        return path
+
+    def _evaluator(self, tmp_path, width, height, input_size):
+        from modern_yolonas.training.metrics import COCOEvaluator
+
+        return COCOEvaluator(self._ann_file(tmp_path, width, height), input_size=input_size)
+
+    def test_square_image_is_only_scaled(self, tmp_path):
+        # 256 -> 320 means scale 1.25 and no padding.
+        ev = self._evaluator(tmp_path, 256, 256, 320)
+        box = torch.tensor([[12.5, 12.5, 62.5, 62.5]])
+        ev.update([1], [box], [torch.tensor([0.9])], [torch.tensor([0])])
+        assert ev.results[0]["bbox"] == [10.0, 10.0, 40.0, 40.0]
+
+    def test_landscape_image_padding_is_removed(self, tmp_path):
+        # 200x100 at input 320: scale 1.6, so the image is 320x160 and the 160px of
+        # leftover height is padded 80 above and 80 below.
+        ev = self._evaluator(tmp_path, 200, 100, 320)
+        box = torch.tensor([[16.0, 96.0, 80.0, 160.0]])
+        ev.update([1], [box], [torch.tensor([0.9])], [torch.tensor([0])])
+        x, y, w, h = ev.results[0]["bbox"]
+        assert (x, y) == pytest.approx((10.0, 10.0))
+        assert (w, h) == pytest.approx((40.0, 40.0))
+
+    def test_boxes_are_clipped_to_the_image(self, tmp_path):
+        ev = self._evaluator(tmp_path, 256, 256, 320)
+        box = torch.tensor([[-50.0, -50.0, 5000.0, 5000.0]])
+        ev.update([1], [box], [torch.tensor([0.9])], [torch.tensor([0])])
+        x, y, w, h = ev.results[0]["bbox"]
+        assert x == 0.0 and y == 0.0
+        assert x + w <= 256.0 and y + h <= 256.0
+
+    def test_without_input_size_boxes_pass_through(self, tmp_path):
+        # A caller that already rescaled must not be rescaled twice.
+        from modern_yolonas.training.metrics import COCOEvaluator
+
+        ev = COCOEvaluator(self._ann_file(tmp_path, 256, 256))
+        box = torch.tensor([[10.0, 10.0, 50.0, 50.0]])
+        ev.update([1], [box], [torch.tensor([0.9])], [torch.tensor([0])])
+        assert ev.results[0]["bbox"] == [10.0, 10.0, 40.0, 40.0]
+
+    def test_perfect_predictions_score_a_perfect_map(self, tmp_path):
+        # End to end through pycocotools: feeding back the ground truth, letterboxed,
+        # has to come out as mAP 1.0. It read ~0 before the fix.
+        ev = self._evaluator(tmp_path, 256, 256, 320)
+        box = torch.tensor([[12.5, 12.5, 62.5, 62.5]])
+        ev.update([1], [box], [torch.tensor([0.99])], [torch.tensor([0])])
+        assert ev.evaluate()["mAP"] == pytest.approx(1.0)
