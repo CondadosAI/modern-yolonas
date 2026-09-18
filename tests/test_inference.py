@@ -92,6 +92,43 @@ class TestPostprocess:
         boxes, scores, class_ids = results[0]
         assert len(boxes) == 0
 
+    def test_multi_label_keeps_every_class_over_threshold(self):
+        # An anchor scoring high on two classes yields two detections in
+        # multi-label mode, where single-label mode would keep only the best.
+        pred_bboxes = torch.tensor([[[10, 10, 100, 100]]], dtype=torch.float32)
+        pred_scores = torch.zeros(1, 1, 80)
+        pred_scores[0, 0, 0] = 0.9
+        pred_scores[0, 0, 7] = 0.8
+
+        multi = postprocess(pred_bboxes, pred_scores, conf_threshold=0.5, iou_threshold=0.99, multi_label=True)
+        single = postprocess(pred_bboxes, pred_scores, conf_threshold=0.5, iou_threshold=0.99, multi_label=False)
+
+        assert set(multi[0][2].tolist()) == {0, 7}
+        assert single[0][2].tolist() == [0]
+
+    def test_multi_label_empty_after_filter(self):
+        pred_bboxes = torch.randn(1, 10, 4)
+        pred_scores = torch.full((1, 10, 80), 0.01)
+        boxes, scores, class_ids = postprocess(
+            pred_bboxes, pred_scores, conf_threshold=0.5, multi_label=True
+        )[0]
+        assert len(boxes) == 0
+        assert class_ids.dtype == torch.long
+
+    def test_top_k_caps_candidates_before_nms(self):
+        # 2000 non-overlapping boxes, all above threshold: the 1024-candidate cap
+        # has to kick in before NMS, or NMS runs on the full set.
+        n = 2000
+        xs = torch.arange(n, dtype=torch.float32).unsqueeze(1) * 10
+        pred_bboxes = torch.cat([xs, xs, xs + 5, xs + 5], dim=1).unsqueeze(0)
+        pred_scores = torch.zeros(1, n, 80)
+        pred_scores[0, :, 0] = torch.linspace(0.51, 0.99, n)
+
+        boxes, scores, class_ids = postprocess(
+            pred_bboxes, pred_scores, conf_threshold=0.5, iou_threshold=0.5
+        )[0]
+        assert len(boxes) <= 1024
+
     def test_rescale_boxes(self):
         boxes = torch.tensor([[100, 100, 200, 200]], dtype=torch.float32)
         rescaled = rescale_boxes(boxes, scale=2.0, pad=(10, 20), orig_shape=(320, 320))
