@@ -1,31 +1,49 @@
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
 
+# `categories[*].labels` and the top-level `version-resolver` block are deprecated
+# and slated for removal; both are expressed as `when` conditions now. Behaviour
+# is unchanged — the same labels produce the same sections and the same bump.
 categories:
   - title: "New Features"
-    labels:
-      - "enhancement"
-      - "feature"
+    when:
+      - labels: ["enhancement", "feature"]
   - title: "Bug Fixes"
-    labels:
-      - "bug"
-      - "fix"
+    when:
+      - labels: ["bug", "fix"]
   - title: "Documentation"
-    labels:
-      - "docs"
-      - "documentation"
+    when:
+      - labels: ["docs", "documentation"]
   - title: "Maintenance"
-    labels:
-      - "chore"
-      - "maintenance"
-      - "dependencies"
+    when:
+      - labels: ["chore", "maintenance", "dependencies"]
+
+  # Version resolution. `type: version-resolver` contributes to $RESOLVED_VERSION
+  # without rendering a section of its own, and the highest matching increment
+  # wins. The trailing entry has no `when`, so it matches everything and acts as
+  # the fallback the old `default: patch` provided.
+  - type: "version-resolver"
+    semver-increment: "major"
+    when:
+      label: "major"
+  - type: "version-resolver"
+    semver-increment: "minor"
+    when:
+      label: "minor"
+  - type: "version-resolver"
+    semver-increment: "patch"
+    when:
+      label: "patch"
+  - type: "version-resolver"
+    semver-increment: "patch"
 
 change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
 change-title-escapes: '\<*_&'
 
 # Derive the labels from the Conventional Commits PR title, which `pr-title.yml`
-# enforces. Without this the version-resolver below never sees a label and every
-# release drafts as a patch — which is how v0.4.0, a `feat!`, drafted as one.
+# enforces. Without this the version-resolver categories never see a label and
+# every release drafts as a patch — which is how v0.4.0, a `feat!`, drafted as one.
+# This block is not deprecated and is unchanged by the migration.
 autolabeler:
   - label: "enhancement"
     title: '/^feat(\(.+\))?!?:/i'
@@ -36,9 +54,9 @@ autolabeler:
   - label: "chore"
     title: '/^(chore|ci|build|refactor|perf|test|style|revert)(\(.+\))?!?:/i'
 
-  # Version bump. While the package is 0.x there is no stability contract, so a
-  # breaking change takes the minor slot and `major` stays unused — see SemVer 4.
-  # At 1.0.0, move the `!` rule below onto the "major" label.
+  # While the package is 0.x there is no stability contract, so a breaking change
+  # takes the minor slot and `major` stays unused — see SemVer 4. At 1.0.0, point
+  # the `!` rule below at the "major" label instead.
   - label: "minor"
     title: '/^[a-z]+(\(.+\))?!:/i'
   - label: "minor"
@@ -48,19 +66,7 @@ autolabeler:
 
 # The `dev` -> `main` release pull request is deliberately not auto-labelled: it
 # aggregates a whole release, so which bump it deserves is a judgement call. Label
-# it by hand before merging, or the resolver falls through to `patch` below.
-
-version-resolver:
-  major:
-    labels:
-      - "major"
-  minor:
-    labels:
-      - "minor"
-  patch:
-    labels:
-      - "patch"
-  default: patch
+# it by hand before merging, or resolution falls through to the patch fallback.
 
 template: |
   ## Changes
