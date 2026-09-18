@@ -1,0 +1,40 @@
+# The squash-merge title comes from the PR title, so this — not the local
+# commit-msg hook — is what decides whether `main`'s history stays
+# Conventional Commits. It is also what release-drafter's autolabeler reads
+# to work out the version bump.
+name: PR Title
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            chore
+            ci
+            build
+            refactor
+            perf
+            test
+            style
+            revert
+            release
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" must start lowercase, e.g.
+            "feat: return supervision Detections", not "feat: Return ...".

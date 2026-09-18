@@ -1,5 +1,6 @@
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
+
 categories:
   - title: "New Features"
     labels:
@@ -18,8 +19,37 @@ categories:
       - "chore"
       - "maintenance"
       - "dependencies"
+
 change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
 change-title-escapes: '\<*_&'
+
+# Derive the labels from the Conventional Commits PR title, which `pr-title.yml`
+# enforces. Without this the version-resolver below never sees a label and every
+# release drafts as a patch — which is how v0.4.0, a `feat!`, drafted as one.
+autolabeler:
+  - label: "enhancement"
+    title: '/^feat(\(.+\))?!?:/i'
+  - label: "bug"
+    title: '/^fix(\(.+\))?!?:/i'
+  - label: "documentation"
+    title: '/^docs(\(.+\))?!?:/i'
+  - label: "chore"
+    title: '/^(chore|ci|build|refactor|perf|test|style|revert)(\(.+\))?!?:/i'
+
+  # Version bump. While the package is 0.x there is no stability contract, so a
+  # breaking change takes the minor slot and `major` stays unused — see SemVer 4.
+  # At 1.0.0, move the `!` rule below onto the "major" label.
+  - label: "minor"
+    title: '/^[a-z]+(\(.+\))?!:/i'
+  - label: "minor"
+    title: '/^feat(\(.+\))?!?:/i'
+  - label: "patch"
+    title: '/^(fix|docs|chore|ci|build|refactor|perf|test|style|revert)(\(.+\))?:/i'
+
+# The `dev` -> `main` release pull request is deliberately not auto-labelled: it
+# aggregates a whole release, so which bump it deserves is a judgement call. Label
+# it by hand before merging, or the resolver falls through to `patch` below.
+
 version-resolver:
   major:
     labels:
@@ -31,6 +61,7 @@ version-resolver:
     labels:
       - "patch"
   default: patch
+
 template: |
   ## Changes
 
