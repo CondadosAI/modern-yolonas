@@ -242,9 +242,18 @@ def train(
         loggers.append(L.pytorch.loggers.CSVLogger(output))
 
     # Callbacks ----------------------------------------------------------
+    # With COCO annotations validation reports mAP and never logs val/loss, so
+    # monitoring the wrong one makes Lightning raise at the first validation end.
+    monitor = "val/mAP" if val_ann_file else "val/loss"
     callbacks: list[Any] = [
         EMACallback(),
-        ModelCheckpoint(dirpath=output, save_last=True, monitor="val/loss", mode="min", save_top_k=1),
+        ModelCheckpoint(
+            dirpath=output,
+            save_last=True,
+            monitor=monitor,
+            mode="max" if val_ann_file else "min",
+            save_top_k=1,
+        ),
     ]
     if early_stopping_patience > 0:
         callbacks.append(
