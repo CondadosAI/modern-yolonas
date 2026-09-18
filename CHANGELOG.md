@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
 ### Changed — breaking
 - `Detector` now returns [`supervision.Detections`](https://supervision.roboflow.com/latest/detection/core/)
   instead of the project's own `Detection` dataclass. Field names follow supervision:
@@ -50,7 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `onnxscript` from the core dependencies; it is only needed by the ONNX exporter
   and remains in the `onnx` extra
 
-## [0.1.0] - 2025-06-01
 ## [0.1.0] - 2025-06-01
 
 ### Added
