@@ -2,6 +2,9 @@ version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    # Work lands on dev; main only takes pull requests from dev, so a bump aimed at
+    # main would be rejected by the PR source guard.
+    target-branch: "dev"
     schedule:
       interval: "monthly"
     commit-message:
@@ -14,6 +17,7 @@ updates:
 
   - package-ecosystem: "uv"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "monthly"
     commit-message:
