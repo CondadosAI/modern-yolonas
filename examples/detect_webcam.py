@@ -11,7 +11,7 @@ import argparse
 
 import cv2
 
-from modern_yolonas.inference.detect import Detector
+from modern_yolonas.inference.detect import YoloNASDetector
 
 
 def main():
@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Show FPS and inference speed overlay")
     args = parser.parse_args()
 
-    det = Detector(args.model, device=args.device, conf_threshold=args.conf)
+    det = YoloNASDetector(args.model, device=args.device, conf_threshold=args.conf)
 
     print("Press 'q' to quit")
     for _frame_idx, frame, detections in det.detect_video(source=args.camera):

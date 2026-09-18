@@ -135,7 +135,7 @@ class TestDetectIntegration:
 
             out_dir = Path(tmpdir) / "output"
 
-            with patch("modern_yolonas.inference.detect.Detector") as mock_cls:
+            with patch("modern_yolonas.inference.detect.YoloNASDetector") as mock_cls:
                 # Mock detector to avoid weight download
                 mock_det = mock_cls.return_value
                 mock_det.return_value = sv.Detections.empty()
@@ -161,7 +161,7 @@ class TestDetectIntegration:
 
             out_dir = Path(tmpdir) / "output"
 
-            with patch("modern_yolonas.inference.detect.Detector") as mock_cls:
+            with patch("modern_yolonas.inference.detect.YoloNASDetector") as mock_cls:
                 mock_det = mock_cls.return_value
                 mock_det.return_value = sv.Detections.empty()
                 mock_det.annotate.side_effect = lambda image, detections: image
