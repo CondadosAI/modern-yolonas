@@ -214,6 +214,16 @@ The detector throws the backbone's representation away and keeps four numbers pe
 `YoloNASEmbedder` keeps the representation — for image retrieval, near-duplicate search,
 clustering and re-identification. Nothing extra is trained: same weights, read one stage earlier.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/CondadosAI/modern-yolonas/main/docs/assets/embedding_space.png" alt="A query street scene, a second street scene at 0.83 cosine similarity, and a plate of pancakes at 0.54, plotted at their true angular distances" width="100%">
+</p>
+
+<p align="center">
+  <sub>Regenerate with <code>uv run examples/embedding_space_figure.py</code>. Gallery photos by
+  <a href="https://unsplash.com/photos/omi6C5fdiLA">Mike Petrucci</a> and
+  <a href="https://unsplash.com/photos/YpngzEY9ijY">Gabriel Gurrola</a>, CC0.</sub>
+</p>
+
 ```python
 import numpy as np
 from modern_yolonas import YoloNASEmbedder

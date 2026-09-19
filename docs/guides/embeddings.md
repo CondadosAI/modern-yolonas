@@ -8,6 +8,14 @@ dataset curation and re-identification all need.
 `YoloNASEmbedder` exposes it as a fixed-length vector. Nothing is trained or added —
 these are the same weights the detector uses, read one stage earlier.
 
+![A query street scene, a second street scene at 0.83 cosine similarity, and a plate of pancakes at 0.54, plotted at their true angular distances](../assets/embedding_space.png)
+
+One query and two gallery images, embedded and plotted at their true angular distances —
+with three points that is exact, not a projection. The street scene lands close to the
+query and the pancakes land far away, without anything in the pipeline having been told
+what either picture contains. Regenerate the figure with
+`uv run examples/embedding_space_figure.py`.
+
 ## Image embeddings
 
 ```python

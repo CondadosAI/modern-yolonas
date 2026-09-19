@@ -4051,6 +4051,8 @@ wandb = [
 [package.dev-dependencies]
 dev = [
     { name = "jupyter" },
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "mypy" },
     { name = "onnx" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -4104,6 +4106,7 @@ provides-extras = ["benchmark", "demo", "fiftyone", "onnx", "openvino", "serve",
 [package.metadata.requires-dev]
 dev = [
     { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "matplotlib", specifier = ">=3.7" },
     { name = "mypy", specifier = ">=1.0" },
     { name = "onnx", specifier = ">=1.14" },
     { name = "onnxruntime", marker = "python_full_version < '3.11'", specifier = ">=1.15,<1.24" },
