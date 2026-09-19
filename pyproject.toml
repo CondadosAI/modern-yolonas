@@ -62,9 +62,20 @@ Funding = "https://github.com/sponsors/Gabriellgpc"
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
 demo = ["gradio>=4.0"]
 onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.6.0"]
+# Same ONNX toolchain against onnxruntime's CUDA build. `onnxruntime` and
+# `onnxruntime-gpu` install the same `onnxruntime` module, so installing both leaves
+# whichever wheel landed last — usually the CPU one, which drops CUDAExecutionProvider
+# without warning. They are declared as conflicting extras below so uv refuses the
+# combination instead of resolving it into a silent CPU benchmark.
+onnx-gpu = ["onnx>=1.14", "onnxruntime-gpu>=1.20", "onnxscript>=0.6.0"]
+# TensorRT engine building. The wheel's CUDA major must match torch's (cu13 here); on
+# Jetson, TensorRT ships with JetPack and must not be installed from PyPI.
+tensorrt = ["onnx>=1.14", "onnxscript>=0.6.0", "tensorrt-cu13>=11.0"]
 benchmark = ["rf100vl>=0.1"]
 fiftyone = ["fiftyone>=1.0"]
-openvino = ["openvino>=2024.0"]
+# nncf rides along because INT8 is the reason most people reach for OpenVINO on a CPU
+# or an integrated GPU, and post-training quantization is where the speedup is.
+openvino = ["openvino>=2024.0", "nncf>=2.12"]
 wandb = ["wandb>=0.16"]
 tensorboard = ["tensorboard>=2.15"]
 
@@ -135,6 +146,9 @@ target-version = "py310"
 # never which rules apply. Widening this list is then a deliberate commit with
 # its own diff, rather than a side effect of dependabot.
 select = ["E4", "E7", "E9", "F"]
+
+[tool.uv]
+conflicts = [[{ extra = "onnx" }, { extra = "onnx-gpu" }]]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
