@@ -21,6 +21,9 @@ onnx = pytest.importorskip("onnx")
 
 @pytest.fixture(scope="module")
 def small_model():
+    # Seeded: an unseeded random init changes the activation magnitudes run to run,
+    # and with them every numerical tolerance below.
+    torch.manual_seed(0)
     return yolo_nas_s(pretrained=False, num_classes=4).eval()
 
 
@@ -171,9 +174,15 @@ def test_openvino_export_runs_and_matches_onnx(tiny_onnx, tmp_path, precision):
 
     assert boxes.shape == reference[0].shape
     assert scores.shape == reference[1].shape
-    # fp16 compresses the weights; OpenVINO still executes in fp32 on a CPU, so the
-    # tolerance is the weight rounding rather than a half-precision forward pass.
-    tolerance = 1e-4 if precision == "fp32" else 5e-2
+
+    # What this guards is that the conversion produced the same graph — a transposed
+    # output or a mislaid weight shows up as a difference of order 0.1 on scores that
+    # live in [0, 1]. It is not a claim that two independent FP32 implementations
+    # agree bit for bit: they use different kernels and summation orders, and an
+    # earlier 1e-4 bound passed here and failed on CI's Python 3.13 at 1.7e-4.
+    # fp16 additionally rounds the weights at conversion time, though OpenVINO still
+    # executes in fp32 on a CPU.
+    tolerance = 1e-3 if precision == "fp32" else 5e-2
     assert np.abs(reference[1] - scores).max() < tolerance
 
 
