@@ -21,6 +21,19 @@ from __future__ import annotations
 from enum import IntEnum
 
 
+#: Class id marking a COCO ``iscrowd`` region.
+#:
+#: Crowd annotations mark areas holding many instances that were never separated,
+#: so they are neither a trainable target nor background. Dropping them, as this
+#: repo used to, teaches the model that a street full of people is background.
+#:
+#: They travel as ordinary targets carrying this sentinel rather than as a sixth
+#: column, which keeps every transform unchanged -- each one treats column 0 as an
+#: opaque label and passes it through. The loss splits them out and uses them only
+#: to *ignore* the anchors they cover.
+CROWD_CLASS = -1
+
+
 class COCOClass(IntEnum):
     """Class ids of the 80-class COCO taxonomy.
 
