@@ -33,6 +33,7 @@ nav:
   - API Reference:
     - Detector: api/detector.md
     - Embeddings: api/embedder.md
+    - Tracking: api/tracker.md
     - YoloNAS Model: api/model.md
     - Training: api/training.md
     - Data: api/data.md
@@ -40,6 +41,7 @@ nav:
   - Guides:
     - Training: guides/training.md
     - Embeddings: guides/embeddings.md
+    - Tracking: guides/tracking.md
     - Training code review (2026-09-13): guides/training-review-2026-09-13.md
     - Export: guides/export.md
     - Extending: guides/extending.md

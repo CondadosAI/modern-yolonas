@@ -11,6 +11,7 @@ from modern_yolonas.inference.embed import (
     Task,
     YoloNASEmbedder,
 )
+from modern_yolonas.tracking import DeepHMSort
 from modern_yolonas.coco import COCOClass
 from modern_yolonas.inference.visualize import COCO_NAMES
 
@@ -54,6 +55,7 @@ __all__ = [
     "FeaturePooler",
     "Prediction",
     "Task",
+    "DeepHMSort",
     "COCOClass",
     "COCO_NAMES",
 ]

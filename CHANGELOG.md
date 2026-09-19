@@ -13,6 +13,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`yolonas track`, and `DeepHMSort`** — a built-in multi-object tracker, implementing
+  [Deep HM-SORT](https://arxiv.org/abs/2406.12081) on top of
+  [Deep-EIoU](https://arxiv.org/abs/2306.13074). The association cost is the harmonic mean
+  of the expansion-IoU distance and the appearance distance rather than their minimum, so a
+  lookalike cannot steal an id on appearance alone; and lost tracklets are kept for the
+  whole sequence, so an object that leaves the frame and returns is re-identified rather
+  than renumbered. No Kalman filter — expanded boxes stand in for a motion model.
+- `DeepHMSort.update_with_detections(detections) -> sv.Detections` matches
+  `sv.ByteTrack`'s contract, so supervision annotators, zones and traces work unchanged.
+  The appearance vectors are read from `detections.data["embedding"]`, which means any
+  `(N, D)` array — including a purpose-trained re-identification model's — can be
+  associated on, and that without the key the tracker degrades to motion-only.
+- `YoloNASDetector.track_video`, `track_video_to_file` and `annotate_tracks`. Tracking
+  reuses the per-object embeddings from the detection pass, so appearance-aware tracking
+  costs one forward pass per frame rather than two. Output is coloured by track id.
+- `modern_yolonas.tracking.matching` — expansion IoU, cosine distance, the harmonic-mean
+  fusion and the gated assignment, as plain numpy, usable on their own to diagnose a frame
+  that went wrong.
+- `scipy` is now a declared dependency (it was already present transitively via
+  `supervision` and `albumentations`); the tracker imports `linear_sum_assignment` directly.
+
+### Notes
+- **The paper's HOTA and ID-switch numbers are not inherited.** Its "Deep" is an OSNet
+  re-identification model trained on player crops; what this tracker gets is YOLO-NAS `c5`
+  features pooled per box — a by-product of detection, not a representation trained to tell
+  two people apart. The algorithm is implemented as described, but how well the appearance
+  cue performs has not been measured on a re-identification benchmark. `--fusion min` and
+  `--no-appearance` exist so the comparison can be run on your own footage.
+- Keeping every tracklet is a *sports* assumption (fixed camera, closed pitch). On
+  open-world footage the track pool grows with every object ever seen; `--max-lost` caps it.
+- Where the paper is ambiguous — its 0.5 "threshold below which we discard tracks" fits
+  both `new_track_threshold` and `proximity_threshold` — the reading is stated in the
+  docstring. Deep-EIoU's default for the latter is also 0.5, so both readings agree on the
+  shipped configuration.
+- A gated appearance cost falls back to the motion cost alone rather than being fused with
+  a placeholder. `harmonic_mean(d, 1) = 2d/(d+1) > d`, so fusing would charge a pair for
+  evidence it never had, and would do it on exactly the distant pairs the expansion
+  scale-up exists to reach — cancelling the scale-up. A test pins this.
+- `expand_boxes` grows each side by `e` times the box's own width or height, so the
+  expanded box is `(1 + 2e)` times as large. The reference Deep-EIoU implementation's
+  `expand()` adds half the *expanded* width per side rather than half the increase, making
+  its boxes `2(1 + e)` times as large for the same `e`; the values do not port across.
+
+### Added
 - **`yolonas export --target objects`** — a self-contained ONNX graph with NMS and ROI
   pooling inside it: image in, `detections [D, 7]` and `object_embedding [D, E]` out, with
   row *i* of the vectors describing row *i* of the boxes, plus the image-level `embedding`.

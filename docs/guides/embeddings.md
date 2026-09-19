@@ -205,3 +205,9 @@ runnable snippets.
 a dataset, projecting them to 2D with UMAP, and exploring the result interactively in the
 [FiftyOne](https://docs.voxel51.com/) App — the fastest way to see what the backbone
 considers similar, and to find the mislabelled and duplicated images in your data.
+
+## Tracking
+
+The per-object vectors are what the built-in tracker associates on — see the
+[tracking guide](tracking.md). Nothing extra runs: the same forward pass produces the
+boxes and the vectors that keep their ids stable.

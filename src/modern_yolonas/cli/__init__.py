@@ -12,10 +12,12 @@ from modern_yolonas.cli.export_cmd import export
 from modern_yolonas.cli.qat_cmd import qat
 from modern_yolonas.cli.quantize_cmd import quantize
 from modern_yolonas.cli.serve_cmd import serve
+from modern_yolonas.cli.track_cmd import track
 from modern_yolonas.cli.train_cmd import train
 
 app = typer.Typer(help="YOLO-NAS object detection.", no_args_is_help=True)
 app.command()(detect)
+app.command()(track)
 app.command()(train)
 app.command(name="export")(export)
 app.command(name="eval")(eval_cmd)

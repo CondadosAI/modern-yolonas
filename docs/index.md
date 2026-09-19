@@ -13,7 +13,8 @@ A clean, minimal Python reimplementation of [YOLO-NAS](https://github.com/Deci-A
 - **Drop-in pretrained weights** — loads super-gradients COCO checkpoints directly
 - **Simple API** — `YoloNASDetector("yolo_nas_s")` → call with an image → get `sv.Detections`
 - **Ecosystem native** — results are [supervision](https://github.com/roboflow/supervision) `Detections`: slice to filter, and plug into its annotators, trackers and zones
-- **CLI** — `yolonas detect`, `yolonas train`, `yolonas export`, `yolonas eval`
+- **Embeddings and tracking in the detection pass** — per-object vectors and Deep HM-SORT ids for one forward pass per frame
+- **CLI** — `yolonas detect`, `yolonas track`, `yolonas train`, `yolonas export`, `yolonas eval`
 - **ONNX / OpenVINO export** — including Frigate-compatible graph surgery
 - **Training** — full training loop with DDP, AMP, EMA, cosine LR
 - **All 3 variants** — S (19.05M), M (51.18M), L (66.98M)

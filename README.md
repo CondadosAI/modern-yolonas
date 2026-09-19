@@ -275,6 +275,40 @@ for layer choice and why the letterbox padding is excluded from pooling, and the
 [export guide](https://condadosai.github.io/modern-yolonas/guides/export/) for the
 `valid_region` input the exported graphs take.
 
+### Track objects across a video
+
+Tracking uses the same forward pass as detection — the per-object embeddings Deep HM-SORT
+associates on are the ones the detector already computed, so appearance-aware tracking
+costs one pass per frame rather than two.
+
+```python
+from modern_yolonas import YoloNASDetector
+from modern_yolonas.tracking import DeepHMSort
+
+detector = YoloNASDetector("yolo_nas_s")
+tracker = DeepHMSort()
+
+for frame_index, frame, detections in detector.track_video("match.mp4", tracker):
+    detections.tracker_id          # (N,) stable ids
+    detections.data["embedding"]   # (N, 768) the vectors it associated on
+
+# Or straight to a file, with ids drawn on
+stats = detector.track_video_to_file("match.mp4", "tracked.mp4")
+stats["unique_ids"]                # distinct objects the tracker believes it saw
+```
+
+[Deep HM-SORT](https://arxiv.org/abs/2406.12081) fuses the motion and appearance costs with
+their **harmonic mean** instead of taking the smaller one, which stops a lookalike from
+stealing an id on appearance alone, and it keeps every tracklet for the whole sequence so an
+object that leaves the frame and returns is re-identified rather than renumbered. It has no
+Kalman filter — [Deep-EIoU](https://arxiv.org/abs/2306.13074) drops it in favour of expanding
+the boxes before intersecting them.
+
+The appearance vectors are a by-product of detection, not a re-identification model trained
+to tell two people apart, so the paper's HOTA numbers are not inherited here. Any `(N, D)`
+array in `detections.data["embedding"]` is associated on, so a purpose-trained model drops
+straight in — see the [tracking guide](https://condadosai.github.io/modern-yolonas/guides/tracking/).
+
 ### Low-level model API
 
 ```python
@@ -302,6 +336,10 @@ yolonas detect --model yolo_nas_l --source images/ --output results/
 # Detect in video
 yolonas detect --model yolo_nas_s --source video.mp4 --output results/
 yolonas detect --model yolo_nas_m --source video.mp4 --skip-frames 2 --conf 0.3
+
+# Track objects across a video (Deep HM-SORT)
+yolonas track --source match.mp4 --classes 0
+yolonas track --source match.mp4 --fusion min --max-lost 300   # the Deep-EIoU baseline
 
 # Training
 yolonas train --model yolo_nas_s --data /path/to/dataset --format yolo --epochs 100
@@ -382,6 +420,8 @@ Or the standalone scripts in [`examples/`](https://github.com/CondadosAI/modern-
 - [`detect_image.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_image.py) — run detection on a single image
 - [`detect_video.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_video.py) — run detection on a video file
 - [`detect_webcam.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_webcam.py) — live webcam detection
+- [`track_video.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/track_video.py) — track a video with Deep HM-SORT and
+  report whether the ids are fragmenting
 
 ---
 
