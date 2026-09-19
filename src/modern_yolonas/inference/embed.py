@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import supervision as sv
 import torch
 
 from torch import Tensor
@@ -82,7 +83,7 @@ class Prediction:
         embedding: Present for :attr:`Task.EMBED`. ``(D,)`` float32.
     """
 
-    detections: "object | None" = None
+    detections: sv.Detections | None = None
     embedding: np.ndarray | None = None
 
 
@@ -417,7 +418,9 @@ class YoloNASEmbedder:
                 ``supervision.Detections.xyxy`` as it comes.
 
         Returns:
-            ``(K, embedding_dim)`` float32, in box order.
+            ``(K, embedding_dim)`` float32, in box order. Boxes are clipped to the
+            image first; one that clips to zero area samples nothing and comes back
+            as a zero vector rather than a NaN.
         """
         xyxy = np.asarray(xyxy, dtype=np.float32).reshape(-1, 4)
         if len(xyxy) == 0:
@@ -425,6 +428,15 @@ class YoloNASEmbedder:
 
         image = self._read(source)
         tensor, scale, pad = preprocess(image, self.input_size)
+
+        # Clip to the frame. Outside it there is only letterbox padding, so an
+        # unclipped box would be described partly by gray. This also makes these
+        # vectors identical to the ones `YoloNASDetector.predict` produces, whose
+        # boxes arrive already clipped by `rescale_boxes`.
+        height, width = image.shape[:2]
+        xyxy = xyxy.copy()
+        xyxy[:, [0, 2]] = xyxy[:, [0, 2]].clip(0, width)
+        xyxy[:, [1, 3]] = xyxy[:, [1, 3]].clip(0, height)
         features = self._forward(tensor)
 
         rois = boxes_to_rois(xyxy, scale, pad).to(self.device)

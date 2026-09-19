@@ -114,18 +114,23 @@ letterbox padding.
 
 `layers` takes any of `c2`, `c3`, `c4`, `c5` (backbone) and `p3`, `p4`, `p5` (neck).
 
-| Layer | Stride | Channels (S / M / L) | What it holds |
-|:---|---:|:---|:---|
-| `c2` | 4 | 96 / 96 / 96 | Edges, texture, colour |
-| `c3` | 8 | 192 / 192 / 192 | Parts and local patterns |
-| `c4` | 16 | 384 / 384 / 384 | Object-level structure |
-| **`c5`** | 32 | **768 / 768 / 768** | Scene semantics, post-SPP — **the default** |
-| `p3`–`p5` | 8–32 | 96–384 | Fused pyramid, tuned to localize |
+| Layer | Stride | Channels | What it holds |
+|:---|---:|---:|:---|
+| `c2` | 4 | 96 | Edges, texture, colour |
+| `c3` | 8 | 192 | Parts and local patterns |
+| `c4` | 16 | 384 | Object-level structure |
+| **`c5`** | 32 | **768** | Scene semantics, post-SPP — **the default** |
+| `p3` | 8 | 96 | Fused pyramid, tuned to localize |
+| `p4` | 16 | 192 | " |
+| `p5` | 32 | 384 | " |
 
-`c5` is the default because it is the most semantic representation the network builds,
-it is the one least entangled with box regression, and it is 768 channels on S, M and L
-alike — so the vector width does not change when you change variant. (Same width is not
-the same space: vectors from different variants are not comparable.)
+**These widths are the same on S, M and L.** The variants differ in depth and in the
+hidden channels inside a stage, not in what any stage outputs — so an embedding keeps its
+width when you change variant. (Same width is not the same space: vectors from different
+variants are not comparable.)
+
+`c5` is the default because it is the most semantic representation the network builds and
+the one least entangled with box regression.
 
 Concatenating gives a coarse-to-fine descriptor at the cost of width:
 

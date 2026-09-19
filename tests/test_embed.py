@@ -46,6 +46,23 @@ class TestForwardFeatures:
             features = model.forward_features(torch.zeros(1, 3, 640, 640))
         assert features[name].shape == (1, channels, 640 // stride, 640 // stride)
 
+    def test_widths_are_identical_across_variants(self):
+        """S, M and L differ in depth, not in what any stage outputs.
+
+        This is what lets `embedding_dim` stay 768 when you change variant, and it
+        is the claim the docs make, so it is pinned rather than assumed.
+        """
+        from modern_yolonas import yolo_nas_l, yolo_nas_m
+
+        x = torch.zeros(1, 3, 640, 640)
+        with torch.no_grad():
+            widths = [
+                {name: feature.shape[1] for name, feature in build(pretrained=False).eval().forward_features(x).items()}
+                for build in (yolo_nas_s, yolo_nas_m, yolo_nas_l)
+            ]
+        assert widths[0] == widths[1] == widths[2]
+        assert widths[0]["c5"] == 768
+
     def test_forward_is_unchanged(self, model):
         """Regression guard: ``forward_features`` must not disturb ``forward``.
 
@@ -164,6 +181,23 @@ class TestEmbedBoxes:
         image = _image()
         vectors = embedder.embed_boxes(image, np.array([[0, 0, 200, 200], [440, 160, 640, 360]]))
         assert not np.allclose(vectors[0], vectors[1], atol=1e-3)
+
+    def test_clips_boxes_to_the_frame(self, embedder):
+        """A caller-supplied box past the edge must be embedded from what is visible.
+
+        Outside the frame there is only letterbox padding, so an unclipped box would
+        be described partly by gray — and would disagree with `predict`, which gets
+        its boxes already clipped by `rescale_boxes`.
+        """
+        image = _image(360, 640)
+        inside = np.array([[100.0, 50.0, 640.0, 360.0]], dtype=np.float32)
+        overhanging = np.array([[100.0, 50.0, 5000.0, 4000.0]], dtype=np.float32)
+        assert np.allclose(embedder.embed_boxes(image, overhanging), embedder.embed_boxes(image, inside))
+
+    def test_fully_outside_box_is_zero_not_nan(self, embedder):
+        vectors = embedder.embed_boxes(_image(), np.array([[900.0, 900.0, 1000.0, 1000.0]]))
+        assert np.isfinite(vectors).all()
+        assert not vectors.any()
 
     def test_accepts_supervision_xyxy(self, embedder):
         """``sv.Detections.xyxy`` is float32 (K, 4) — it must pass through as is."""
