@@ -111,9 +111,12 @@ Measured 2026-09-19, yolo_nas_s from scratch, batch 16, `--recipe coco` at lr 2e
 
 **What this gate has already paid for.** In its first four minutes it found two COCO
 annotations with a zero-height box, which Albumentations rejects outright and which had been
-latent since the COCO recipe was written. Setting it up surfaced two more: `close_mosaic`
-equal to the epoch count disables mosaic from epoch zero, and the recipe's SGD learning rate
-had never been validated and converged at half the rate of anything else. None of the three
+latent since the COCO recipe was written. Setting it up surfaced two more.
+`close_mosaic_epochs` equal to the epoch count leaves exactly *one* epoch of mosaic: the
+condition `epoch >= max_epochs - close` is true from epoch zero, but that epoch's dataloader
+workers are already iterating when the callback fires, so only epoch one onward is affected.
+The log reports the configuration, never the effect. And the recipe's SGD learning rate had
+never been validated and converged at half the rate of anything else. None of the three
 raises an error on its own.
 
 
