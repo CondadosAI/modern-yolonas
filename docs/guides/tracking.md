@@ -5,6 +5,16 @@ It reuses the per-object embeddings the detector already computes, so tracking w
 appearance costs one forward pass per frame rather than the two a bolted-on
 re-identification model would need.
 
+<video src="../../assets/tracking_demo.mp4" autoplay loop muted playsinline width="100%">
+  Your browser does not support the video element.
+</video>
+
+<sub>Boxes are coloured by track id rather than by class, so an ID-swap shows as a colour
+change. 48 frames, 14 ids, 10 of them alive for at least half the clip. This clip is a
+legibility demo, not evidence: with this few well-separated people, <code>--fusion min</code>
+and <code>--no-appearance</code> produce identical output — see
+<a href="#where-the-embeddings-come-from-and-what-that-means">below</a>.</sub>
+
 ```bash
 yolonas track --source match.mp4 --classes 0
 ```
@@ -151,6 +161,14 @@ embedding, not about this one, and they are not inherited.** The fusion, the
 expansion scale-up and the retention are implemented as described; how well the
 appearance cue performs on your footage is an open question you should answer with
 your own data.
+
+A first data point, from the demo clip at the top of this page: `--fusion harmonic`,
+`--fusion min` and `--no-appearance` produce **identical** output on it — the same 14 ids
+with the same lifetimes. Fourteen well-separated pedestrians is a scene where motion
+settles every association on its own, so neither the appearance cue nor the choice of
+fusion ever gets a say. That is not a criticism of either; it is a reminder that the
+difference only appears where the paper says it does, in a crowd of lookalikes, and that
+you should check which regime your footage is in before tuning anything.
 
 Two ways to get a better answer:
 

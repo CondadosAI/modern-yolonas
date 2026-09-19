@@ -31,12 +31,26 @@ def main() -> None:
     parser.add_argument("--max-lost", type=int, default=None,
                         help="Frames a track may go unmatched. Unset keeps every tracklet.")
     parser.add_argument("--no-appearance", action="store_true", help="Associate on motion alone.")
+    parser.add_argument("--show-fps", action="store_true", help="Burn the per-frame time into the output.")
+    parser.add_argument("--text-scale", type=float, default=None,
+                        help="Shrink the id labels. Worth setting when a frame carries more than "
+                             "a handful of boxes and the labels start covering the objects.")
     args = parser.parse_args()
 
     keep = {int(c) for c in args.classes.split(",")} if args.classes else None
 
     detector = YoloNASDetector(args.model, device=args.device)
     tracker = DeepHMSort(fusion=args.fusion, max_lost=args.max_lost)
+
+    if args.text_scale is not None:
+        import supervision as sv
+
+        detector._track_label_annotator = sv.LabelAnnotator(
+            color_lookup=sv.ColorLookup.TRACK,
+            text_scale=args.text_scale,
+            text_padding=3,
+            text_thickness=1,
+        )
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
 
@@ -67,7 +81,7 @@ def main() -> None:
                 detections = detections[np.isin(detections.class_id, list(keep))]
 
             tracked = tracker.update_with_detections(detections)
-            writer.write(detector.annotate_tracks(frame, tracked, show_fps=True))
+            writer.write(detector.annotate_tracks(frame, tracked, show_fps=args.show_fps))
 
             frames += 1
             if tracked.tracker_id is not None:

@@ -277,6 +277,11 @@ for layer choice and why the letterbox padding is excluded from pooling, and the
 
 ### Track objects across a video
 
+![Deep HM-SORT tracking pedestrians across Shibuya crossing](docs/assets/tracking_demo.gif)
+
+<sub>Boxes are coloured by track id, not by class, so an ID-swap shows as a colour change.
+48 frames, 14 ids, 10 of them alive for at least half the clip.</sub>
+
 Tracking uses the same forward pass as detection — the per-object embeddings Deep HM-SORT
 associates on are the ones the detector already computed, so appearance-aware tracking
 costs one pass per frame rather than two.
