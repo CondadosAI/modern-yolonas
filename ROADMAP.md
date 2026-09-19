@@ -232,18 +232,24 @@ quantization guide outside the notebooks.
 ### Train our own COCO weights
 
 The pretrained weights this project downloads are Deci's, under the Super Gradients Model
-EULA — research use only. Training from scratch on COCO (whose annotations are CC-BY 4.0)
-would remove that restriction.
+EULA — research use only. Training our own removes the one thing that stops anyone shipping
+something built with this repo.
 
-Budget honestly: YOLO-NAS-S is ~34 GFLOPs forward at 640, so ~100 GFLOPs per training
-image. 118k images × 300 epochs is ~3.5 EFLOP, which at a realistic 20–40 achieved TFLOPS
-is 25–50 A100-hours for the *smallest* variant — $40–80 on a spot 4090-class GPU, several
-times that for L. Expect low-40s mAP rather than Deci's 47.5: that figure depends on
-Objects365 pretraining, pseudo-labelling and distillation, and Objects365's own licence
-makes it unavailable to us.
+**The plan is [docs/guides/apache-weights-plan.md](docs/guides/apache-weights-plan.md).**
+It carries the ground rules settled on 2026-09-19 — COCO only, Apache-2.0 external weights
+acceptable, DEIMv2 and EdgeCrafter excluded — the measured throughput on the training
+machine, and the gate that ends each stage before the next one spends days on it.
 
-Nothing should be rented until the two blockers above are closed, or the resulting number
-cannot be published.
+Two measurements shaped it. A frozen teacher costs 0.24 GiB and 36% of the step, so
+distillation fits on an 8 GB card but runs at 0.6x. And keeping a detector teacher in the
+loop gives 33 img/s, which is twelve days for 300 epochs — so pseudo-labelling runs offline,
+once, exactly as Deci did it.
+
+Expect low-to-mid 40s AP, not Deci's 47.5: that figure rests on Objects365, whose licence
+excludes us. The point of the run is the licence, not the number.
+
+Instance segmentation follows it and depends on it — a mask head trained on a EULA backbone
+inherits the problem the boxes just escaped.
 
 ## Later
 
