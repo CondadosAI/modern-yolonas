@@ -12,7 +12,7 @@ Every number is measured on the machine below. Nothing here is quoted.
 
 | hardware | fastest at 320 | fastest at 640 |
 |---|---|---|
-| dGPU | **0.91 ms** — TensorRT FP16 | **2.15 ms** — TensorRT FP16 |
+| dGPU | **1.17 ms** — TensorRT FP16 | **2.12 ms** — TensorRT FP16 |
 | iGPU | **6.83 ms** — OpenVINO INT8 | **12.04 ms** — OpenVINO INT8 |
 | CPU | **5.19 ms** — OpenVINO INT8 | **19.87 ms** — OpenVINO INT8 |
 
@@ -27,9 +27,9 @@ the reason in the last column; a negative one is a straight win.
 
 | choice | 320 | 640 | what it buys |
 |---|---:|---:|---|
-| TensorRT `--hardware-compatible` | +17% | +9% | an engine that loads on any sm_80+ GPU instead of only this one |
-| `--target end2end` vs torchvision NMS | +54% | +34% | one self-contained file, no Python in the inference path |
-| TensorRT FP16 vs FP32 | -60% | -61% | a speedup, not a trade — the AP cost is in the model table |
+| TensorRT `--hardware-compatible` | +16% | +8% | an engine that loads on any sm_80+ GPU instead of only this one |
+| `--target end2end` vs torchvision NMS | +24% | +35% | one self-contained file, no Python in the inference path |
+| TensorRT FP16 vs FP32 | -56% | -61% | a speedup, not a trade — the AP cost is in the model table |
 | OpenVINO INT8 vs FP32, CPU | -68% | -69% | also a speedup; whether it costs AP is measured separately |
 
 ## Per device
@@ -40,15 +40,15 @@ the reason in the last column; a negative one is a straight win.
 
 | runtime | precision | NMS | 320 ms | 640 ms |
 |---|---|---|---:|---:|
-| TensorRT | FP16 | external | 0.91 | 2.15 |
-| TensorRT ampere_plus | FP16 | external | 1.07 | 2.34 |
-| TensorRT | FP16 | torch | 1.26 | 2.48 |
-| TensorRT ampere_plus | FP16 | torch | 1.44 | 2.64 |
-| TensorRT | FP16 | graph | 1.94 | 3.33 |
-| TensorRT ampere_plus | FP16 | graph | 2.09 | 3.58 |
-| TensorRT | FP32 | external | 2.28 | 5.56 |
-| TensorRT | FP32 | graph | 2.55 | 6.14 |
-| TensorRT | FP32 | torch | 2.56 | 5.86 |
+| TensorRT | FP16 | external | 1.17 | 2.12 |
+| TensorRT ampere_plus | FP16 | external | 1.36 | 2.28 |
+| TensorRT | FP16 | torch | 1.55 | 2.41 |
+| TensorRT ampere_plus | FP16 | torch | 1.73 | 2.59 |
+| TensorRT | FP16 | graph | 1.92 | 3.27 |
+| TensorRT ampere_plus | FP16 | graph | 2.06 | 3.50 |
+| TensorRT | FP32 | graph | 2.52 | 6.03 |
+| TensorRT | FP32 | external | 2.65 | 5.47 |
+| TensorRT | FP32 | torch | 3.00 | 5.75 |
 | PyTorch | FP32 | external | 4.95 | 9.55 |
 | PyTorch | FP32 | torch | 5.24 | 9.90 |
 | PyTorch | FP16 | external | 5.49 | 6.25 |
@@ -132,12 +132,15 @@ idle card reports a clock it was not running at.
 
 | model | runtime | device | precision | NMS | input | median ms | FPS |
 |---|---|---|---|---|---:|---:|---:|
-| yolo_nas_l | TensorRT | dGPU native | FP16 | external | 320 | 2.18 | 457.9 |
-| yolo_nas_l | TensorRT | dGPU native | FP16 | torch | 320 | 2.29 | 437.2 |
-| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | external | 320 | 2.80 | 357.6 |
-| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | torch | 320 | 3.18 | 314.1 |
-| yolo_nas_l | TensorRT | dGPU native | FP32 | torch | 320 | 6.55 | 152.6 |
-| yolo_nas_l | TensorRT | dGPU native | FP32 | external | 320 | 6.58 | 152.0 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | external | 320 | 1.94 | 515.3 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | torch | 320 | 2.28 | 439.1 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | graph | 320 | 2.38 | 420.0 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | external | 320 | 2.45 | 409.0 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | torch | 320 | 2.72 | 368.3 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | graph | 320 | 3.07 | 326.2 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | external | 320 | 6.12 | 163.5 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | graph | 320 | 6.28 | 159.2 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | torch | 320 | 6.37 | 157.1 |
 | yolo_nas_l | PyTorch | dGPU | FP16 | external | 320 | 6.80 | 147.0 |
 | yolo_nas_l | PyTorch | dGPU | FP16 | torch | 320 | 6.97 | 143.4 |
 | yolo_nas_l | PyTorch | dGPU | FP32 | external | 320 | 8.30 | 120.5 |
@@ -153,14 +156,17 @@ idle card reports a clock it was not running at.
 | yolo_nas_l | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP16 | external | 320 | 101.48 | 9.9 |
 | yolo_nas_l | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP32 | external | 320 | 102.38 | 9.8 |
 | yolo_nas_l | PyTorch | CPU | FP32 | external | 320 | 107.92 | 9.3 |
-| yolo_nas_l | TensorRT | dGPU native | FP16 | external | 640 | 5.55 | 180.1 |
-| yolo_nas_l | TensorRT | dGPU native | FP16 | torch | 640 | 5.69 | 175.9 |
-| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | external | 640 | 6.08 | 164.5 |
-| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | torch | 640 | 6.21 | 161.1 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | external | 640 | 5.41 | 184.8 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | torch | 640 | 5.69 | 175.8 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | graph | 640 | 5.84 | 171.1 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | external | 640 | 5.97 | 167.5 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | torch | 640 | 6.26 | 159.8 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | graph | 640 | 6.60 | 151.6 |
 | yolo_nas_l | PyTorch | dGPU | FP16 | external | 640 | 14.26 | 70.1 |
 | yolo_nas_l | PyTorch | dGPU | FP16 | torch | 640 | 14.56 | 68.7 |
-| yolo_nas_l | TensorRT | dGPU native | FP32 | external | 640 | 17.03 | 58.7 |
-| yolo_nas_l | TensorRT | dGPU native | FP32 | torch | 640 | 17.46 | 57.3 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | external | 640 | 16.84 | 59.4 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | graph | 640 | 17.15 | 58.3 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | torch | 640 | 17.18 | 58.2 |
 | yolo_nas_l | PyTorch | dGPU | FP32 | external | 640 | 23.72 | 42.2 |
 | yolo_nas_l | PyTorch | dGPU | FP32 | torch | 640 | 24.56 | 40.7 |
 | yolo_nas_l | OpenVINO | Intel(R) Iris(R) Xe Graphics (iGPU) | INT8 | external | 640 | 32.07 | 31.2 |
@@ -174,12 +180,15 @@ idle card reports a clock it was not running at.
 | yolo_nas_l | PyTorch | CPU | FP32 | external | 640 | 320.75 | 3.1 |
 | yolo_nas_l | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP16 | external | 640 | 370.70 | 2.7 |
 | yolo_nas_l | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP32 | external | 640 | 371.70 | 2.7 |
-| yolo_nas_m | TensorRT | dGPU native | FP16 | external | 320 | 1.76 | 566.8 |
-| yolo_nas_m | TensorRT | dGPU native | FP16 | torch | 320 | 2.15 | 465.2 |
-| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | external | 320 | 2.25 | 444.3 |
-| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | torch | 320 | 2.63 | 380.8 |
-| yolo_nas_m | TensorRT | dGPU native | FP32 | external | 320 | 4.79 | 208.8 |
-| yolo_nas_m | TensorRT | dGPU native | FP32 | torch | 320 | 5.28 | 189.4 |
+| yolo_nas_m | TensorRT | dGPU native | FP16 | external | 320 | 1.50 | 665.9 |
+| yolo_nas_m | TensorRT | dGPU native | FP16 | torch | 320 | 1.79 | 557.8 |
+| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | external | 320 | 1.92 | 520.1 |
+| yolo_nas_m | TensorRT | dGPU native | FP16 | graph | 320 | 2.04 | 490.6 |
+| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | torch | 320 | 2.22 | 451.3 |
+| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | graph | 320 | 2.58 | 388.1 |
+| yolo_nas_m | TensorRT | dGPU native | FP32 | external | 320 | 4.72 | 212.0 |
+| yolo_nas_m | TensorRT | dGPU native | FP32 | graph | 320 | 4.96 | 201.4 |
+| yolo_nas_m | TensorRT | dGPU native | FP32 | torch | 320 | 4.98 | 201.0 |
 | yolo_nas_m | PyTorch | dGPU | FP16 | external | 320 | 5.66 | 176.6 |
 | yolo_nas_m | PyTorch | dGPU | FP16 | torch | 320 | 5.94 | 168.2 |
 | yolo_nas_m | PyTorch | dGPU | FP32 | torch | 320 | 6.97 | 143.4 |
@@ -195,14 +204,17 @@ idle card reports a clock it was not running at.
 | yolo_nas_m | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP16 | external | 320 | 74.73 | 13.4 |
 | yolo_nas_m | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP32 | external | 320 | 75.30 | 13.3 |
 | yolo_nas_m | PyTorch | CPU | FP32 | external | 320 | 79.69 | 12.5 |
-| yolo_nas_m | TensorRT | dGPU native | FP16 | external | 640 | 4.35 | 230.0 |
-| yolo_nas_m | TensorRT | dGPU native | FP16 | torch | 640 | 4.41 | 226.6 |
-| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | external | 640 | 4.74 | 210.8 |
-| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | torch | 640 | 4.82 | 207.6 |
+| yolo_nas_m | TensorRT | dGPU native | FP16 | external | 640 | 4.19 | 238.6 |
+| yolo_nas_m | TensorRT | dGPU native | FP16 | torch | 640 | 4.44 | 225.2 |
+| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | external | 640 | 4.60 | 217.3 |
+| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | torch | 640 | 4.85 | 206.2 |
+| yolo_nas_m | TensorRT | dGPU native | FP16 | graph | 640 | 5.18 | 193.1 |
+| yolo_nas_m | TensorRT | dGPU ampere_plus | FP16 | graph | 640 | 5.73 | 174.5 |
 | yolo_nas_m | PyTorch | dGPU | FP16 | external | 640 | 11.30 | 88.5 |
 | yolo_nas_m | PyTorch | dGPU | FP16 | torch | 640 | 11.57 | 86.4 |
-| yolo_nas_m | TensorRT | dGPU native | FP32 | external | 640 | 12.82 | 78.0 |
-| yolo_nas_m | TensorRT | dGPU native | FP32 | torch | 640 | 13.36 | 74.8 |
+| yolo_nas_m | TensorRT | dGPU native | FP32 | external | 640 | 12.69 | 78.8 |
+| yolo_nas_m | TensorRT | dGPU native | FP32 | torch | 640 | 13.11 | 76.3 |
+| yolo_nas_m | TensorRT | dGPU native | FP32 | graph | 640 | 13.55 | 73.8 |
 | yolo_nas_m | PyTorch | dGPU | FP32 | external | 640 | 18.00 | 55.6 |
 | yolo_nas_m | PyTorch | dGPU | FP32 | torch | 640 | 18.52 | 54.0 |
 | yolo_nas_m | OpenVINO | Intel(R) Iris(R) Xe Graphics (iGPU) | INT8 | external | 640 | 25.49 | 39.2 |
@@ -216,15 +228,15 @@ idle card reports a clock it was not running at.
 | yolo_nas_m | PyTorch | CPU | FP32 | external | 640 | 224.41 | 4.5 |
 | yolo_nas_m | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP16 | external | 640 | 272.39 | 3.7 |
 | yolo_nas_m | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP32 | external | 640 | 273.64 | 3.7 |
-| yolo_nas_s | TensorRT | dGPU native | FP16 | external | 320 | 0.91 | 1102.2 |
-| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | external | 320 | 1.07 | 938.7 |
-| yolo_nas_s | TensorRT | dGPU native | FP16 | torch | 320 | 1.26 | 796.5 |
-| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | torch | 320 | 1.44 | 696.6 |
-| yolo_nas_s | TensorRT | dGPU native | FP16 | graph | 320 | 1.94 | 515.6 |
-| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | graph | 320 | 2.09 | 478.5 |
-| yolo_nas_s | TensorRT | dGPU native | FP32 | external | 320 | 2.28 | 437.8 |
-| yolo_nas_s | TensorRT | dGPU native | FP32 | graph | 320 | 2.55 | 392.4 |
-| yolo_nas_s | TensorRT | dGPU native | FP32 | torch | 320 | 2.56 | 390.0 |
+| yolo_nas_s | TensorRT | dGPU native | FP16 | external | 320 | 1.17 | 855.1 |
+| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | external | 320 | 1.36 | 737.4 |
+| yolo_nas_s | TensorRT | dGPU native | FP16 | torch | 320 | 1.55 | 645.1 |
+| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | torch | 320 | 1.73 | 579.6 |
+| yolo_nas_s | TensorRT | dGPU native | FP16 | graph | 320 | 1.92 | 521.7 |
+| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | graph | 320 | 2.06 | 484.8 |
+| yolo_nas_s | TensorRT | dGPU native | FP32 | graph | 320 | 2.52 | 396.9 |
+| yolo_nas_s | TensorRT | dGPU native | FP32 | external | 320 | 2.65 | 377.6 |
+| yolo_nas_s | TensorRT | dGPU native | FP32 | torch | 320 | 3.00 | 333.2 |
 | yolo_nas_s | PyTorch | dGPU | FP32 | external | 320 | 4.95 | 202.0 |
 | yolo_nas_s | OpenVINO | 12th Gen Intel(R) Core(TM) i7-12700H | INT8 | external | 320 | 5.19 | 192.6 |
 | yolo_nas_s | PyTorch | dGPU | FP32 | torch | 320 | 5.24 | 190.9 |
@@ -247,15 +259,15 @@ idle card reports a clock it was not running at.
 | yolo_nas_s | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP16 | external | 320 | 28.88 | 34.6 |
 | yolo_nas_s | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP32 | external | 320 | 29.02 | 34.5 |
 | yolo_nas_s | PyTorch | CPU | FP32 | external | 320 | 33.57 | 29.8 |
-| yolo_nas_s | TensorRT | dGPU native | FP16 | external | 640 | 2.15 | 464.5 |
-| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | external | 640 | 2.34 | 427.1 |
-| yolo_nas_s | TensorRT | dGPU native | FP16 | torch | 640 | 2.48 | 402.9 |
-| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | torch | 640 | 2.64 | 378.1 |
-| yolo_nas_s | TensorRT | dGPU native | FP16 | graph | 640 | 3.33 | 300.2 |
-| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | graph | 640 | 3.58 | 279.5 |
-| yolo_nas_s | TensorRT | dGPU native | FP32 | external | 640 | 5.56 | 179.7 |
-| yolo_nas_s | TensorRT | dGPU native | FP32 | torch | 640 | 5.86 | 170.5 |
-| yolo_nas_s | TensorRT | dGPU native | FP32 | graph | 640 | 6.14 | 162.8 |
+| yolo_nas_s | TensorRT | dGPU native | FP16 | external | 640 | 2.12 | 471.7 |
+| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | external | 640 | 2.28 | 438.7 |
+| yolo_nas_s | TensorRT | dGPU native | FP16 | torch | 640 | 2.41 | 414.3 |
+| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | torch | 640 | 2.59 | 385.7 |
+| yolo_nas_s | TensorRT | dGPU native | FP16 | graph | 640 | 3.27 | 305.8 |
+| yolo_nas_s | TensorRT | dGPU ampere_plus | FP16 | graph | 640 | 3.50 | 285.4 |
+| yolo_nas_s | TensorRT | dGPU native | FP32 | external | 640 | 5.47 | 182.9 |
+| yolo_nas_s | TensorRT | dGPU native | FP32 | torch | 640 | 5.75 | 173.8 |
+| yolo_nas_s | TensorRT | dGPU native | FP32 | graph | 640 | 6.03 | 165.9 |
 | yolo_nas_s | PyTorch | dGPU | FP16 | external | 640 | 6.25 | 160.0 |
 | yolo_nas_s | PyTorch | dGPU | FP16 | torch | 640 | 6.59 | 151.8 |
 | yolo_nas_s | PyTorch | dGPU | FP32 | external | 640 | 9.55 | 104.7 |

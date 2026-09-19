@@ -7,12 +7,12 @@
 <rect x="652" y="26" width="10" height="10" rx="2" fill="#eb6834"/>
 <text x="668" y="35" font-size="11">640x640</text>
 <text x="0" y="78.0" font-size="12" font-weight="600">dGPU</text>
-<rect x="92" y="46" width="19.6" height="26" rx="4" fill="#2a78d6"/>
-<text x="119.6" y="63.0" font-size="11" font-weight="600">0.91 ms</text>
-<text x="174.4" y="63.0" font-size="10.5" class="m">TensorRT FP16</text>
-<rect x="92" y="76" width="46.5" height="26" rx="4" fill="#eb6834"/>
-<text x="146.5" y="93.0" font-size="11" font-weight="600">2.15 ms</text>
-<text x="201.3" y="93.0" font-size="10.5" class="m">TensorRT FP16</text>
+<rect x="92" y="46" width="25.3" height="26" rx="4" fill="#2a78d6"/>
+<text x="125.3" y="63.0" font-size="11" font-weight="600">1.17 ms</text>
+<text x="180.1" y="63.0" font-size="10.5" class="m">TensorRT FP16</text>
+<rect x="92" y="76" width="45.8" height="26" rx="4" fill="#eb6834"/>
+<text x="145.8" y="93.0" font-size="11" font-weight="600">2.12 ms</text>
+<text x="200.6" y="93.0" font-size="10.5" class="m">TensorRT FP16</text>
 <text x="0" y="156.0" font-size="12" font-weight="600">iGPU</text>
 <rect x="92" y="124" width="147.6" height="26" rx="4" fill="#2a78d6"/>
 <text x="247.6" y="141.0" font-size="11" font-weight="600">6.83 ms</text>

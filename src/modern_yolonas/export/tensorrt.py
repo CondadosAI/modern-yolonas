@@ -255,8 +255,18 @@ class EngineRunner:
                 self.context.set_tensor_address(name, buffer.data_ptr())
                 buffers[name] = buffer
 
+        # Cross-stream hazard. The input tensor and the output buffers were produced
+        # by torch on its current stream, and the caching allocator associates them
+        # with that stream; enqueueing on a different one without ordering the two
+        # lets TensorRT read an input whose copy has not landed. It does not fail —
+        # it returns plausible, slightly wrong numbers.
+        current = torch.cuda.current_stream(self.device)
+        self.stream.wait_stream(current)
         if not self.context.execute_async_v3(self.stream.cuda_stream):
             raise RuntimeError("TensorRT execution failed")
+        current.wait_stream(self.stream)
+        for tensor in [images, *buffers.values()]:
+            tensor.record_stream(self.stream)
         self.stream.synchronize()
 
         outputs = []

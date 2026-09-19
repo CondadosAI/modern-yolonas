@@ -119,7 +119,8 @@ Three things about TensorRT 11 that shape this command:
 `--hardware-compatible` builds with `HardwareCompatibilityLevel.AMPERE_PLUS`, so the
 engine loads on any Ampere-or-newer GPU rather than on one card. That is what makes
 publishing a prebuilt engine possible at all, and it is not free: measured on an
-RTX 3060 Laptop with YOLO-NAS-S, it costs 19% at 320 and 10% at 640. `--version-compatible`
+RTX 3060 Laptop with YOLO-NAS-S, it costs 16% at 320 and 8% at 640, and no accuracy
+(47.31 AP against 47.33 for a natively built FP32 engine). `--version-compatible`
 is separate and lets the engine load under a later TensorRT release; it has its own
 cost, which is why the two are separate flags rather than one.
 
@@ -130,6 +131,21 @@ from modern_yolonas.export import EngineRunner
 
 runner = EngineRunner("yolo_nas_s_320_fp16.engine")
 boxes, scores = runner(images)  # images: CUDA tensor [1, 3, 320, 320]
+```
+
+`EngineRunner` binds torch's own CUDA tensors into TensorRT, which avoids a second
+allocator and a second CUDA context. It runs on a stream of its own — enqueueing on
+the default stream makes TensorRT insert extra synchronizations — and **orders that
+stream against torch's** before and after the call. Skipping that ordering is not a
+performance detail: the caching allocator associates a tensor with the stream that
+produced it, so TensorRT can read an input whose copy has not landed. It does not
+fail. It returns plausible numbers that cost 16 AP, which is how this was found.
+
+An engine's accuracy is worth checking rather than assuming:
+
+```bash
+uv run examples/runtime_accuracy.py --coco ~/datasets/coco --input-size 640 \
+    --tensorrt yolo_nas_s_640_fp16.engine
 ```
 
 ## NMS inside the graph
@@ -144,8 +160,8 @@ yolonas export --model yolo_nas_s --format onnx --target end2end \
 ```
 
 **This does not make inference faster, and the measurement says so.** On an RTX 3060
-Laptop, YOLO-NAS-S at 320 in TensorRT FP16: 0.91 ms for the model alone, 1.28 ms for
-the model plus torchvision's `batched_nms`, and 1.95 ms with NMS in the graph. ONNX's
+Laptop, YOLO-NAS-S at 320 in TensorRT FP16: 1.17 ms for the model alone, 1.55 ms for
+the model plus torchvision's `batched_nms`, and 1.92 ms with NMS in the graph. ONNX's
 NonMaxSuppression is simply slower than torchvision's. What `end2end` buys is
 deployment shape: one file, one call, no Python in the inference path, and no
 megabyte of raw tensors crossing back per frame in a pipeline that does copy them.

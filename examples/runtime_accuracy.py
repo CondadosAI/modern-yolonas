@@ -17,6 +17,7 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 
 
@@ -54,10 +55,45 @@ class OnnxAdapter(_Adapter):
         from modern_yolonas.export import onnx_session
 
         self.session = onnx_session(path, provider)
+        spec = self.session.get_inputs()[0]
+        # An FP16 graph wants FP16 input; ORT refuses a float32 feed rather than casting.
+        self.dtype = "float16" if spec.type == "tensor(float16)" else "float32"
+        # A graph exported with a static batch has to be unrolled, as the evaluator
+        # batches by 16 and the artifacts for TensorRT are all fixed at 1.
+        self.static_batch = isinstance(spec.shape[0], int)
+
+    def _run(self, batch):
+        return self.session.run(None, {"images": batch.astype(self.dtype)})
 
     def __call__(self, images: torch.Tensor):
-        boxes, scores = self.session.run(None, {"images": images.cpu().numpy()})
-        return torch.from_numpy(boxes).to(images.device), torch.from_numpy(scores).to(images.device)
+        array = images.cpu().numpy()
+        if self.static_batch:
+            outputs = [self._run(array[i : i + 1]) for i in range(array.shape[0])]
+            boxes = np.concatenate([o[0] for o in outputs])
+            scores = np.concatenate([o[1] for o in outputs])
+        else:
+            boxes, scores = self._run(array)
+        return (torch.from_numpy(boxes).float().to(images.device),
+                torch.from_numpy(scores).float().to(images.device))
+
+
+class HalfAdapter(_Adapter):
+    """The PyTorch model with an FP16 graph, fed FP16 input.
+
+    This is the control for a TensorRT FP16 engine: TensorRT 11 takes its precision
+    from the ONNX, so an engine built from a half graph and this run the same
+    arithmetic. If both lose the same accuracy, the graph is the cause and the
+    runtime is not.
+    """
+
+    def __init__(self, model, device: str):
+        self.model = model.to(device).eval().half()
+        self.device = device
+
+    def __call__(self, images: torch.Tensor):
+        with torch.no_grad():
+            boxes, scores = self.model(images.to(self.device).half())
+        return boxes.float(), scores.float()
 
 
 class TensorRTAdapter(_Adapter):
@@ -65,7 +101,7 @@ class TensorRTAdapter(_Adapter):
         from modern_yolonas.export import EngineRunner
 
         self.runner = EngineRunner(path)
-        self.dtype = torch.float16 if half else torch.float32
+        self.dtype = torch.float16 if self.runner._torch_dtype(self.runner.input_name) == torch.float16 else torch.float32
 
     def __call__(self, images: torch.Tensor):
         # Built at batch 1, so the evaluator's batch is unrolled the same way.
@@ -89,7 +125,10 @@ def main():
     parser.add_argument("--onnx", default=None, help="Path to an .onnx.")
     parser.add_argument("--onnx-provider", default="cpu")
     parser.add_argument("--tensorrt", default=None, help="Path to a .engine.")
-    parser.add_argument("--torch-model", default=None, help="Variant name, as the FP32 reference.")
+    parser.add_argument("--torch-model", default=None, help="Variant name, as the reference.")
+    parser.add_argument("--torch-half", action="store_true",
+                        help="Run the reference in FP16, to separate the numerics of a half graph "
+                             "from the runtime that executes it.")
     parser.add_argument("--output", default=None, help="Append the result to this JSON.")
     args = parser.parse_args()
 
@@ -111,8 +150,10 @@ def main():
         import modern_yolonas
         from modern_yolonas.export import fuse_for_inference
 
-        model, label, device = fuse_for_inference(getattr(modern_yolonas, args.torch_model)(pretrained=True)), \
-            f"pytorch:{args.torch_model}", args.device
+        model = fuse_for_inference(getattr(modern_yolonas, args.torch_model)(pretrained=True))
+        label, device = f"pytorch:{args.torch_model}", args.device
+        if args.torch_half:
+            model, label = HalfAdapter(model, device), f"pytorch-fp16:{args.torch_model}"
     else:
         raise SystemExit("pass one of --openvino / --onnx / --tensorrt / --torch-model")
 
