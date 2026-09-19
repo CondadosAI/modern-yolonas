@@ -192,6 +192,71 @@ class FeaturePooler:
             ]
         )
 
+    def pool_images_masked(self, features: dict[str, Tensor], regions: Tensor, canvas: int) -> Tensor:
+        """:meth:`pool_images`, written so it can be traced and exported.
+
+        Same result, different mechanics. :meth:`pool_images` slices each sample's
+        map with Python ``int`` bounds, which is data-dependent control flow that
+        ``torch.export`` cannot see through. This builds a boolean mask from the
+        region tensor and reduces over it instead, so every step is an op on
+        tensors and the whole thing survives ONNX export.
+
+        The bounds use integer arithmetic — ``(left * width) // canvas`` rather
+        than ``floor(left / stride)`` — because float division at exact multiples
+        is where the two implementations would drift apart. ``test_embed.py`` pins
+        them to each other.
+
+        Args:
+            features: Output of :meth:`YoloNAS.forward_features`.
+            regions: ``[B, 4]`` int64 ``(left, top, right, bottom)`` in canvas
+                pixels — :func:`valid_region` per sample, stacked.
+            canvas: Side length of the letterboxed input.
+
+        Returns:
+            ``[B, D]``.
+        """
+        pooled = []
+        for name in self.layers:
+            feature = features[name]
+            height, width = feature.shape[-2], feature.shape[-1]
+            mask = self._region_mask(regions, height, width, canvas, feature.device)
+
+            if self.pooling == "avg":
+                total = (feature * mask.unsqueeze(1)).sum(dim=(2, 3))
+                count = mask.sum(dim=(1, 2)).unsqueeze(1).to(feature.dtype)
+                pooled.append(total / count)
+            else:
+                floor = torch.finfo(feature.dtype).min
+                pooled.append(feature.masked_fill(~mask.unsqueeze(1), floor).amax(dim=(2, 3)))
+        return torch.cat(pooled, dim=1)
+
+    @staticmethod
+    def _region_mask(regions: Tensor, height: int, width: int, canvas: int, device) -> Tensor:
+        """``[B, H, W]`` true where a sample's real pixels land on this level.
+
+        Mirrors the bounds :meth:`_pool_valid` slices with, including its clamps —
+        which exist so rounding can never produce an empty crop on a coarse map.
+        """
+        regions = regions.to(device=device, dtype=torch.long)
+        left, top, right, bottom = (regions[:, i : i + 1] for i in range(4))
+
+        # floor(coord / stride) and ceil(coord / stride), in exact integer terms.
+        x0 = (left * width) // canvas
+        y0 = (top * height) // canvas
+        x1 = -((-right * width) // canvas)
+        y1 = -((-bottom * height) // canvas)
+
+        x0 = x0.clamp(0, width - 1)
+        y0 = y0.clamp(0, height - 1)
+        x1 = torch.maximum(x1, x0 + 1).clamp(max=width)
+        y1 = torch.maximum(y1, y0 + 1).clamp(max=height)
+
+        cols = torch.arange(width, device=device).unsqueeze(0)
+        rows = torch.arange(height, device=device).unsqueeze(0)
+        mask_x = (cols >= x0) & (cols < x1)
+        mask_y = (rows >= y0) & (rows < y1)
+        return mask_y.unsqueeze(2) & mask_x.unsqueeze(1)
+
     def pool_rois(self, features: dict[str, Tensor], rois: Tensor, canvas: int) -> Tensor:
         """One vector per box, cropped out of the feature maps with ``roi_align``.
 

@@ -156,6 +156,11 @@ dev = [
     # the notebooks that do it.
     "roboflow>=1.2.13",
     "jupyter>=1.1.1",
+    # So CI actually runs tests/test_export.py rather than skipping it. These
+    # mirror the [onnx] extra; without them the export graphs ship unverified.
+    "onnx>=1.14",
+    "onnxruntime>=1.15",
+    "onnxscript>=0.6.0",
 ]
 docs = [
     "mkdocs-material>=9.5",

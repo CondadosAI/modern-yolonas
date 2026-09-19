@@ -256,8 +256,13 @@ Raw feature maps, if you want to pool them yourself:
 features = model.forward_features(x)   # c2 c3 c4 c5 (backbone) + p3 p4 p5 (neck)
 ```
 
+Both shapes export to ONNX — `--target embedding` and `--target combined`, the latter
+emitting `pred_bboxes`, `pred_scores` and `embedding` from one graph.
+
 See the [embeddings guide](https://condadosai.github.io/modern-yolonas/guides/embeddings/)
-for layer choice and why the letterbox padding is excluded from pooling.
+for layer choice and why the letterbox padding is excluded from pooling, and the
+[export guide](https://condadosai.github.io/modern-yolonas/guides/export/) for the
+`valid_region` input the exported graphs take.
 
 ### Low-level model API
 
@@ -296,6 +301,10 @@ yolonas eval --model yolo_nas_s --data /path/to/coco --split val2017
 # Export (needs the extras: pip install "modern-yolonas[onnx]" / [openvino])
 yolonas export --model yolo_nas_s --format onnx --output model.onnx
 yolonas export --model yolo_nas_s --format openvino --output model.xml
+
+# Export feature embeddings, alone or beside the detections
+yolonas export --model yolo_nas_s --target embedding --output embedding.onnx
+yolonas export --model yolo_nas_s --target combined --output combined.onnx
 
 # Export for Frigate (embeds preprocessing + NMS in the graph)
 yolonas export --model yolo_nas_s --format onnx --target frigate

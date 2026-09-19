@@ -170,6 +170,22 @@ value. Centre the vectors over your gallery before thresholding if you need cali
 distances. For fine-grained instance retrieval, a purpose-trained embedding model will
 beat these; the advantage here is that you are already running this backbone.
 
+## Deploying
+
+Both shapes of this export to ONNX:
+
+```bash
+yolonas export --model yolo_nas_s --target embedding --output embedding.onnx
+yolonas export --model yolo_nas_s --target combined  --output combined.onnx
+```
+
+`combined` is this page's one-pass API as a single graph — `pred_bboxes`, `pred_scores`
+and `embedding` from one backbone run. Both graphs take a second input, `valid_region`,
+which carries the padding information the pooling needs; the
+[export guide](export.md#embedding-export) covers the contract and has a runnable
+snippet. Per-object embeddings stay in PyTorch, because they depend on which boxes
+survive NMS.
+
 ## FiftyOne embedding space
 
 `tutorials/fiftyone/03_embedding_space.ipynb` walks through computing these embeddings over
