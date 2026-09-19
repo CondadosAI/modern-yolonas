@@ -8,6 +8,14 @@ dataset curation and re-identification all need.
 `YoloNASEmbedder` exposes it as a fixed-length vector. Nothing is trained or added —
 these are the same weights the detector uses, read one stage earlier.
 
+![A query street scene, a second street scene at 0.83 cosine similarity, and a plate of pancakes at 0.54, plotted at their true angular distances](../assets/embedding_space.png)
+
+One query and two gallery images, embedded and plotted at their true angular distances —
+with three points that is exact, not a projection. The street scene lands close to the
+query and the pancakes land far away, without anything in the pipeline having been told
+what either picture contains. Regenerate the figure with
+`uv run examples/embedding_space_figure.py`.
+
 ## Image embeddings
 
 ```python
@@ -180,11 +188,16 @@ yolonas export --model yolo_nas_s --target combined  --output combined.onnx
 ```
 
 `combined` is this page's one-pass API as a single graph — `pred_bboxes`, `pred_scores`
-and `embedding` from one backbone run. Both graphs take a second input, `valid_region`,
-which carries the padding information the pooling needs; the
-[export guide](export.md#embedding-export) covers the contract and has a runnable
-snippet. Per-object embeddings stay in PyTorch, because they depend on which boxes
-survive NMS.
+and `embedding` from one backbone run.
+
+Per-object embeddings export too, as `--target objects`: a self-contained graph with NMS
+and ROI pooling inside it, emitting `detections [D, 7]` and `object_embedding [D, E]` with
+the rows lined up. It is built by graph surgery rather than tracing, because which boxes
+exist depends on which survive NMS.
+
+All three take a second input, `valid_region`, which carries the padding information the
+pooling needs; the [export guide](export.md#embedding-export) covers the contract and has
+runnable snippets.
 
 ## FiftyOne embedding space
 

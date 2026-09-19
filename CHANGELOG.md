@@ -13,6 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`yolonas export --target objects`** — a self-contained ONNX graph with NMS and ROI
+  pooling inside it: image in, `detections [D, 7]` and `object_embedding [D, E]` out, with
+  row *i* of the vectors describing row *i* of the boxes, plus the image-level `embedding`.
+  This is the deployment form of `predict(..., Task.EMBED_OBJECTS)`, which until now had
+  no export.
+- It is built by graph surgery rather than tracing, because which boxes exist depends on
+  which survive NMS — a data-dependent shape `torch.export` will not produce. A base graph
+  emits its feature maps as outputs, and `NonMaxSuppression`, `RoiAlign`, the grid pooling
+  and the L2 normalization are added as ONNX nodes on top; the feature maps are dropped
+  from the final model. `DetectAndFeatureGraph` is that base, `export/objects.py` the
+  surgery.
+- Boxes are clipped to `valid_region` before being embedded, matching `embed_boxes` and
+  `predict(..., Task.EMBED_OBJECTS)`. A box that clips to zero area comes back as a zero
+  vector rather than NaN — the graph spells out `F.normalize`'s `max(norm, eps)` instead
+  of using `LpNormalization`, which has no such guard.
+- `export/frigate.py`'s constant helper is now public as `make_constant`, shared with the
+  new surgery.
+
+### Notes
+- `--max-detections` is `max_output_boxes_per_class` for the `objects` and `frigate`
+  targets: the ONNX NMS operator counts per class, where `postprocess` caps the total per
+  image. Exact detection parity with `postprocess` is not claimed — it uses
+  `torchvision.ops.batched_nms` behind a top-1024 prefilter — but the vectors are pinned
+  to match PyTorch ROI pooling on whatever boxes the graph emits.
+
+
+### Added
 - **ONNX export for embeddings.** `yolonas export --target embedding` emits a graph that
   produces feature vectors with no detection head in it; `--target combined` emits
   `pred_bboxes`, `pred_scores` and `embedding` from a single backbone pass — the

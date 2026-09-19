@@ -24,6 +24,7 @@ class ExportTarget(str, Enum):
     frigate = "frigate"
     embedding = "embedding"
     combined = "combined"
+    objects = "objects"
 
 
 class EmbedPooling(str, Enum):
@@ -40,9 +41,11 @@ def export(
     checkpoint: Annotated[str | None, typer.Option(help="Custom checkpoint path.")] = None,
     num_classes: Annotated[int, typer.Option(help="Number of classes (must match checkpoint; default 80 for COCO).")] = 80,
     target: Annotated[ExportTarget, typer.Option(help="Export target.")] = ExportTarget.generic,
-    conf_threshold: Annotated[float, typer.Option(help="Confidence threshold (frigate target).")] = 0.25,
-    iou_threshold: Annotated[float, typer.Option(help="IoU threshold for NMS (frigate target).")] = 0.45,
-    max_detections: Annotated[int, typer.Option(help="Max detections per image (frigate target).")] = 20,
+    conf_threshold: Annotated[float, typer.Option(help="Confidence threshold (frigate/objects targets).")] = 0.25,
+    iou_threshold: Annotated[float, typer.Option(help="IoU threshold for NMS (frigate/objects targets).")] = 0.45,
+    max_detections: Annotated[
+        int, typer.Option(help="Max detections per class (frigate/objects targets) — ONNX NMS counts per class, not per image.")
+    ] = 20,
     embed_layers: Annotated[
         str, typer.Option(help="Comma-separated feature maps to pool (embedding/combined targets).")
     ] = "c5",
@@ -83,7 +86,13 @@ def export(
 
     dummy = torch.randn(1, 3, input_size, input_size)
 
-    if target in (ExportTarget.embedding, ExportTarget.combined):
+    if target == ExportTarget.objects:
+        _export_objects(
+            yolo_model, output, export_format, opset, input_size,
+            embed_layers, embed_pooling.value, normalize,
+            conf_threshold, iou_threshold, max_detections, console,
+        )
+    elif target in (ExportTarget.embedding, ExportTarget.combined):
         _export_embedding(
             yolo_model, output, export_format, opset, input_size, target,
             embed_layers, embed_pooling.value, normalize, console,
@@ -231,3 +240,64 @@ def _onnx_export(graph, dummy, path, input_names, output_names, opset):
         # its sidecar loads and then fails — a bad way to find out.
         external_data=False,
     )
+
+
+def _export_objects(
+    yolo_model, output, export_format, opset, input_size,
+    embed_layers, embed_pooling, normalize,
+    conf_threshold, iou_threshold, max_detections, console,
+):
+    """Export a self-contained graph: image in, detections and per-object vectors out.
+
+    Unlike the `embedding` and `combined` targets this one cannot be traced
+    straight out of PyTorch — which boxes exist depends on which survive NMS, a
+    data-dependent shape ``torch.export`` will not produce. So a base graph is
+    exported with its feature maps as outputs, and NMS, ROI pooling and the
+    normalization are added as ONNX nodes on top.
+    """
+    import tempfile
+
+    from pathlib import Path
+
+    import torch
+
+    from modern_yolonas.export.embedding import DetectAndFeatureGraph
+    from modern_yolonas.export.objects import make_object_embedding_onnx
+    from modern_yolonas.inference.embed import FeaturePooler
+
+    layers = tuple(name.strip() for name in embed_layers.split(",") if name.strip())
+    pooler = FeaturePooler(layers=layers, pooling=embed_pooling, normalize=normalize)
+    graph = DetectAndFeatureGraph(yolo_model, pooler, input_size).eval()
+
+    dummy = (
+        torch.randn(1, 3, input_size, input_size),
+        torch.tensor([[0, 0, input_size, input_size]], dtype=torch.long),
+    )
+
+    console.print(f"Pooling {'+'.join(layers)} ({embed_pooling}, {'normalized' if normalize else 'raw'})...")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = str(Path(tmpdir) / "base.onnx")
+        console.print(f"Exporting base ONNX (opset {opset})...")
+        _onnx_export(graph, dummy, base, ["images", "valid_region"], graph.output_names, opset)
+
+        target_onnx = str(Path(tmpdir) / "objects.onnx") if export_format == ExportFormat.openvino else output
+
+        console.print("Applying graph surgery (NMS + ROI pooling)...")
+        make_object_embedding_onnx(
+            base,
+            target_onnx,
+            layers=layers,
+            canvas=input_size,
+            pooling=embed_pooling,
+            normalize=normalize,
+            conf_threshold=conf_threshold,
+            iou_threshold=iou_threshold,
+            max_detections=max_detections,
+        )
+
+        if export_format == ExportFormat.openvino:
+            import openvino as ov
+
+            console.print("Converting to OpenVINO IR...")
+            ov.save_model(ov.convert_model(target_onnx), output)

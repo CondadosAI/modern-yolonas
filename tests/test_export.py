@@ -23,6 +23,10 @@ from modern_yolonas.inference.preprocess import preprocess  # noqa: E402
 
 CANVAS = 320
 
+#: IR version to stamp on hand-built test models. Opset 18 needs at least 8, and
+#: this is low enough for every onnxruntime in the support matrix.
+_MAX_SUPPORTED_IR_VERSION = 10
+
 
 @pytest.fixture(scope="module")
 def fused_model():
@@ -279,3 +283,270 @@ class TestCliProducesAWorkingGraph:
         model = onnx.load(str(output), load_external_data=False)
         exported = {i.domain or "ai.onnx": i.version for i in model.opset_import}
         assert exported["ai.onnx"] >= 18
+
+
+# ----------------------------------------------------------------------
+# Self-contained object-embedding graph (NMS + ROI pooling inside)
+# ----------------------------------------------------------------------
+
+
+def _export_objects(fused_model, path, pooler, conf_threshold, max_detections=20):
+    """Base export plus the surgery, as the CLI's `objects` target does it."""
+    from modern_yolonas.export.embedding import DetectAndFeatureGraph
+    from modern_yolonas.export.objects import make_object_embedding_onnx
+
+    graph = DetectAndFeatureGraph(fused_model, pooler, CANVAS).eval()
+    base = str(path) + ".base"
+    _export(graph, base, graph.output_names)
+
+    make_object_embedding_onnx(
+        base, str(path), layers=pooler.layers, canvas=CANVAS,
+        pooling=pooler.pooling, normalize=pooler.normalize,
+        conf_threshold=conf_threshold, iou_threshold=0.45, max_detections=max_detections,
+    )
+    return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+
+
+def _score_ceiling(fused_model, images):
+    """Half the top score, so an untrained model still yields detections."""
+    with torch.no_grad():
+        return float(fused_model(images)[1].max()) * 0.5
+
+
+@pytest.fixture(scope="module")
+def object_graph(fused_model, tmp_path_factory):
+    """The self-contained object graph, exported once for the module."""
+    images, _ = _letterboxed([(360, 640), (640, 480)])
+    conf = _score_ceiling(fused_model, images)
+    return _export_objects(
+        fused_model, tmp_path_factory.mktemp("objects") / "objects.onnx", FeaturePooler(), conf
+    )
+
+
+@pytest.fixture(scope="module")
+def quiet_object_graph(fused_model, tmp_path_factory):
+    """Same graph with a threshold nothing reaches, for the empty-frame case."""
+    return _export_objects(
+        fused_model, tmp_path_factory.mktemp("objects_empty") / "objects.onnx",
+        FeaturePooler(), conf_threshold=0.99,
+    )
+
+
+class TestObjectEmbeddingGraph:
+    def test_signature(self, object_graph):
+        assert [i.name for i in object_graph.get_inputs()] == ["images", "valid_region"]
+        assert [o.name for o in object_graph.get_outputs()] == ["detections", "object_embedding", "embedding"]
+
+    def test_declares_its_embedding_width(self, object_graph):
+        """So a caller can size an index from the metadata, without a dummy run."""
+        shapes = {o.name: o.shape for o in object_graph.get_outputs()}
+        assert shapes["object_embedding"][1] == 768
+        assert shapes["detections"][1] == 7
+
+    def test_rows_line_up_with_pytorch_roi_pooling(self, object_graph, fused_model):
+        """The claim this graph makes: row i of the vectors describes row i of the boxes.
+
+        Checked by taking the graph's own boxes — already clipped, already in
+        canvas coordinates — and pooling them in PyTorch. Both sides then see the
+        same boxes, so this is robust to the garbage detections an untrained model
+        produces, and it is the property a caller actually relies on.
+        """
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, vectors, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert len(detections) > 0, "fixture produced no detections to compare"
+        assert len(vectors) == len(detections)
+
+        pooler = FeaturePooler()
+        with torch.no_grad():
+            features = fused_model.forward_features(images)
+        rois = torch.from_numpy(np.concatenate([detections[:, 0:1], detections[:, 1:5]], axis=1))
+        expected = pooler.finalize(pooler.pool_rois(features, rois.float(), CANVAS))
+
+        assert np.allclose(vectors, expected, atol=1e-4)
+
+    def test_boxes_stay_inside_the_canvas(self, object_graph):
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, _, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert detections[:, 1:5].min() >= 0.0
+        assert detections[:, 1:5].max() <= CANVAS
+        # x2 >= x1 and y2 >= y1: clipping must not invert a box.
+        assert np.all(detections[:, 3] >= detections[:, 1])
+        assert np.all(detections[:, 4] >= detections[:, 2])
+
+    def test_boxes_are_clipped_to_the_valid_region(self, object_graph):
+        """Outside the region is letterbox padding, so no box may reach into it."""
+        images, regions = _letterboxed([(200, 1600)])
+        detections, _, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        left, top, right, bottom = regions[0].tolist()
+        assert detections[:, 1].min() >= left
+        assert detections[:, 2].min() >= top
+        assert detections[:, 3].max() <= right
+        assert detections[:, 4].max() <= bottom
+
+    def test_batch_index_is_carried(self, object_graph):
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, _, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert set(np.unique(detections[:, 0])) <= {0.0, 1.0}
+
+    def test_image_embedding_still_matches_the_embedding_only_graph(self, object_graph, session):
+        """Surgery must not disturb the output it does not touch."""
+        images, regions = _letterboxed([(360, 640)])
+        feeds = {"images": images.numpy(), "valid_region": regions.numpy()}
+        assert np.allclose(object_graph.run(None, feeds)[2], session.run(None, feeds)[0], atol=1e-5)
+
+
+class TestObjectGraphOnAQuietFrame:
+    """Nothing detected is the normal case on most frames, not an edge case."""
+
+    def test_returns_empty_arrays_without_erroring(self, quiet_object_graph):
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, vectors, embedding = quiet_object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert detections.shape == (0, 7)
+        assert vectors.shape[0] == 0
+        # The image-level embedding is unaffected by there being no objects.
+        assert embedding.shape == (2, 768)
+        assert np.isfinite(embedding).all()
+
+
+class TestZeroAreaBoxesStayFinite:
+    def test_no_nan_from_the_normalization(self, fused_model, tmp_path):
+        """A box clipping to zero area samples nothing.
+
+        `F.normalize` guards with max(norm, eps) and leaves such a vector at zero;
+        ONNX `LpNormalization` would produce NaN, so the graph spells the guard out.
+        This asserts the graph took that path.
+        """
+        images, _ = _letterboxed([(200, 1600), (1600, 200)])
+        conf = _score_ceiling(fused_model, images)
+        graph = _export_objects(fused_model, tmp_path / "objects.onnx", FeaturePooler(), conf)
+
+        # A degenerate region forces every box to clip to nothing.
+        degenerate = np.array([[0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.int64)
+        _, vectors, _ = graph.run(None, {"images": images.numpy(), "valid_region": degenerate})
+
+        assert np.isfinite(vectors).all(), "zero-area boxes must not produce NaN"
+        assert not vectors.any(), "they should be zero vectors"
+
+
+class TestObjectGraphCli:
+    def test_cli_objects_target(self, tmp_path, checkpoint):
+        from typer.testing import CliRunner
+
+        from modern_yolonas.cli import app
+
+        output = tmp_path / "objects.onnx"
+        result = CliRunner().invoke(
+            app,
+            ["export", "--model", "yolo_nas_s", "--target", "objects",
+             "--input-size", "320", "--embed-layers", "c4,c5",
+             "--conf-threshold", "0.001",
+             "--output", str(output), "--checkpoint", checkpoint],
+        )
+        assert result.exit_code == 0, result.output
+        assert output.exists()
+        assert not list(tmp_path.glob("*.onnx.data"))
+
+        session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
+        assert [o.name for o in session.get_outputs()] == ["detections", "object_embedding", "embedding"]
+
+        images, regions = _letterboxed([(360, 640)])
+        detections, vectors, _ = session.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert vectors.shape == (len(detections), 384 + 768), "--embed-layers c4,c5 must reach the ROI pooling"
+        assert session.get_outputs()[1].shape[1] == 384 + 768, "the declared width must follow --embed-layers"
+
+
+class TestRoiAlignMapsToTorchvision:
+    """ONNX RoiAlign has to mean exactly what ``FeaturePooler.pool_rois`` means.
+
+    The mapping is not obvious and getting it wrong is silent — the graph still
+    runs and returns plausible vectors:
+
+    * ``aligned=True`` is ``coordinate_transformation_mode="half_pixel"``.
+      ``output_half_pixel`` is the other one, and it is wrong by ~1.4 here.
+    * torchvision's adaptive ``sampling_ratio=-1`` is ONNX's ``0``. ORT rejects
+      ``-1`` outright, and a fixed ratio silently disagrees.
+    * ``mode`` is always ``"avg"``: max pooling is RoiAlign(avg) then a max over
+      the grid, never RoiAlign(max).
+
+    So the operator is pinned against torchvision directly, across every stride
+    the feature maps use and box shapes that stress the adaptive sample count.
+    """
+
+    GEOMETRIES = [(10, 320), (20, 640), (40, 640), (80, 640), (160, 640)]
+
+    def _boxes(self, canvas):
+        return np.array(
+            [
+                [0, 0, 2, 2],                                # smaller than one feature cell
+                [0, 0, 1, 1],                                # one pixel
+                [5, 5, 5, 5],                                # zero area
+                [0, 0, canvas, canvas],                      # the whole canvas
+                [10, 10, canvas / 2, canvas / 2],
+                [100, 3, 105, canvas - 3],                   # thin and tall
+                [3, 100, canvas - 3, 105],                   # thin and wide
+                [canvas - 4, canvas - 4, canvas, canvas],    # the far corner
+            ],
+            dtype=np.float32,
+        )
+
+    @pytest.mark.parametrize("feature_size,canvas", GEOMETRIES)
+    def test_matches_torchvision(self, feature_size, canvas):
+        from torchvision.ops import roi_align
+
+        from modern_yolonas.export.objects import ROI_GRID
+
+        features = np.random.default_rng(7).standard_normal(
+            (2, 6, feature_size, feature_size)
+        ).astype(np.float32)
+        boxes = self._boxes(canvas)
+        batch_indices = np.array([0, 1, 0, 1, 0, 1, 0, 1], dtype=np.int64)
+        spatial_scale = feature_size / canvas
+
+        node = onnx.helper.make_node(
+            "RoiAlign", ["X", "rois", "bidx"], ["Y"], mode="avg",
+            output_height=ROI_GRID, output_width=ROI_GRID, sampling_ratio=0,
+            spatial_scale=spatial_scale, coordinate_transformation_mode="half_pixel",
+        )
+        graph = onnx.helper.make_graph(
+            [node], "roialign",
+            [
+                onnx.helper.make_tensor_value_info("X", onnx.TensorProto.FLOAT, features.shape),
+                onnx.helper.make_tensor_value_info("rois", onnx.TensorProto.FLOAT, boxes.shape),
+                onnx.helper.make_tensor_value_info("bidx", onnx.TensorProto.INT64, batch_indices.shape),
+            ],
+            [onnx.helper.make_tensor_value_info("Y", onnx.TensorProto.FLOAT, None)],
+        )
+        model = onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", 18)])
+        # `make_model` stamps the installed onnx library's IR version, which runs
+        # ahead of what onnxruntime accepts — onnxruntime 1.23.2, the last release
+        # with a cp310 wheel, caps at 11 while onnx 1.22 writes 13. The graphs
+        # under test elsewhere inherit their IR version from torch's exporter and
+        # never hit this; only a hand-built model does.
+        model.ir_version = min(model.ir_version, _MAX_SUPPORTED_IR_VERSION)
+        actual = ort.InferenceSession(
+            model.SerializeToString(), providers=["CPUExecutionProvider"]
+        ).run(None, {"X": features, "rois": boxes, "bidx": batch_indices})[0]
+
+        expected = roi_align(
+            torch.from_numpy(features),
+            torch.from_numpy(np.concatenate([batch_indices[:, None].astype(np.float32), boxes], axis=1)),
+            output_size=(ROI_GRID, ROI_GRID),
+            spatial_scale=spatial_scale,
+            sampling_ratio=-1,
+            aligned=True,
+        ).numpy()
+
+        assert np.isfinite(actual).all()
+        assert np.array_equal(actual, expected), "ONNX RoiAlign must be bit-identical to torchvision"

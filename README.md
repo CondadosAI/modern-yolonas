@@ -214,6 +214,16 @@ The detector throws the backbone's representation away and keeps four numbers pe
 `YoloNASEmbedder` keeps the representation — for image retrieval, near-duplicate search,
 clustering and re-identification. Nothing extra is trained: same weights, read one stage earlier.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/CondadosAI/modern-yolonas/main/docs/assets/embedding_space.png" alt="A query street scene, a second street scene at 0.83 cosine similarity, and a plate of pancakes at 0.54, plotted at their true angular distances" width="100%">
+</p>
+
+<p align="center">
+  <sub>Regenerate with <code>uv run examples/embedding_space_figure.py</code>. Gallery photos by
+  <a href="https://unsplash.com/photos/omi6C5fdiLA">Mike Petrucci</a> and
+  <a href="https://unsplash.com/photos/YpngzEY9ijY">Gabriel Gurrola</a>, CC0.</sub>
+</p>
+
 ```python
 import numpy as np
 from modern_yolonas import YoloNASEmbedder
@@ -256,8 +266,9 @@ Raw feature maps, if you want to pool them yourself:
 features = model.forward_features(x)   # c2 c3 c4 c5 (backbone) + p3 p4 p5 (neck)
 ```
 
-Both shapes export to ONNX — `--target embedding` and `--target combined`, the latter
-emitting `pred_bboxes`, `pred_scores` and `embedding` from one graph.
+All three shapes export to ONNX — `--target embedding`, `--target combined`, and
+`--target objects`, the last a self-contained graph with NMS inside it that emits
+`detections [D, 7]` and one vector per detection.
 
 See the [embeddings guide](https://condadosai.github.io/modern-yolonas/guides/embeddings/)
 for layer choice and why the letterbox padding is excluded from pooling, and the
@@ -305,6 +316,7 @@ yolonas export --model yolo_nas_s --format openvino --output model.xml
 # Export feature embeddings, alone or beside the detections
 yolonas export --model yolo_nas_s --target embedding --output embedding.onnx
 yolonas export --model yolo_nas_s --target combined --output combined.onnx
+yolonas export --model yolo_nas_s --target objects --output objects.onnx
 
 # Export for Frigate (embeds preprocessing + NMS in the graph)
 yolonas export --model yolo_nas_s --format onnx --target frigate
