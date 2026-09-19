@@ -55,7 +55,7 @@ waste and were prototyped:
 Together that is roughly a third of loader time. Implemented and measured back to back
 against this branch: **10.8 → 7.5 ms per sample**, and 78.6 → 19.7 MB per batch of 16.
 
-`T_loader`, batch 16, `yolonas train` pipeline:
+`T_loader`, batch 16, `yolonas train` pipeline, on the development laptop:
 
 | workers | with `cv2.setNumThreads(0)` | without |
 |---:|---:|---:|
@@ -83,15 +83,43 @@ fp16 here, so it is a `GradScaler` stability argument, not a throughput one — 
 it as a speedup. Backward is 57% of the step and the loss, assigner included, is only 4%,
 so the `TaskAlignedAssigner` is not worth optimising.
 
-**On this hardware training is GPU-bound with roughly 8× headroom** (~330 vs 41 img/s), so
-none of the loader work pays off locally.
+**On the laptop this was developed on, training is GPU-bound with roughly 8x headroom**, so
+none of the loader work pays off there.
 
-Whether it pays off on a rented 4090 is **not answered here, and should not be guessed**.
-One data point exists — a 3060 Laptop reaching ~3.7 achieved TFLOPS, about 28% of its fp16
-peak — and extrapolating it to another card at an assumed identical utilisation is the same
-kind of unmeasured claim this item was written to retract. Run `T_loader` and `T_model` on
-the first pod, before the first real epoch. It costs one pod-hour and it decides whether
-any of the transform work below is worth doing at all.
+**Measured on the training machine, 2026-09-19** (luis-desktop, 24 vCPU, RTX 5060 8 GB,
+torch 2.10): `T_loader` peaks at **1600 img/s** at 12 workers, `T_model` at **84 img/s**.
+Nineteen times the headroom. The dataloader is not the bottleneck on the machine that will
+do the training, and the transform work already merged buys that machine nothing. It was
+still worth doing — it is what made the question cheap to answer, and it holds for anyone
+running this on a rented pod with four vCPU — but no further dataloader work should be
+started for this run.
+
+The GPU step is where the time is, and configuration alone moves it a long way:
+
+| config | img/s | peak VRAM |
+|---|---:|---:|
+| batch 16, fp16 | 66.1 | 5.83 GiB |
+| batch 16, fp16, `channels_last` | 83.8 | 4.84 GiB |
+| batch 16, bf16, `channels_last` | 76.3 | 4.83 GiB |
+| batch 24, fp16, `channels_last`, `torch.compile` | **96.9** | 6.00 GiB |
+| batch 28, same | 96.5 | 6.97 GiB |
+
+`torch.compile` is worth only 2% of throughput on its own, but it cuts peak VRAM by 15%,
+and on an 8 GB card that is what buys the larger batch. Throughput plateaus at 24, so 28
+only spends memory. bf16 is again slower than fp16 — its case is `GradScaler` stability,
+not speed. Backward is 58% of the step and the loss, `TaskAlignedAssigner` included, is 4%.
+
+End to end, `yolonas train` for one epoch over 4952 images confirms the synthetic figures:
+75.4 img/s at batch 16, **87.4 img/s at batch 24 with `--compile`**. The gap to the
+synthetic 96.9 is validation, EMA and logging. A one-epoch wall clock is *worse* with
+`--compile` because compilation is paid once; over a real run it is noise.
+
+**So the official run should be `--batch-size 24 --compile`**, and at 87 img/s COCO
+train2017 is about 23 minutes an epoch: roughly 4.7 days for 300 epochs, 2.4 days for 150.
+Against the batch-16 default that is a day and a half saved for two flags.
+
+What has not been tried on the GPU step: gradient checkpointing to trade compute for the
+memory a larger batch needs, and `--num-gpus` if a second card ever appears.
 
 `DetectionDataModule` sets neither `persistent_workers` nor `prefetch_factor`, so workers
 respawn every epoch. Turning `persistent_workers` on **silently breaks**
