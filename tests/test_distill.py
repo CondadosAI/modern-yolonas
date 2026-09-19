@@ -1,0 +1,168 @@
+"""Backbone distillation: the cache contract and the training step.
+
+The expensive failure here is silent. A cache read at the wrong offset, or a flip
+that mirrors the grid instead of reading the mirrored forward, produces a loss
+that falls perfectly well while teaching the wrong alignment.
+"""
+
+from __future__ import annotations
+
+import json
+
+import cv2
+import numpy as np
+import pytest
+import torch
+
+from modern_yolonas.training.distill import (
+    BackboneDistillModule,
+    CachedFeatureDataset,
+    distill_collate_fn,
+)
+
+GRID, DIM, SIZE, SHARD = 4, 8, 64, 3
+
+
+def build_cache(tmp_path, count: int = 7, with_flip: bool = False):
+    """A cache whose every feature is a recognisable constant, so a wrong offset shows."""
+    images = tmp_path / "images"
+    cache = tmp_path / "cache"
+    images.mkdir()
+    cache.mkdir()
+
+    names = []
+    for i in range(count):
+        name = f"{i:012d}.jpg"
+        cv2.imwrite(str(images / name), np.full((48, SIZE, 3), i * 7 % 255, np.uint8))
+        names.append(name)
+
+    shards = []
+    for start in range(0, count, SHARD):
+        n = len(range(start, min(start + SHARD, count)))
+        shard = f"shard_{len(shards):05d}"
+        for suffix, offset in ((("", 0),) if not with_flip else (("", 0), ("_flip", 100))):
+            # Value encodes the global index, so a misread is visible in the value.
+            q = np.stack([
+                np.full((GRID * GRID, DIM), (start + j + offset) % 127, np.int8)
+                for j in range(n)
+            ])
+            np.save(cache / f"{shard}{suffix}.npy", q)
+            np.save(cache / f"{shard}{suffix}_norm.npy", np.ones((n, GRID * GRID), np.float16))
+        shards.append(shard)
+
+    (cache / "index.json").write_text(json.dumps({
+        "teacher": "test", "size": SIZE, "patch": 16, "grid": GRID, "dim": DIM,
+        "shard_size": SHARD, "files": names, "shards": shards, "has_flip": with_flip,
+    }))
+    return images, cache, names
+
+
+class TestCachedFeatureDataset:
+    def test_shapes_and_dtypes(self, tmp_path):
+        images, cache, _ = build_cache(tmp_path)
+        image, features = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)[0]
+        assert image.shape == (3, SIZE, SIZE) and image.dtype == np.uint8
+        assert features.shape == (DIM, GRID, GRID) and features.dtype == np.float32
+
+    @pytest.mark.parametrize("index", range(7))
+    def test_every_index_reads_its_own_features_across_shards(self, tmp_path, index):
+        """The shard/offset split is the one place an off-by-one silently mislabels."""
+        images, cache, _ = build_cache(tmp_path)
+        _, features = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)[index]
+        assert features.min() == features.max() == pytest.approx(index % 127)
+
+    def test_a_flip_reads_the_flipped_forward_not_a_mirrored_grid(self, tmp_path):
+        """The flip shards hold different values, so reading the wrong one shows."""
+        images, cache, _ = build_cache(tmp_path, with_flip=True)
+        dataset = CachedFeatureDataset(images, cache, flip_prob=1.0, hsv_prob=0.0)
+        _, features = dataset[2]
+        assert features.min() == pytest.approx((2 + 100) % 127)
+
+    def test_no_flip_reads_the_plain_forward(self, tmp_path):
+        images, cache, _ = build_cache(tmp_path, with_flip=True)
+        dataset = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)
+        _, features = dataset[2]
+        assert features.min() == pytest.approx(2)
+
+    def test_flipping_without_a_flip_cache_is_refused(self, tmp_path):
+        """A ViT is not flip-equivariant, so mirroring the grid is not an option."""
+        images, cache, _ = build_cache(tmp_path, with_flip=False)
+        with pytest.raises(ValueError, match="not flip-equivariant"):
+            CachedFeatureDataset(images, cache, flip_prob=0.5)
+
+    def test_a_missing_image_is_reported_rather_than_skipped(self, tmp_path):
+        images, cache, names = build_cache(tmp_path)
+        (images / names[3]).unlink()
+        with pytest.raises(FileNotFoundError, match=names[3]):
+            CachedFeatureDataset(images, cache, flip_prob=0.0)
+
+    def test_photometric_jitter_leaves_the_target_alone(self, tmp_path):
+        """HSV moves no pixel, so the cached target stays valid — that is the premise."""
+        images, cache, _ = build_cache(tmp_path)
+        plain = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)[1][1]
+        jittered = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=1.0)[1][1]
+        assert np.array_equal(plain, jittered)
+
+
+class TestBackboneDistillModule:
+    @staticmethod
+    def _module(**kwargs) -> BackboneDistillModule:
+        from modern_yolonas import yolo_nas_s
+
+        return BackboneDistillModule(
+            model=yolo_nas_s(pretrained=False, num_classes=80), teacher_dim=384, **kwargs
+        )
+
+    def test_uint8_batches_are_scaled_on_device(self):
+        module = self._module()
+        images = torch.full((2, 3, 8, 8), 255, dtype=torch.uint8)
+        out, _ = module.on_after_batch_transfer((images, torch.zeros(2, 384, 2, 2)), 0)
+        assert out.dtype == torch.float32 and torch.allclose(out, torch.ones_like(out))
+
+    def test_float_batches_pass_through(self):
+        module = self._module()
+        images = torch.rand(2, 3, 8, 8)
+        out, _ = module.on_after_batch_transfer((images, torch.zeros(2, 384, 2, 2)), 0)
+        assert torch.equal(out, images)
+
+    def test_a_perfect_prediction_gives_zero_loss(self):
+        """Cosine distance, so matching direction is all that is required."""
+        module = self._module()
+        images = torch.rand(1, 3, 128, 128)
+        with torch.no_grad():
+            _, _, c4, _ = module.model.backbone(images)
+            target = module.projection(c4)
+        loss = module._step((images, target), "train")
+        assert loss.item() == pytest.approx(0.0, abs=1e-5)
+
+    def test_the_loss_falls_when_overfitting_one_batch(self):
+        """The only test that shows the thing actually learns."""
+        torch.manual_seed(0)
+        module = self._module(lr=1e-3, warmup_steps=1, max_steps=40)
+        images = torch.rand(2, 3, 128, 128)
+        target = torch.randn(2, 384, 8, 8)
+
+        optimizer = torch.optim.AdamW(
+            list(module.model.backbone.parameters()) + list(module.projection.parameters()),
+            lr=1e-3,
+        )
+        first = module._step((images, target), "train").item()
+        for _ in range(30):
+            optimizer.zero_grad()
+            module._step((images, target), "train").backward()
+            optimizer.step()
+        assert module._step((images, target), "train").item() < first - 0.05
+
+    def test_the_neck_is_left_out_of_the_optimiser_by_default(self):
+        """It has no teacher to match; optimising it would only let it drift."""
+        module = self._module()
+        optimised = {id(p) for p in module.configure_optimizers()["optimizer"].param_groups[0]["params"]}
+        assert not any(id(p) in optimised for p in module.model.neck.parameters())
+        assert all(id(p) in optimised for p in module.model.backbone.parameters())
+
+
+def test_collate_stacks_images_and_features():
+    batch = [(np.zeros((3, 8, 8), np.uint8), np.ones((4, 2, 2), np.float32)) for _ in range(3)]
+    images, features = distill_collate_fn(batch)
+    assert images.shape == (3, 3, 8, 8) and images.dtype == torch.uint8
+    assert features.shape == (3, 4, 2, 2)
