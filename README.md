@@ -7,8 +7,9 @@
   <a href="https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml"><img src="https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml/badge.svg" alt="Tests"></a>
   <a href="https://condadosai.github.io/modern-yolonas/"><img src="https://img.shields.io/badge/docs-mkdocs--material-blue.svg" alt="Documentation"></a>
   <a href="https://pypi.org/project/modern-yolonas/"><img src="https://img.shields.io/pypi/pyversions/modern-yolonas" alt="Python"></a>
-  <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/modern-yolonas" alt="License"></a>
+  <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE"><img src="https://img.shields.io/github/license/CondadosAI/modern-yolonas" alt="License"></a>
   <a href="https://huggingface.co/spaces/CondadosAI/modern-yolonas-demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20demo-Hugging%20Face-yellow" alt="Hugging Face Space"></a>
+  <a href="https://github.com/sponsors/Gabriellgpc"><img src="https://img.shields.io/badge/sponsor-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor"></a>
 </p>
 
 <p align="center">
@@ -318,6 +319,32 @@ uv run ruff check src/ tests/
 Contributions are welcome. Please read [CONTRIBUTING.md](https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CONTRIBUTING.md) — it lists
 the API design principles a change is reviewed against — and the
 [Code of Conduct](https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CODE_OF_CONDUCT.md).
+
+---
+
+## 💖 Sponsoring
+
+This project is maintained in spare time, and the part that costs real money is training.
+
+The pretrained COCO checkpoints this library downloads are Deci's, and
+[their license](https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md)
+forbids commercial use. The way out is to train COCO weights from scratch and publish them
+under Apache-2.0, so anyone can ship them. That is a compute bill, not a coding problem:
+YOLO-NAS-S is roughly 25–50 A100-hours end to end — about **$40–80** of spot GPU time — and
+YOLO-NAS-L is several times that. The arithmetic is written out in the
+[roadmap](https://github.com/CondadosAI/modern-yolonas/blob/main/ROADMAP.md). Every accuracy
+and latency number published here is measured rather than quoted, which is also rented time.
+
+If the library is useful to you or your company, you can fund that directly:
+
+<p align="center">
+  <a href="https://github.com/sponsors/Gabriellgpc"><b>❤️ Sponsor on GitHub</b></a>
+</p>
+
+Sponsored compute is spent on runs whose results are published here — the numbers, the
+weights and the configs, for everyone, not for sponsors only. Companies that need an invoice,
+a different arrangement, or a specific benchmark run: open an
+[issue](https://github.com/CondadosAI/modern-yolonas/issues) and we will sort it out there.
 
 ---
 

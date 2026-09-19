@@ -56,6 +56,7 @@ Documentation = "https://condadosai.github.io/modern-yolonas/"
 Repository = "https://github.com/CondadosAI/modern-yolonas"
 Changelog = "https://github.com/CondadosAI/modern-yolonas/blob/main/CHANGELOG.md"
 Issues = "https://github.com/CondadosAI/modern-yolonas/issues"
+Funding = "https://github.com/sponsors/Gabriellgpc"
 
 [project.optional-dependencies]
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
@@ -122,6 +123,18 @@ exclude_lines = [
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+
+[tool.ruff.lint]
+# Ruff's default selection is not a stable contract. 0.16 widened it from
+# E4/E7/E9/F to also include I, UP, B, C4, FURB, BLE and RUF, which turned a
+# routine dependency bump into 131 errors in code that had not changed — and
+# several of those, such as B008 on typer's `Option()` defaults, are wrong for
+# this project by construction.
+#
+# Naming the rules means an upgrade can change how a rule is implemented but
+# never which rules apply. Widening this list is then a deliberate commit with
+# its own diff, rather than a side effect of dependabot.
+select = ["E4", "E7", "E9", "F"]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

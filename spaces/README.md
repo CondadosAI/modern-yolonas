@@ -105,15 +105,16 @@ here: it bakes NMS into the graph and changes the outputs.
 
 ## `gradio-demo/` — the PRO path
 
-A Gradio app running `Detector` server-side on `cpu-basic`. Complete and locally verified
+A Gradio app running `YoloNASDetector` server-side on `cpu-basic`. Complete and locally verified
 (including the full `gradio_client` request path); it only needs an account that may create one.
 
 - `torch==2.9.1+cpu` / `torchvision==0.24.1+cpu` from
   `--extra-index-url https://download.pytorch.org/whl/cpu`. The default PyPI `torch` bundles
   roughly 2.5 GB of CUDA libraries that this hardware cannot use.
 - `modern-yolonas` is pinned to a **released** version and the app uses only that version's API.
-  `0.4.0` calls the class `Detector`; `0.5.0` renames it to `YoloNASDetector` and keeps `Detector`
-  as a deprecated alias until `0.7.0`. Bump the pin and the class name together.
+  The pin and the API the app calls move together: `0.5.0` is where `Detector` became
+  `YoloNASDetector`, so bumping one without the other breaks the Space at import time rather
+  than in review.
 - Gradio is deliberately absent from `requirements.txt` — the Space installs the version given by
   `sdk_version` in the frontmatter, and listing it in both places invites a conflict.
 
