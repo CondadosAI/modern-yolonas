@@ -71,3 +71,49 @@ def test_half_export_carries_fp16_into_the_graph(small_model, tmp_path):
     )
     model = onnx.load(str(path))
     assert model.graph.input[0].type.tensor_type.elem_type == onnx.TensorProto.FLOAT16
+
+
+def test_end2end_graph_matches_torch_nms(small_model, tmp_path):
+    """NMS baked into the graph must return what `postprocess` returns."""
+    import copy
+
+    from modern_yolonas.export.nms import make_end2end_onnx
+    from modern_yolonas.inference.postprocess import postprocess
+
+    torch.manual_seed(0)
+    model = fuse_for_inference(copy.deepcopy(small_model))
+    base = export_onnx(model, tmp_path / "base.onnx", input_size=128, dynamic_batch=False)
+
+    x = torch.randn(1, 3, 128, 128)
+    with torch.no_grad():
+        boxes, scores = model(x)
+
+    # An untrained head is not confident about anything, so a fixed threshold would
+    # leave both sides empty and the comparison would pass on nothing. Pick one from
+    # the model's own distribution instead.
+    conf = float(scores.quantile(0.995))
+    make_end2end_onnx(str(base), str(tmp_path / "e2e.onnx"), conf_threshold=conf, iou_threshold=0.45)
+    expected = postprocess(boxes, scores, conf_threshold=conf, iou_threshold=0.45, max_detections=300)[0]
+    assert expected[0].shape[0] > 0
+
+    (detections,) = onnx_session(tmp_path / "e2e.onnx", "cpu").run(None, {"images": x.numpy()})
+    assert detections.shape[1] == 7  # batch, x1, y1, x2, y2, conf, class
+    assert detections.shape[0] == expected[0].shape[0]
+
+    # NMS may order ties differently, so compare the score multisets rather than rows.
+    got = np.sort(detections[:, 5])[::-1]
+    want = np.sort(expected[1].numpy())[::-1]
+    assert np.abs(got - want).max() < 1e-4
+
+
+def test_end2end_rejects_int8(tmp_path):
+    """NNCF cannot calibrate through a baked-in NMS, so the combination is refused."""
+    from typer.testing import CliRunner
+
+    from modern_yolonas.cli import app
+
+    result = CliRunner().invoke(
+        app, ["export", "--target", "end2end", "--format", "openvino", "--precision", "int8"]
+    )
+    assert result.exit_code != 0
+    assert "NMS" in result.output or "nms" in result.output

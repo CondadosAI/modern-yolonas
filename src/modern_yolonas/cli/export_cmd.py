@@ -28,6 +28,7 @@ class Precision(str, Enum):
 
 class ExportTarget(str, Enum):
     generic = "generic"
+    end2end = "end2end"
     frigate = "frigate"
 
 
@@ -66,11 +67,19 @@ def export(
     checkpoint: Annotated[str | None, typer.Option(help="Custom checkpoint path.")] = None,
     num_classes: Annotated[int, typer.Option(help="Number of classes (must match checkpoint; default 80 for COCO).")] = 80,
     target: Annotated[ExportTarget, typer.Option(help="Export target.")] = ExportTarget.generic,
-    conf_threshold: Annotated[float, typer.Option(help="Confidence threshold (frigate target).")] = 0.25,
-    iou_threshold: Annotated[float, typer.Option(help="IoU threshold for NMS (frigate target).")] = 0.45,
-    max_detections: Annotated[int, typer.Option(help="Max detections per image (frigate target).")] = 20,
+    conf_threshold: Annotated[float, typer.Option(help="Confidence threshold baked in (end2end/frigate).")] = 0.25,
+    iou_threshold: Annotated[float, typer.Option(help="NMS IoU threshold baked in (end2end/frigate).")] = 0.45,
+    max_detections: Annotated[
+        int, typer.Option(help="Max detections per class per image, baked in (end2end/frigate).")
+    ] = 20,
 ):
-    """Export model to ONNX, OpenVINO IR or a TensorRT engine."""
+    """Export model to ONNX, OpenVINO IR or a TensorRT engine.
+
+    `--target end2end` bakes NMS into the graph, so the model returns detections
+    `[D, 7]` instead of raw `[N, 4]` + `[N, C]` tensors. Preprocessing stays outside:
+    the letterbox scale and padding are per-image and the caller needs them to map
+    boxes back to original pixels.
+    """
     import tempfile
     from pathlib import Path
 
@@ -82,7 +91,7 @@ def export(
     console = Console()
 
     if output is None:
-        suffix = "_frigate" if target == ExportTarget.frigate else ""
+        suffix = "" if target == ExportTarget.generic else f"_{target.value}"
         prec = "" if precision == Precision.fp32 else f"_{precision.value}"
         output = f"{model.value}_{input_size}{prec}{suffix}.{_DEFAULT_EXT[export_format]}"
 
@@ -98,6 +107,11 @@ def export(
         )
     if export_format == ExportFormat.tensorrt and target == ExportTarget.frigate:
         raise typer.BadParameter("the frigate target produces ONNX or OpenVINO IR, not a TensorRT engine")
+    if target != ExportTarget.generic and precision == Precision.int8:
+        raise typer.BadParameter(
+            f"the {target.value} target bakes NMS into the graph, which NNCF cannot calibrate through; "
+            "export int8 with --target generic"
+        )
 
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
     console.print(f"Loading {model.value}...")
@@ -122,7 +136,11 @@ def export(
         return
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        onnx_path = Path(output) if export_format == ExportFormat.onnx else Path(tmpdir) / "base.onnx"
+        needs_surgery = target == ExportTarget.end2end
+        if export_format == ExportFormat.onnx and not needs_surgery:
+            onnx_path = Path(output)
+        else:
+            onnx_path = Path(tmpdir) / "base.onnx"
 
         console.print(f"Exporting ONNX (opset {opset}, {input_size}x{input_size})...")
         export_onnx(
@@ -130,13 +148,27 @@ def export(
             onnx_path,
             input_size=input_size,
             opset=opset,
-            # Only the ONNX artifact keeps a symbolic batch. TensorRT would need an
-            # optimisation profile for it, and OpenVINO's INT8 calibration is simpler
-            # on a static shape.
-            dynamic_batch=(export_format == ExportFormat.onnx and not static_batch),
+            # Only the plain ONNX artifact keeps a symbolic batch. TensorRT would need
+            # an optimisation profile for it, OpenVINO's INT8 calibration is simpler on
+            # a static shape, and the NMS surgery indexes the batch dimension.
+            dynamic_batch=(export_format == ExportFormat.onnx and not needs_surgery and not static_batch),
             # TensorRT 11 is strongly typed: FP16 has to be in the graph, not a flag.
             half=(export_format == ExportFormat.tensorrt and precision == Precision.fp16),
         )
+
+        if needs_surgery:
+            from modern_yolonas.export.nms import make_end2end_onnx
+
+            console.print(f"Baking NMS into the graph (conf {conf_threshold}, IoU {iou_threshold})...")
+            e2e_path = Path(output) if export_format == ExportFormat.onnx else Path(tmpdir) / "end2end.onnx"
+            make_end2end_onnx(
+                str(onnx_path),
+                str(e2e_path),
+                conf_threshold=conf_threshold,
+                iou_threshold=iou_threshold,
+                max_detections=max_detections,
+            )
+            onnx_path = e2e_path
 
         if export_format == ExportFormat.openvino:
             from modern_yolonas.export.openvino import export_openvino
