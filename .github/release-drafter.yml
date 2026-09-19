@@ -1,31 +1,75 @@
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
 
+# Sections match the Conventional Commits type in the pull request title, which
+# `pr-title.yml` enforces. The label predicates are kept as a second condition —
+# conditions in a `when` list are OR'd — so anything labelled by hand still lands
+# in the right section even if its title says something else.
 categories:
   - title: "New Features"
-    labels:
-      - "enhancement"
-      - "feature"
+    when:
+      - conventional:
+          types: ["feat"]
+      - labels: ["enhancement", "feature"]
   - title: "Bug Fixes"
-    labels:
-      - "bug"
-      - "fix"
+    when:
+      - conventional:
+          types: ["fix"]
+      - labels: ["bug", "fix"]
   - title: "Documentation"
-    labels:
-      - "docs"
-      - "documentation"
+    when:
+      - conventional:
+          types: ["docs"]
+      - labels: ["docs", "documentation"]
   - title: "Maintenance"
-    labels:
-      - "chore"
-      - "maintenance"
-      - "dependencies"
+    when:
+      - conventional:
+          types: ["chore", "ci", "build", "refactor", "perf", "test", "style", "revert"]
+      - labels: ["chore", "maintenance", "dependencies"]
+
+  # --- Version resolution, read straight from the title ---
+  #
+  # This used to go through labels: the autolabeler turned the title into a
+  # `minor`/`patch` label and the resolver read the label back. `conventional`
+  # matches the title directly, so that round-trip is gone.
+  #
+  # While the package is 0.x there is no stability contract, so a breaking change
+  # takes the minor slot — see SemVer 4. At 1.0.0, change the increment below to
+  # "major".
+  - type: "version-resolver"
+    semver-increment: "minor"
+    when:
+      - conventional:
+          breaking: true
+  - type: "version-resolver"
+    semver-increment: "minor"
+    when:
+      - conventional:
+          types: ["feat"]
+
+  # Manual override. The highest matching increment wins, so a label can raise a
+  # bump but never lower one. This is how the `dev` -> `main` release pull request
+  # gets its version: its title is `release: ...`, which is a type no rule above
+  # matches, so without a label it would fall through to the patch fallback.
+  - type: "version-resolver"
+    semver-increment: "major"
+    when:
+      label: "major"
+  - type: "version-resolver"
+    semver-increment: "minor"
+    when:
+      label: "minor"
+
+  # Everything else: patch. No `when`, so it matches unconditionally.
+  - type: "version-resolver"
+    semver-increment: "patch"
 
 change-template: "- $TITLE @$AUTHOR (#$NUMBER)"
 change-title-escapes: '\<*_&'
 
-# Derive the labels from the Conventional Commits PR title, which `pr-title.yml`
-# enforces. Without this the version-resolver below never sees a label and every
-# release drafts as a patch — which is how v0.4.0, a `feat!`, drafted as one.
+# Descriptive labels only. These no longer carry the version bump — they exist so
+# pull requests are filterable in the UI — so a wrong one costs a mislabelled row,
+# not a wrong release number.
 autolabeler:
   - label: "enhancement"
     title: '/^feat(\(.+\))?!?:/i'
@@ -35,32 +79,6 @@ autolabeler:
     title: '/^docs(\(.+\))?!?:/i'
   - label: "chore"
     title: '/^(chore|ci|build|refactor|perf|test|style|revert)(\(.+\))?!?:/i'
-
-  # Version bump. While the package is 0.x there is no stability contract, so a
-  # breaking change takes the minor slot and `major` stays unused — see SemVer 4.
-  # At 1.0.0, move the `!` rule below onto the "major" label.
-  - label: "minor"
-    title: '/^[a-z]+(\(.+\))?!:/i'
-  - label: "minor"
-    title: '/^feat(\(.+\))?!?:/i'
-  - label: "patch"
-    title: '/^(fix|docs|chore|ci|build|refactor|perf|test|style|revert)(\(.+\))?:/i'
-
-# The `dev` -> `main` release pull request is deliberately not auto-labelled: it
-# aggregates a whole release, so which bump it deserves is a judgement call. Label
-# it by hand before merging, or the resolver falls through to `patch` below.
-
-version-resolver:
-  major:
-    labels:
-      - "major"
-  minor:
-    labels:
-      - "minor"
-  patch:
-    labels:
-      - "patch"
-  default: patch
 
 template: |
   ## Changes
