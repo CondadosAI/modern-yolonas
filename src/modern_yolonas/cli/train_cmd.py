@@ -48,7 +48,8 @@ def train(
     gradient_accum: Annotated[int, typer.Option(help="Gradient accumulation steps (1 = disabled).")] = 1,
     early_stopping_patience: Annotated[int, typer.Option(help="Stop training if train loss doesn't improve for N epochs (0 = disabled).")] = 0,
     early_stopping_min_delta: Annotated[float, typer.Option(help="Minimum improvement in train loss to count as progress.")] = 1e-4,
-    close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close).")] = 0,
+    close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close). Default comes from the recipe.")] = -1,
+    recipe: Annotated[str, typer.Option(help="Named recipe: legacy, coco or rf100vl. 'coco' is the one that reproduces published COCO results — it uses mosaic and letterboxes, which 'legacy' does not.")] = "legacy",
     grad_clip: Annotated[float, typer.Option(help="Clip gradients to this max norm (0 = disabled).")] = 10.0,
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
     channels_last: Annotated[bool, typer.Option("--channels-last/--no-channels-last", help="Hold activations in NHWC. Faster for convolutions under AMP on Ampere+; changes layout only, not results.")] = True,
@@ -122,7 +123,8 @@ def train(
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, LetterboxResize, RandomChannelSwap, RandomResizedCropFlipAffine, Normalize, Mixup
+    from modern_yolonas.training.recipes import RECIPES
+    from modern_yolonas.training.run import build_transforms
     import lightning as L
     from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
@@ -132,40 +134,41 @@ def train(
     console = Console()
     data_path = Path(data)
 
-    train_transforms = Compose([
-        HSVAugment(p=0.5),
-        # One warp for crop + flip + affine. Same distributions -- the parameters come
-        # from Albumentations' own samplers -- but the image is resampled once.
-        RandomResizedCropFlipAffine(
-            size=input_size,
-            scale=(0.05, 0.8),
-            ratio=(0.75, 1.33),
-            flip_prob=0.5,
-            translate=0.25,
-            affine_scale=(0.5, 1.5),
-        ),
-        RandomChannelSwap(p=0.5),
-        # LetterboxResize(target_size=input_size),
-        # Mixup is appended here after the dataset is created (needs dataset reference)
-        # uint8 crosses pin_memory and PCIe at a quarter the size; the Lightning
-        # module's on_after_batch_transfer divides by 255 on the device.
-        Normalize(dtype="uint8"),
-    ])
-    # Validation must see the whole image, aspect preserved — that is what detection
-    # mAP is defined over, and it is what `yolonas eval` and the inference path use.
-    # A CenterCrop here deletes edge objects, and raises outright on any image smaller
-    # than input_size (most of COCO val2017 at 640).
-    val_transforms = Compose([
-        LetterboxResize(target_size=input_size),
-        Normalize(dtype="uint8"),
-    ])
+    if recipe not in RECIPES:
+        raise typer.BadParameter(f"unknown recipe {recipe!r}; choose from {', '.join(RECIPES)}")
+    active = {**RECIPES[recipe], "input_size": input_size}
+    aug = active["augmentations"]
+
+    # A recipe supplies defaults; anything the caller actually typed wins. "Actually
+    # typed" is inferred from the value still matching typer's default, which is the
+    # same convention the YAML config path uses.
+    if epochs == 300:
+        epochs = int(active["epochs"])
+    if batch_size == 32:
+        batch_size = int(active["batch_size"])
+    if lr == 2e-4:
+        lr = float(active["lr"])
+    if close_mosaic_epochs < 0:
+        close_mosaic_epochs = int(aug.get("close_mosaic_epochs", 0))
+
+    console.print(
+        f"[bold]recipe[/bold]={recipe}  optimizer={active['optimizer']}  "
+        f"mosaic={'on' if aug.get('mosaic') else 'off'}  "
+        f"geometry={'fused crop' if aug.get('fused_geometry') else 'letterbox'}  "
+        f"close_mosaic={close_mosaic_epochs}"
+    )
+
+    # Transforms are assigned after the datasets exist: Mosaic and Mixup need a
+    # dataset reference to draw their extra images from.
+    train_transforms = None
+    val_transforms = build_transforms(active, train=False)
 
     val_ann_file: Path | None = None
 
     if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
 
-        train_dataset = YOLODetectionDataset(data, split="train", transforms=train_transforms, input_size=input_size, ignore_empty_annotations=ignore_empty)
+        train_dataset = YOLODetectionDataset(data, split="train", transforms=None, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset = YOLODetectionDataset(data, split="val", transforms=val_transforms, input_size=input_size)
         if num_classes == 0:
             num_classes = train_dataset.num_classes
@@ -189,7 +192,7 @@ def train(
         if not _val_ann.exists() and (data_path / "annotations" / "instances_val2017.json").exists():
             _val_ann = data_path / "annotations" / "instances_val2017.json"
 
-        train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=train_transforms, input_size=input_size, ignore_empty_annotations=ignore_empty)
+        train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=None, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset   = COCODetectionDataset(_val_images,   _val_ann,   transforms=val_transforms,   input_size=input_size)
 
         val_ann_file = _val_ann
@@ -197,8 +200,16 @@ def train(
         if num_classes == 0:
             num_classes = len(train_dataset.cat_id_to_label)
 
-    # Wire Mixup now that we have a dataset (placed just before Normalize)
-    train_transforms.transforms.insert(-1, Mixup(train_dataset, prob=0.5))
+    train_transforms = build_transforms(active, train=True, dataset=train_dataset)
+    train_dataset.transforms = train_transforms
+
+    if len(train_dataset) > 50_000 and not aug.get("mosaic"):
+        console.print(
+            f"[yellow]{len(train_dataset)} training images with recipe {recipe!r}, which has no "
+            f"mosaic.[/yellow]\n"
+            f"[yellow]Every published COCO-scale recipe uses it. To switch:[/yellow] "
+            f"--recipe coco"
+        )
 
     # Resolve class names from dataset (used for annotation in val image logging)
     class_names: list[str] | None = getattr(train_dataset, "class_names", None)
@@ -234,6 +245,9 @@ def train(
         model=yolo_model,
         num_classes=num_classes,
         lr=lr,
+        optimizer_name=active["optimizer"],
+        weight_decay=active["weight_decay"],
+        cosine_final_lr_ratio=active.get("cosine_final_lr_ratio", 0.1),
         warmup_steps=warmup_steps,
         val_ann_file=val_ann_file,
         input_size=input_size,
