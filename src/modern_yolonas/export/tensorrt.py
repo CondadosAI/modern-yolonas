@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+
 __all__ = ["build_engine", "engine_metadata", "EngineRunner"]
 
 # TensorRT names its dtypes after C, the rest of this project after the benchmark table.
@@ -204,15 +206,32 @@ class EngineRunner:
         self.context.set_input_shape(self.input_name, tuple(images.shape))
         self.context.set_tensor_address(self.input_name, images.data_ptr())
 
-        outputs = []
+        # A graph with NMS in it has a data-dependent output shape, which reads as -1
+        # before execution. TensorRT gives an upper bound for exactly this case; the
+        # buffer is allocated to it and sliced back afterwards.
+        buffers, shapes = [], []
         for name in self.output_names:
-            out = torch.empty(
-                tuple(self.context.get_tensor_shape(name)), dtype=self._torch_dtype(name), device=self.device
-            )
-            self.context.set_tensor_address(name, out.data_ptr())
-            outputs.append(out)
+            shape = tuple(self.context.get_tensor_shape(name))
+            if any(dim < 0 for dim in shape):
+                dtype = self._torch_dtype(name)
+                count = self.context.get_max_output_size(name) // dtype.itemsize
+                buffer = torch.empty(count, dtype=dtype, device=self.device)
+            else:
+                buffer = torch.empty(shape, dtype=self._torch_dtype(name), device=self.device)
+            self.context.set_tensor_address(name, buffer.data_ptr())
+            buffers.append(buffer)
+            shapes.append(shape)
 
         if not self.context.execute_async_v3(self.stream.cuda_stream):
             raise RuntimeError("TensorRT execution failed")
         self.stream.synchronize()
+
+        outputs = []
+        for name, buffer, shape in zip(self.output_names, buffers, shapes):
+            if any(dim < 0 for dim in shape):
+                # Resolved only now that the kernel has run.
+                actual = tuple(self.context.get_tensor_shape(name))
+                outputs.append(buffer[: int(np.prod(actual))].view(actual))
+            else:
+                outputs.append(buffer)
         return tuple(outputs)

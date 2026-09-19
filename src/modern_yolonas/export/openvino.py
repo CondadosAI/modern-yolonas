@@ -42,11 +42,30 @@ def calibration_batches(
     return batches
 
 
+# The head's decode tail — DFL softmax, the anchor add/subtract, the stack back into
+# boxes — is elementwise arithmetic on a few thousand values. Quantizing it buys
+# nothing measurable, and OpenVINO's low-precision transformations throw on the
+# dequantization it produces there:
+#
+#   [ReshapeTransformation] ... opset1::Multiply .../DequantizationMultiply
+#   [0]:f32[1,2100,2100] -> (f32[1,2100,1]) CALLBACK HAS THROWN
+#
+# (that [1, 2100, 2100] intermediate exists only after quantization — the FP32 graph's
+# largest activation is 1.2M elements). Leaving these op types alone keeps INT8 where
+# the compute is, in the convolutions.
+_ARITHMETIC_TAIL = ["Add", "Subtract", "Multiply", "Concat", "ReduceSum", "Softmax", "Reshape"]
+
+
 def _quantize(model, batches: list[np.ndarray]):
     import nncf
 
     dataset = nncf.Dataset(batches, lambda batch: {0: batch})
-    return nncf.quantize(model, dataset, subset_size=len(batches))
+    return nncf.quantize(
+        model,
+        dataset,
+        subset_size=len(batches),
+        ignored_scope=nncf.IgnoredScope(types=_ARITHMETIC_TAIL),
+    )
 
 
 def export_openvino(
