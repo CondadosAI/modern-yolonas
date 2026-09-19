@@ -64,7 +64,7 @@ def svg(groups: list[tuple[str, dict]], sizes: list[int], colors: dict, model: s
     # The right margin holds the value and the configuration that produced it. Both
     # go outside the bar: a label inside overflows as soon as a bar is short, and
     # white-on-background is invisible.
-    left, right, top = 92, 230, 46
+    left, right, top = 92, 340, 46
     width = 760
     plot_w = width - left - right
 
@@ -78,7 +78,7 @@ def svg(groups: list[tuple[str, dict]], sizes: list[int], colors: dict, model: s
         f'width="{width + 4}" height="{height + 6}" font-family="system-ui,-apple-system,Segoe UI,sans-serif">',
         f'<style>text{{fill:{colors["ink"]}}} .m{{fill:{colors["muted"]}}}</style>',
         f'<text x="0" y="16" font-size="14" font-weight="600">Fastest achievable latency, {model}</text>',
-        '<text x="0" y="34" font-size="11" class="m">milliseconds per frame, batch 1 — lower is better</text>',
+        '<text x="0" y="34" font-size="11" class="m">milliseconds per frame, batch 1, single stream — FPS is its reciprocal, not throughput</text>',
     ]
 
     # Legend, top right. Two series always get one.
@@ -101,7 +101,7 @@ def svg(groups: list[tuple[str, dict]], sizes: list[int], colors: dict, model: s
                 f'<rect x="{left}" y="{y}" width="{w:.1f}" height="{bar_h}" rx="4" '
                 f'fill="{colors["s1"] if i == 0 else colors["s2"]}"/>'
             )
-            value = f'{entry["median_ms"]:.2f} ms'
+            value = f'{entry["median_ms"]:.2f} ms · {entry["fps"]:.0f} FPS'
             parts.append(
                 f'<text x="{left + w + 8:.1f}" y="{y + bar_h / 2 + 4}" font-size="11" '
                 f'font-weight="600">{value}</text>'
@@ -109,7 +109,7 @@ def svg(groups: list[tuple[str, dict]], sizes: list[int], colors: dict, model: s
             # Offset by the value's own width — a fixed gap collides as soon as the
             # number gains a digit.
             parts.append(
-                f'<text x="{left + w + 18 + len(value) * 6.4:.1f}" y="{y + bar_h / 2 + 4}" '
+                f'<text x="{left + w + 26 + len(value) * 6.6:.1f}" y="{y + bar_h / 2 + 4}" '
                 f'font-size="10.5" class="m">{config(entry)}</text>'
             )
             y += bar_h + bar_gap
@@ -218,19 +218,27 @@ def main():
         "",
     ]
 
-    lines.append("| hardware | " + " | ".join(f"fastest at {s}" for s in sizes) + " |")
-    lines.append("|---|" + "---|" * len(sizes))
+    lines.append("| hardware | " + " | ".join(f"fastest at {s} | FPS" for s in sizes) + " |")
+    lines.append("|---|" + "---|---:|" * len(sizes))
     for name, by_size in groups:
         cells = []
         for size in sizes:
             entry = by_size.get(size)
-            cells.append(f"**{entry['median_ms']:.2f} ms** — {config(entry)}" if entry else "—")
+            if entry:
+                cells += [f"**{entry['median_ms']:.2f} ms** — {config(entry)}", f"**{entry['fps']:.0f}**"]
+            else:
+                cells += ["—", "—"]
         lines.append(f"| {name} | " + " | ".join(cells) + " |")
 
     lines += [
         "",
         f"{args.chart_model.replace('yolo_nas_', 'YOLO-NAS-').upper()}, model inference only, NMS left to the caller.",
         "The other variants are in the per-device tables below.",
+        "",
+        "**FPS here is `1000 / latency` on a single synchronous stream, which is not**",
+        "**throughput.** A pipeline that overlaps decode, transfer and inference across",
+        "streams reports a higher number on the same hardware; one that does none of that",
+        "reports a lower one, because these figures exclude preprocessing.",
         "",
         "## What each choice costs",
         "",
@@ -251,8 +259,8 @@ def main():
         device_names = sorted({r["device"] for r in by_hw[name]})
         if len(device_names) > 1 or device_names[0] != name:
             lines += ["<sub>" + " · ".join(f"`{d}`" for d in device_names) + "</sub>", ""]
-        lines.append("| runtime | precision | NMS | " + " | ".join(f"{s} ms" for s in sizes) + " |")
-        lines.append("|---|---|---|" + "---:|" * len(sizes))
+        lines.append("| runtime | precision | NMS | " + " | ".join(f"{s} ms | {s} FPS" for s in sizes) + " |")
+        lines.append("|---|---|---|" + "---:|---:|" * len(sizes))
 
         cells = defaultdict(dict)
         for row in by_hw[name]:
@@ -261,7 +269,9 @@ def main():
             cells[(config(row), row["nms"])][row["input"]] = row["median_ms"]
         for (label, nms), by_size in sorted(cells.items(), key=lambda kv: min(kv[1].values())):
             runtime, precision = label.rsplit(" ", 1)
-            values = " | ".join(f"{by_size[s]:.2f}" if s in by_size else "—" for s in sizes)
+            values = " | ".join(
+                f"{by_size[s]:.2f} | {1000 / by_size[s]:.0f}" if s in by_size else "— | —" for s in sizes
+            )
             lines.append(f"| {runtime} | {precision} | {nms} | {values} |")
         lines.append("")
 

@@ -119,6 +119,11 @@ omit = [
     "src/modern_yolonas/hub.py",
     "src/modern_yolonas/serve/app.py",
     "src/modern_yolonas/export/frigate.py",
+    # Needs an NVIDIA GPU and a TensorRT install, neither of which CI has. It is
+    # exercised by hand through `examples/runtime_matrix.py` and
+    # `examples/runtime_accuracy.py`, which is how the stream-ordering bug in
+    # `EngineRunner` was caught — a mocked test would not have found that.
+    "src/modern_yolonas/export/tensorrt.py",
     "src/modern_yolonas/data/download.py",
 ]
 

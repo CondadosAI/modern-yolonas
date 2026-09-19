@@ -53,8 +53,10 @@ def main():
     matrix = json.loads(Path(args.matrix).read_text())
     matrix_rows, env = matrix["rows"], matrix["environment"]
 
-    def cell(value, unit=""):
-        return f"{value:.2f}{unit}" if isinstance(value, float) else ("—" if value is None else f"{value}{unit}")
+    def cell(ms):
+        """Latency with its reciprocal underneath. FPS carries no information a
+        millisecond figure does not, and it is the one most readers think in."""
+        return "—" if ms is None else f"{ms:.2f} ms<br><sub>{1000 / ms:.0f} FPS</sub>"
 
     headline = [
         "| Model | Input | Params | GFLOPs | AP | AP<sub>50</sub> | dGPU<br><sub>TensorRT FP16</sub> "
@@ -75,7 +77,7 @@ def main():
                        lambda r: r["runtime"] == "OpenVINO" and r["precision"] == "int8" and "Iris" in r["device"])
         headline.append(
             f"| **{row['model']}** | {size} | {row['params_m']}M | {row['gflops']} | "
-            f"{row['mAP']} | {row['mAP_50']} | {cell(trt, ' ms')} | {cell(cpu, ' ms')} | {cell(igpu, ' ms')} |"
+            f"{row['mAP']} | {row['mAP_50']} | {cell(trt)} | {cell(cpu)} | {cell(igpu)} |"
         )
         detail.append(
             f"| {row['model']} | {size} | {row['params_m']}M | {row['gflops']} | {row['mAP']} | "
@@ -93,8 +95,10 @@ def main():
         *headline,
         "",
         f"Latency is model inference only, batch 1, on {env.get('gpu', 'this machine')} and "
-        f"{env.get('cpu', 'its CPU')}. The full grid — every runtime, precision and NMS placement —",
-        "is in [the runtime matrix](runtime_matrix.md).",
+        f"{env.get('cpu', 'its CPU')}. FPS is `1000 / latency` on a single synchronous stream —",
+        "**not throughput**, and not a whole frame, since preprocessing and NMS are excluded.",
+        "The full grid — every runtime, precision and NMS placement — is in",
+        "[the runtime matrix](runtime_matrix.md).",
         "",
         "## Protocol",
         "",

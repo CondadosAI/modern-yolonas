@@ -72,12 +72,12 @@ terms — see **License** below). Pre-exported ONNX, OpenVINO IR and TensorRT en
 
 | Model | Input | Params | GFLOPs | AP | AP<sub>50</sub> | dGPU<br><sub>TensorRT FP16</sub> | CPU<br><sub>OpenVINO INT8</sub> | iGPU<br><sub>OpenVINO INT8</sub> |
 |:---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **YOLO-NAS-S** | 320 | 19.05M | 8.5 | 38.4 | 53.9 | 1.17 ms | 5.19 ms | 6.83 ms |
-| **YOLO-NAS-S** | 640 | 19.05M | 33.9 | 47.3 | 64.4 | 2.12 ms | 19.87 ms | 12.04 ms |
-| **YOLO-NAS-M** | 320 | 51.18M | 23.5 | 43.1 | 59.1 | 1.50 ms | 12.03 ms | 9.45 ms |
-| **YOLO-NAS-M** | 640 | 51.18M | 94.2 | 51.3 | 68.3 | 4.19 ms | 47.47 ms | 25.49 ms |
-| **YOLO-NAS-L** | 320 | 66.98M | 32.2 | 43.8 | 59.9 | 1.94 ms | 15.56 ms | 10.38 ms |
-| **YOLO-NAS-L** | 640 | 66.98M | 129.0 | 52.0 | 69.1 | 5.41 ms | 63.00 ms | 32.07 ms |
+| **YOLO-NAS-S** | 320 | 19.05M | 8.5 | 38.4 | 53.9 | 1.17 ms<br><sub>855 FPS</sub> | 5.19 ms<br><sub>193 FPS</sub> | 6.83 ms<br><sub>146 FPS</sub> |
+| **YOLO-NAS-S** | 640 | 19.05M | 33.9 | 47.3 | 64.4 | 2.12 ms<br><sub>472 FPS</sub> | 19.87 ms<br><sub>50 FPS</sub> | 12.04 ms<br><sub>83 FPS</sub> |
+| **YOLO-NAS-M** | 320 | 51.18M | 23.5 | 43.1 | 59.1 | 1.50 ms<br><sub>666 FPS</sub> | 12.03 ms<br><sub>83 FPS</sub> | 9.45 ms<br><sub>106 FPS</sub> |
+| **YOLO-NAS-M** | 640 | 51.18M | 94.2 | 51.3 | 68.3 | 4.19 ms<br><sub>239 FPS</sub> | 47.47 ms<br><sub>21 FPS</sub> | 25.49 ms<br><sub>39 FPS</sub> |
+| **YOLO-NAS-L** | 320 | 66.98M | 32.2 | 43.8 | 59.9 | 1.94 ms<br><sub>515 FPS</sub> | 15.56 ms<br><sub>64 FPS</sub> | 10.38 ms<br><sub>96 FPS</sub> |
+| **YOLO-NAS-L** | 640 | 66.98M | 129.0 | 52.0 | 69.1 | 5.41 ms<br><sub>185 FPS</sub> | 63.00 ms<br><sub>16 FPS</sub> | 32.07 ms<br><sub>31 FPS</sub> |
 
 Every column is measured here, not quoted — regenerate the whole table with
 `uv run examples/model_table.py` and `uv run examples/render_model_table.py`. The full grid,
@@ -90,7 +90,9 @@ across PyTorch / ONNX Runtime / OpenVINO / TensorRT and CPU / iGPU / dGPU, is in
 <br>
 
 **Latency** is model forward only — no preprocessing, no NMS — batch 1, median of 30 runs
-after 8 discarded, on an RTX 3060 Laptop / i7-12700H / Iris Xe, on mains power. The dGPU
+after 8 discarded. **FPS is its reciprocal on a single synchronous stream, not throughput**:
+a pipeline that overlaps decode, transfer and inference reports more on the same hardware,
+and one that counts whole frames reports less, because preprocessing is excluded. Measured on an RTX 3060 Laptop / i7-12700H / Iris Xe, on mains power. The dGPU
 column is a TensorRT engine built natively on that card; an `--hardware-compatible` engine,
 which is the kind worth publishing, costs 16% at 320 and 8% at 640. Leaderboards that publish
 T4 TensorRT latency are not measuring the same thing, so those columns should not be read side

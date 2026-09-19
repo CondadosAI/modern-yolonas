@@ -117,3 +117,78 @@ def test_end2end_rejects_int8(tmp_path):
     )
     assert result.exit_code != 0
     assert "NMS" in result.output or "nms" in result.output
+
+
+# --- OpenVINO -------------------------------------------------------------------
+# Runs on CPU from a pip wheel, so CI covers it. TensorRT cannot be tested here: it
+# needs an NVIDIA GPU, and `pyproject.toml` omits that module from coverage saying so.
+
+ov = pytest.importorskip("openvino")
+
+
+@pytest.fixture(scope="module")
+def tiny_onnx(small_model, tmp_path_factory):
+    import copy
+
+    path = tmp_path_factory.mktemp("ov") / "m.onnx"
+    return export_onnx(fuse_for_inference(copy.deepcopy(small_model)), path, input_size=128, dynamic_batch=False)
+
+
+@pytest.mark.parametrize("precision", ["fp32", "fp16"])
+def test_openvino_export_runs_and_matches_onnx(tiny_onnx, tmp_path, precision):
+    from modern_yolonas.export.openvino import export_openvino
+
+    xml = export_openvino(tiny_onnx, tmp_path / f"m_{precision}.xml", precision=precision)
+    assert xml.exists() and xml.with_suffix(".bin").exists()
+
+    x = np.random.randn(1, 3, 128, 128).astype(np.float32)
+    reference = onnx_session(tiny_onnx, "cpu").run(None, {"images": x})
+
+    core = ov.Core()
+    request = core.compile_model(core.read_model(xml), "CPU").create_infer_request()
+    result = request.infer({0: x})
+    boxes, scores = (result[o] for o in request.model_outputs)
+
+    assert boxes.shape == reference[0].shape
+    assert scores.shape == reference[1].shape
+    # fp16 compresses the weights; OpenVINO still executes in fp32 on a CPU, so the
+    # tolerance is the weight rounding rather than a half-precision forward pass.
+    tolerance = 1e-4 if precision == "fp32" else 5e-2
+    assert np.abs(reference[1] - scores).max() < tolerance
+
+
+def test_openvino_int8_requires_calibration_images(tiny_onnx, tmp_path):
+    from modern_yolonas.export.openvino import export_openvino
+
+    with pytest.raises(ValueError, match="calibration-dir"):
+        export_openvino(tiny_onnx, tmp_path / "m.xml", precision="int8")
+
+
+def test_openvino_rejects_unknown_precision(tiny_onnx, tmp_path):
+    from modern_yolonas.export.openvino import export_openvino
+
+    with pytest.raises(ValueError, match="unknown precision"):
+        export_openvino(tiny_onnx, tmp_path / "m.xml", precision="fp8")
+
+
+def test_calibration_batches_spread_over_the_directory(tmp_path):
+    """Sampling the first N of a sorted COCO listing is a contiguous slice of ids."""
+    import cv2
+
+    from modern_yolonas.export.openvino import calibration_batches
+
+    for i in range(20):
+        cv2.imwrite(str(tmp_path / f"{i:04d}.jpg"), np.full((40, 60, 3), i * 10, dtype=np.uint8))
+
+    batches = calibration_batches(tmp_path, input_size=64, limit=5)
+    assert len(batches) == 5
+    assert all(b.shape == (1, 3, 64, 64) for b in batches)
+    # Distinct fill values, so a contiguous first-five slice would collapse the spread.
+    assert len({float(b.mean()) for b in batches}) == 5
+
+
+def test_calibration_batches_needs_images(tmp_path):
+    from modern_yolonas.export.openvino import calibration_batches
+
+    with pytest.raises(ValueError, match="no images found"):
+        calibration_batches(tmp_path, input_size=64)

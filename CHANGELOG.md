@@ -40,6 +40,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `examples/export_zoo.py` and `examples/publish_zoo.py`: the full pre-exported set
   with a manifest, and its Hugging Face model card.
 - `docs/guides/arm-support.md` — a plan, explicitly not a measurement.
+- COCO val2017 accuracy at 320 for all three variants, and an FPS column beside every
+  latency figure — labelled as the reciprocal of single-stream latency, which is not
+  throughput.
+- CI installs the `onnx` and `openvino` extras. Without them `tests/test_export.py`
+  skipped in its entirety and both paths shipped untested.
+
+### Fixed
+- **`EngineRunner` did not order its CUDA stream against torch's**, so TensorRT could
+  read an input whose copy had not landed. Nothing failed — the engine returned
+  plausible numbers, and COCO AP for YOLO-NAS-S at 640 came out at 31.4 instead of
+  47.3. Ruled out by experiment first: FP16 arithmetic (PyTorch on the same half
+  graph is exact), the exported FP16 ONNX (ONNX Runtime reads it at full accuracy)
+  and `AMPERE_PLUS` (the native engine was marginally worse).
+- OpenVINO INT8 export could not compile at all; the head's decode tail is now
+  excluded from quantization.
 
 ### Changed
 - ONNX export writes weights into the file instead of a `.onnx.data` sidecar.

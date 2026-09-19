@@ -10,14 +10,19 @@ Every number is measured on the machine below. Nothing here is quoted.
   <img src="runtime_matrix.svg" alt="Fastest achievable latency per device, at 320 and 640">
 </picture>
 
-| hardware | fastest at 320 | fastest at 640 |
-|---|---|---|
-| dGPU | **1.17 ms** — TensorRT FP16 | **2.12 ms** — TensorRT FP16 |
-| iGPU | **6.83 ms** — OpenVINO INT8 | **12.04 ms** — OpenVINO INT8 |
-| CPU | **5.19 ms** — OpenVINO INT8 | **19.87 ms** — OpenVINO INT8 |
+| hardware | fastest at 320 | FPS | fastest at 640 | FPS |
+|---|---|---:|---|---:|
+| dGPU | **1.17 ms** — TensorRT FP16 | **855** | **2.12 ms** — TensorRT FP16 | **472** |
+| iGPU | **6.83 ms** — OpenVINO INT8 | **146** | **12.04 ms** — OpenVINO INT8 | **83** |
+| CPU | **5.19 ms** — OpenVINO INT8 | **193** | **19.87 ms** — OpenVINO INT8 | **50** |
 
 YOLO-NAS-S, model inference only, NMS left to the caller.
 The other variants are in the per-device tables below.
+
+**FPS here is `1000 / latency` on a single synchronous stream, which is not**
+**throughput.** A pipeline that overlaps decode, transfer and inference across
+streams reports a higher number on the same hardware; one that does none of that
+reports a lower one, because these figures exclude preprocessing.
 
 ## What each choice costs
 
@@ -38,53 +43,53 @@ the reason in the last column; a negative one is a straight win.
 
 <sub>`NVIDIA GeForce RTX 3060 Laptop GPU (dGPU)` · `dGPU` · `dGPU ampere_plus` · `dGPU native`</sub>
 
-| runtime | precision | NMS | 320 ms | 640 ms |
-|---|---|---|---:|---:|
-| TensorRT | FP16 | external | 1.17 | 2.12 |
-| TensorRT ampere_plus | FP16 | external | 1.36 | 2.28 |
-| TensorRT | FP16 | torch | 1.55 | 2.41 |
-| TensorRT ampere_plus | FP16 | torch | 1.73 | 2.59 |
-| TensorRT | FP16 | graph | 1.92 | 3.27 |
-| TensorRT ampere_plus | FP16 | graph | 2.06 | 3.50 |
-| TensorRT | FP32 | graph | 2.52 | 6.03 |
-| TensorRT | FP32 | external | 2.65 | 5.47 |
-| TensorRT | FP32 | torch | 3.00 | 5.75 |
-| PyTorch | FP32 | external | 4.95 | 9.55 |
-| PyTorch | FP32 | torch | 5.24 | 9.90 |
-| PyTorch | FP16 | external | 5.49 | 6.25 |
-| PyTorch | FP16 | torch | 5.84 | 6.59 |
-| OpenVINO | INT8 | external | 19.39 | 63.61 |
-| OpenVINO | FP32 | graph | 22.65 | 83.56 |
-| OpenVINO | FP16 | graph | 22.68 | 83.26 |
-| OpenVINO | FP16 | external | 28.88 | 103.83 |
-| OpenVINO | FP32 | external | 29.02 | 103.93 |
+| runtime | precision | NMS | 320 ms | 320 FPS | 640 ms | 640 FPS |
+|---|---|---|---:|---:|---:|---:|
+| TensorRT | FP16 | external | 1.17 | 855 | 2.12 | 472 |
+| TensorRT ampere_plus | FP16 | external | 1.36 | 737 | 2.28 | 439 |
+| TensorRT | FP16 | torch | 1.55 | 645 | 2.41 | 414 |
+| TensorRT ampere_plus | FP16 | torch | 1.73 | 580 | 2.59 | 386 |
+| TensorRT | FP16 | graph | 1.92 | 522 | 3.27 | 306 |
+| TensorRT ampere_plus | FP16 | graph | 2.06 | 485 | 3.50 | 285 |
+| TensorRT | FP32 | graph | 2.52 | 397 | 6.03 | 166 |
+| TensorRT | FP32 | external | 2.65 | 378 | 5.47 | 183 |
+| TensorRT | FP32 | torch | 3.00 | 333 | 5.75 | 174 |
+| PyTorch | FP32 | external | 4.95 | 202 | 9.55 | 105 |
+| PyTorch | FP32 | torch | 5.24 | 191 | 9.90 | 101 |
+| PyTorch | FP16 | external | 5.49 | 182 | 6.25 | 160 |
+| PyTorch | FP16 | torch | 5.84 | 171 | 6.59 | 152 |
+| OpenVINO | INT8 | external | 19.39 | 52 | 63.61 | 16 |
+| OpenVINO | FP32 | graph | 22.65 | 44 | 83.56 | 12 |
+| OpenVINO | FP16 | graph | 22.68 | 44 | 83.26 | 12 |
+| OpenVINO | FP16 | external | 28.88 | 35 | 103.83 | 10 |
+| OpenVINO | FP32 | external | 29.02 | 34 | 103.93 | 10 |
 
 ### iGPU
 
 <sub>`Intel(R) Iris(R) Xe Graphics (iGPU)`</sub>
 
-| runtime | precision | NMS | 320 ms | 640 ms |
-|---|---|---|---:|---:|
-| OpenVINO | INT8 | external | 6.83 | 12.04 |
-| OpenVINO | FP32 | external | 7.05 | 19.23 |
-| OpenVINO | FP16 | external | 7.09 | 19.25 |
-| OpenVINO | FP16 | graph | 13.73 | 34.74 |
-| OpenVINO | FP32 | graph | 13.78 | 34.14 |
+| runtime | precision | NMS | 320 ms | 320 FPS | 640 ms | 640 FPS |
+|---|---|---|---:|---:|---:|---:|
+| OpenVINO | INT8 | external | 6.83 | 146 | 12.04 | 83 |
+| OpenVINO | FP32 | external | 7.05 | 142 | 19.23 | 52 |
+| OpenVINO | FP16 | external | 7.09 | 141 | 19.25 | 52 |
+| OpenVINO | FP16 | graph | 13.73 | 73 | 34.74 | 29 |
+| OpenVINO | FP32 | graph | 13.78 | 73 | 34.14 | 29 |
 
 ### CPU
 
 <sub>`12th Gen Intel(R) Core(TM) i7-12700H` · `CPU`</sub>
 
-| runtime | precision | NMS | 320 ms | 640 ms |
-|---|---|---|---:|---:|
-| OpenVINO | INT8 | external | 5.19 | 19.87 |
-| ORT | FP32 | external | 14.73 | 61.13 |
-| ORT | FP32 | graph | 14.97 | 62.69 |
-| OpenVINO | FP16 | external | 15.86 | 64.65 |
-| OpenVINO | FP32 | external | 16.17 | 65.02 |
-| OpenVINO | FP32 | graph | 16.24 | 66.30 |
-| OpenVINO | FP16 | graph | 16.38 | 65.96 |
-| PyTorch | FP32 | external | 33.57 | 103.20 |
+| runtime | precision | NMS | 320 ms | 320 FPS | 640 ms | 640 FPS |
+|---|---|---|---:|---:|---:|---:|
+| OpenVINO | INT8 | external | 5.19 | 193 | 19.87 | 50 |
+| ORT | FP32 | external | 14.73 | 68 | 61.13 | 16 |
+| ORT | FP32 | graph | 14.97 | 67 | 62.69 | 16 |
+| OpenVINO | FP16 | external | 15.86 | 63 | 64.65 | 15 |
+| OpenVINO | FP32 | external | 16.17 | 62 | 65.02 | 15 |
+| OpenVINO | FP32 | graph | 16.24 | 62 | 66.30 | 15 |
+| OpenVINO | FP16 | graph | 16.38 | 61 | 65.96 | 15 |
+| PyTorch | FP32 | external | 33.57 | 30 | 103.20 | 10 |
 
 ## How this was measured
 
