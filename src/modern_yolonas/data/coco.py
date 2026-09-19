@@ -8,6 +8,8 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+from modern_yolonas.coco import CROWD_CLASS
 from torch.utils.data import Dataset
 
 Transform = Callable[[np.ndarray, dict[str, Any]], tuple[np.ndarray, dict[str, Any]]]
@@ -76,10 +78,11 @@ class COCODetectionDataset(Dataset):
         anns = self.coco.loadAnns(ann_ids)
         targets = []
         for ann in anns:
-            if ann.get("iscrowd", 0):
-                continue
             x, y, bw, bh = ann["bbox"]
-            cls = self.cat_id_to_label[ann["category_id"]]
+            # Crowd regions are kept, marked, and used by the loss to ignore the
+            # anchors they cover. Dropping them taught the model that a crowd is
+            # background; training on them would teach one box around many objects.
+            cls = CROWD_CLASS if ann.get("iscrowd", 0) else self.cat_id_to_label[ann["category_id"]]
             xc = (x + bw / 2) / w_img
             yc = (y + bh / 2) / h_img
             nw = bw / w_img

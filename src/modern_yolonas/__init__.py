@@ -12,7 +12,7 @@ from modern_yolonas.inference.embed import (
     YoloNASEmbedder,
 )
 from modern_yolonas.tracking import DeepHMSort
-from modern_yolonas.coco import COCOClass
+from modern_yolonas.coco import CROWD_CLASS, COCOClass
 from modern_yolonas.inference.visualize import COCO_NAMES
 
 
@@ -57,6 +57,7 @@ __all__ = [
     "Task",
     "DeepHMSort",
     "COCOClass",
+    "CROWD_CLASS",
     "COCO_NAMES",
 ]
 

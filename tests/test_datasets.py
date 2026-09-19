@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from modern_yolonas.data.base import BaseDetectionDataset, DetectionTransform
+from modern_yolonas import CROWD_CLASS
 from modern_yolonas.data.coco import COCODetectionDataset
 from modern_yolonas.data.transforms import Mixup, Mosaic, RandomAffine
 from modern_yolonas.data.yolo import YOLODetectionDataset
@@ -121,16 +122,23 @@ class TestCOCODetectionDataset:
         # Categories sorted: [5, 7] → labels {5:0, 7:1}
         assert ds.cat_id_to_label == {5: 0, 7: 1}
 
-    def test_load_raw_filters_crowd(self, tiny_coco):
+    def test_load_raw_marks_crowd_rather_than_dropping_it(self, tiny_coco):
+        """Crowd annotations used to be discarded here.
+
+        That taught the model those regions were background. They are now kept with
+        CROWD_CLASS so the loss can ignore the anchors they cover -- neither object
+        nor background. This test asserted the old behaviour; it now asserts the fix.
+        """
         img_dir, ann = tiny_coco
         ds = COCODetectionDataset(root=img_dir, ann_file=ann)
         image, targets = ds.load_raw(0)
         assert image.shape == (100, 100, 3)
-        # 3 annotations total (ids 10, 11, 12); 1 is crowd (id 11) → 2 kept
-        assert targets.shape == (2, 5)
-        # First kept annotation: cat_id 5 → label 0, bbox [10,10,20,20]
+        # 3 annotations (ids 10, 11, 12), one of them crowd (id 11). All three are kept.
+        assert targets.shape == (3, 5)
+        assert (targets[:, 0] == CROWD_CLASS).sum() == 1
+        # First annotation: cat_id 5 -> label 0, bbox [10,10,20,20]
         assert targets[0, 0] == 0
-        # Normalized center of bbox [10, 10, 20, 20] → ((10+10)/100, (10+10)/100)
+        # Normalized center of bbox [10, 10, 20, 20] -> ((10+10)/100, (10+10)/100)
         assert targets[0, 1] == pytest.approx(0.2)
         assert targets[0, 2] == pytest.approx(0.2)
         assert targets[0, 3] == pytest.approx(0.2)  # w/100
