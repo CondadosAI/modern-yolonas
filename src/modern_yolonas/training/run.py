@@ -51,6 +51,10 @@ def build_transforms(recipe: dict, *, train: bool, dataset=None):
     input_size = recipe["input_size"]
 
     if not train:
+        # Deliberately float32. `dataset_benchmark_cmd` and `benchmarks/rf100vl` iterate
+        # this loader themselves and hand the tensor straight to the model, with no
+        # Lightning hook in between to undo a uint8 encoding. Validation runs once per
+        # epoch, so the bytes saved would not pay for that trap.
         return Compose([LetterboxResize(target_size=input_size), Normalize()])
 
     aug = recipe.get("augmentations", {})
@@ -80,14 +84,14 @@ def build_transforms(recipe: dict, *, train: bool, dataset=None):
         ))
 
     per_image_compose = Compose(per_image_steps)
-    final_compose = Compose([LetterboxResize(target_size=input_size), Normalize()])
+    final_compose = Compose([LetterboxResize(target_size=input_size), Normalize(dtype="uint8")])
 
     use_mosaic = aug.get("mosaic", False) and dataset is not None
     use_mixup = aug.get("mixup", False) and dataset is not None
 
     if not use_mosaic and not use_mixup:
         # Simple pipeline — no dataset-aware augmentations
-        return Compose(per_image_steps + [LetterboxResize(target_size=input_size), Normalize()])
+        return Compose(per_image_steps + [LetterboxResize(target_size=input_size), Normalize(dtype="uint8")])
 
     # Build TrainTransformPipeline with Mosaic and/or Mixup
     mosaic = None
@@ -165,6 +169,7 @@ def run_training(
 
     # Lightning module
     lit_model = YoloNASLightningModule(
+        channels_last=recipe.get("channels_last", True),
         model=model,
         num_classes=num_classes,
         lr=recipe["lr"],
