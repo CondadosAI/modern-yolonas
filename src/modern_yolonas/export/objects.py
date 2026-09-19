@@ -30,7 +30,7 @@ import onnx
 
 from onnx import TensorProto, helper
 
-from modern_yolonas.export.frigate import make_constant
+from modern_yolonas.export.nms import make_constant
 
 #: Grid an ROI is resampled to before pooling — must match
 #: :data:`modern_yolonas.inference.embed._ROI_GRID`.

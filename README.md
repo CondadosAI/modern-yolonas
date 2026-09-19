@@ -64,30 +64,48 @@ self-contained graph for [Frigate](https://frigate.video/).
 
 ## 🏆 Model Zoo
 
-Box AP on COCO val2017, all 5000 images, at 640×640. There is nothing to download by hand —
-`yolo_nas_s(pretrained=True)` and `YoloNASDetector("yolo_nas_s")` fetch and cache Deci's COCO
-checkpoints on first use (they carry Deci's own non-commercial terms — see **License** below).
+Box AP on COCO val2017, all 5000 images, and latency on the hardware named below. There is
+nothing to download by hand — `yolo_nas_s(pretrained=True)` and `YoloNASDetector("yolo_nas_s")`
+fetch and cache Deci's COCO checkpoints on first use (they carry Deci's own non-commercial
+terms — see **License** below). Pre-exported ONNX, OpenVINO IR and TensorRT engines are on
+[the Hub](https://huggingface.co/CondadosAI/modern-yolonas-export).
 
-| Model | Params | GFLOPs | Latency (ms) | AP | AP<sub>50</sub> | AP<sub>75</sub> | AP<sub>S</sub> | AP<sub>M</sub> | AP<sub>L</sub> |
-|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **YOLO-NAS-S** | 19.05M | 33.9 | 8.22 | 47.3 | 64.4 | 51.8 | 28.5 | 52.9 | 63.6 |
-| **YOLO-NAS-M** | 51.18M | 94.2 | 14.08 | 51.3 | 68.3 | 56.0 | 33.6 | 57.0 | 68.1 |
-| **YOLO-NAS-L** | 66.98M | 129.0 | 17.89 | 52.0 | 69.1 | 56.9 | 34.5 | 57.4 | 68.5 |
+| Model | Input | Params | GFLOPs | AP | AP<sub>50</sub> | dGPU<br><sub>TensorRT FP16</sub> | CPU<br><sub>OpenVINO INT8</sub> | iGPU<br><sub>OpenVINO INT8</sub> |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **YOLO-NAS-S** | 320 | 19.05M | 8.5 | 38.4 | 53.9 | 1.17 ms<br><sub>855 FPS</sub> | 5.19 ms<br><sub>193 FPS</sub> | 6.83 ms<br><sub>146 FPS</sub> |
+| **YOLO-NAS-S** | 640 | 19.05M | 33.9 | 47.3 | 64.4 | 2.12 ms<br><sub>472 FPS</sub> | 19.87 ms<br><sub>50 FPS</sub> | 12.04 ms<br><sub>83 FPS</sub> |
+| **YOLO-NAS-M** | 320 | 51.18M | 23.5 | 43.1 | 59.1 | 1.50 ms<br><sub>666 FPS</sub> | 12.03 ms<br><sub>83 FPS</sub> | 9.45 ms<br><sub>106 FPS</sub> |
+| **YOLO-NAS-M** | 640 | 51.18M | 94.2 | 51.3 | 68.3 | 4.19 ms<br><sub>239 FPS</sub> | 47.47 ms<br><sub>21 FPS</sub> | 25.49 ms<br><sub>39 FPS</sub> |
+| **YOLO-NAS-L** | 320 | 66.98M | 32.2 | 43.8 | 59.9 | 1.94 ms<br><sub>515 FPS</sub> | 15.56 ms<br><sub>64 FPS</sub> | 10.38 ms<br><sub>96 FPS</sub> |
+| **YOLO-NAS-L** | 640 | 66.98M | 129.0 | 52.0 | 69.1 | 5.41 ms<br><sub>185 FPS</sub> | 63.00 ms<br><sub>16 FPS</sub> | 32.07 ms<br><sub>31 FPS</sub> |
 
 Every column is measured here, not quoted — regenerate the whole table with
-`uv run examples/model_table.py --coco <coco-root> --half`.
+`uv run examples/model_table.py` and `uv run examples/render_model_table.py`. The full grid,
+across PyTorch / ONNX Runtime / OpenVINO / TensorRT and CPU / iGPU / dGPU, is in
+[the runtime matrix](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/runtime_matrix.md).
 
 <details>
 <summary><b>How these numbers were measured, and what they do and do not mean</b></summary>
 
 <br>
 
-**Latency** is PyTorch FP16 on an RTX 3060 Laptop, batch 1, model forward only (no
-preprocessing, no NMS), median of 30 runs. TensorRT on the same GPU is roughly an order of
-magnitude faster. Leaderboards that publish T4 TensorRT latency are not measuring the same
-thing, so those columns should not be read side by side.
+**Latency** is model forward only — no preprocessing, no NMS — batch 1, median of 30 runs
+after 8 discarded. **FPS is its reciprocal on a single synchronous stream, not throughput**:
+a pipeline that overlaps decode, transfer and inference reports more on the same hardware,
+and one that counts whole frames reports less, because preprocessing is excluded. Measured on an RTX 3060 Laptop / i7-12700H / Iris Xe, on mains power. The dGPU
+column is a TensorRT engine built natively on that card; an `--hardware-compatible` engine,
+which is the kind worth publishing, costs 16% at 320 and 8% at 640. Leaderboards that publish
+T4 TensorRT latency are not measuring the same thing, so those columns should not be read side
+by side.
 
-**Accuracy** is measured with NMS at IoU 0.70, which a sweep found to be the optimum.
+**320 costs about 9 AP**, consistently across all three variants (−8.9 / −8.2 / −8.2), for
+roughly a quarter of the FLOPs. Worth knowing before choosing it: these weights were trained
+at 640, so this measures the resolution drop and not a model designed for 320. It also rules
+out an obvious-looking trade — YOLO-NAS-L at 320 is faster than YOLO-NAS-S at 640 on a CPU
+(15.6 ms against 19.9) and **3.5 AP worse**, so the bigger model at lower resolution is not
+the free win the latency column alone suggests.
+
+**Accuracy** is measured in FP32 with NMS at IoU 0.70, which a sweep found to be the optimum.
 `postprocess` still defaults to 0.65 for interactive use, where fewer overlapping boxes
 matters more than a tenth of AP.
 
@@ -434,8 +452,13 @@ Or the standalone scripts in [`examples/`](https://github.com/CondadosAI/modern-
 
 - [`parity_check.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/parity_check.py) — verify this implementation matches
   super-gradients (writes [`docs/benchmarks/parity.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/parity.md))
-- [`bench_devices.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/bench_devices.py) — latency across CPU / Intel iGPU /
-  NVIDIA dGPU and FP32 / FP16 / INT8 (writes [`docs/benchmarks/latency_matrix.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/latency_matrix.md))
+- [`runtime_matrix.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/runtime_matrix.py) — latency across PyTorch /
+  ONNX Runtime / OpenVINO / TensorRT, CPU / Intel iGPU / NVIDIA dGPU, FP32 / FP16 / INT8 and every
+  input size (writes [`docs/benchmarks/runtime_matrix.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/runtime_matrix.md))
+- [`runtime_accuracy.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/runtime_accuracy.py) — COCO AP for an
+  *exported* artifact, so an INT8 file's accuracy is measured rather than assumed
+- [`export_zoo.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/export_zoo.py) — pre-export every variant to every
+  runtime and size, with a manifest
 - [`detect_image.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_image.py) — run detection on a single image
 - [`detect_video.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_video.py) — run detection on a video file
 - [`detect_webcam.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_webcam.py) — live webcam detection

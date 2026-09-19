@@ -13,6 +13,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **TensorRT export.** `yolonas export --format tensorrt` builds an engine, and
+  `EngineRunner` runs one with torch owning the CUDA buffers. `--hardware-compatible`
+  builds an `AMPERE_PLUS` engine that loads on any sm_80+ GPU rather than only on the
+  card it was built on — measured cost on an RTX 3060 Laptop: 19% at 320, 10% at 640.
+  `--version-compatible` is a separate flag with a separate cost.
+- **`--target end2end`**, which bakes NonMaxSuppression into the graph: one
+  `detections [D, 7]` output instead of raw `[N, 4]` + `[N, 80]` tensors. It does not
+  make inference faster — ONNX's NonMaxSuppression is slower than torchvision's — and
+  the export guide says so with the numbers. What it buys is a single deployable file
+  with no Python in the inference path. The Frigate target is now this graph plus its
+  uint8-BGR input phase, rather than a second implementation.
+- **OpenVINO INT8** through `--precision int8 --calibration-dir`, which previously
+  could not compile at all.
+- `onnx-gpu` and `tensorrt` extras. `onnx` and `onnx-gpu` are declared as conflicting,
+  because both install a module named `onnxruntime`.
+- `modern_yolonas.export` as a real module — `export_onnx`, `export_openvino`,
+  `build_engine`, `EngineRunner`, `onnx_session` — so the CLI, the benchmarks and the
+  zoo all build from one graph.
+- `examples/runtime_matrix.py` and `examples/render_runtime_matrix.py`: latency across
+  runtime x device x precision x input size, recording the conditions the number
+  depends on (power source, SM clock under load, every runtime's version) and the
+  reason for each leg it could not measure.
+- `examples/runtime_accuracy.py`: COCO AP for an exported artifact rather than for the
+  PyTorch model, so an INT8 file's accuracy is measured.
+- `examples/export_zoo.py` and `examples/publish_zoo.py`: the full pre-exported set
+  with a manifest, and its Hugging Face model card.
+- `docs/guides/arm-support.md` — a plan, explicitly not a measurement.
+- COCO val2017 accuracy at 320 for all three variants, and an FPS column beside every
+  latency figure — labelled as the reciprocal of single-stream latency, which is not
+  throughput.
+- CI installs the `onnx` and `openvino` extras. Without them `tests/test_export.py`
+  skipped in its entirety and both paths shipped untested.
+
+### Fixed
+- **`EngineRunner` did not order its CUDA stream against torch's**, so TensorRT could
+  read an input whose copy had not landed. Nothing failed — the engine returned
+  plausible numbers, and COCO AP for YOLO-NAS-S at 640 came out at 31.4 instead of
+  47.3. Ruled out by experiment first: FP16 arithmetic (PyTorch on the same half
+  graph is exact), the exported FP16 ONNX (ONNX Runtime reads it at full accuracy)
+  and `AMPERE_PLUS` (the native engine was marginally worse).
+- OpenVINO INT8 export could not compile at all; the head's decode tail is now
+  excluded from quantization.
+
+### Changed
+- ONNX export writes weights into the file instead of a `.onnx.data` sidecar.
+  PyTorch's exporter defaults the other way; a published artifact that silently needs
+  a second file is a support burden, and TensorRT's byte parser cannot resolve it.
+- The default ONNX opset is 18, which is the lowest the current PyTorch exporter emits
+  natively.
+
+### Removed
+- `examples/bench_devices.py` and `docs/benchmarks/latency_matrix.{md,json}`. The script
+  read OpenVINO IR files it never produced and calibrated against a video that is not in
+  the repository, so its table could not be regenerated. `examples/runtime_matrix.py`
+  replaces it.
+
+### Added
 - **`yolonas track`, and `DeepHMSort`** — a built-in multi-object tracker, implementing
   [Deep HM-SORT](https://arxiv.org/abs/2406.12081) on top of
   [Deep-EIoU](https://arxiv.org/abs/2306.13074). The association cost is the harmonic mean

@@ -156,10 +156,15 @@ def main():
         if args.device.startswith("cuda"):
             torch.cuda.empty_cache()
 
+    # Merge on (model, input size) rather than overwrite: the table covers more than
+    # one input size, and each size is a separate multi-hour run.
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(rows, indent=2) + "\n")
-    print(f"\nwrote {out}")
+    existing = {(r["model"], r["input_size"]): r for r in json.loads(out.read_text())} if out.exists() else {}
+    existing.update({(r["model"], r["input_size"]): r for r in rows})
+    merged = sorted(existing.values(), key=lambda r: (r["input_size"], list(BUILDERS).index(r["model"])))
+    out.write_text(json.dumps(merged, indent=2) + "\n")
+    print(f"\nwrote {out} ({len(merged)} rows)")
 
 
 if __name__ == "__main__":
