@@ -210,6 +210,10 @@ def bench_model(args) -> None:
     model = builder(pretrained=False, num_classes=80).to(device).train()
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
+    if args.compile:
+        # Model only. Compiling the loss would recompile on every change in the
+        # number of ground-truth boxes, which varies per batch by construction.
+        model = torch.compile(model)
     criterion = PPYoloELoss(num_classes=80)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
@@ -259,7 +263,7 @@ def bench_model(args) -> None:
 
     print(machine())
     print(f"\n{args.model} | batch={args.batch} size={args.size} amp={args.amp} "
-          f"channels_last={args.channels_last}")
+          f"channels_last={args.channels_last} compile={args.compile}")
     print(f"T_model = {args.batch * args.iters / wall:.1f} img/s "
           f"({wall / args.iters * 1000:.1f} ms/step)")
     print(f"peak VRAM {torch.cuda.max_memory_allocated() / 2**30:.2f} GiB\n")
@@ -306,6 +310,9 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=5)
     p.add_argument("--amp", default="fp16", choices=["fp16", "bf16", "off"])
     p.add_argument("--channels-last", action="store_true")
+    p.add_argument("--compile", action="store_true",
+                   help="torch.compile the model. Warmup is excluded from the timing, "
+                        "so raise --warmup: the first steps pay for compilation.")
     p.set_defaults(func=bench_model)
 
     args = parser.parse_args()
