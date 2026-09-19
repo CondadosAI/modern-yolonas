@@ -67,6 +67,9 @@ fiftyone = ["fiftyone>=1.0"]
 openvino = ["openvino>=2024.0"]
 wandb = ["wandb>=0.16"]
 tensorboard = ["tensorboard>=2.15"]
+# Frozen teachers for the distillation experiments; only tools/bench_training.py
+# and the future distillation trainer need them.
+distill = ["transformers>=4.56"]
 
 [project.scripts]
 yolonas = "modern_yolonas.cli:main"
