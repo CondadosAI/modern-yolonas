@@ -12,6 +12,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Feature embeddings.** `YoloNASEmbedder` turns images — or boxes within them — into
+  fixed-length vectors from the backbone and neck, for image retrieval, near-duplicate
+  search, clustering and re-identification. `embed_batch` for galleries, `embed_boxes`
+  for per-object vectors via `roi_align` on the feature maps (one forward pass per frame,
+  and it takes `supervision.Detections.xyxy` as it comes). Vectors are L2-normalized by
+  default, so a dot product is the cosine similarity.
+- `YoloNAS.forward_features` returns the raw maps — `c2`–`c5` from the backbone and
+  `p3`–`p5` from the neck — for callers that want to pool them themselves. Additive: the
+  `forward` signature that ONNX export, the Frigate graph and the parity tests depend on
+  is untouched.
+- Pooling excludes the letterbox padding. Averaging the gray canvas in makes embeddings
+  cluster by aspect ratio rather than content: measured with the COCO `yolo_nas_s`
+  weights, full-canvas pooling scores an unrelated noise image against a street photo at
+  0.958 cosine — higher than that photo against a second real photo — purely because both
+  share a padding geometry. Pooling only the valid region puts the pair at 0.396.
+- `tutorials/fiftyone/03_embedding_space.ipynb` — compute the embeddings over a dataset,
+  project with UMAP and explore the space in the FiftyOne App, including near-duplicate
+  detection and an object-level (patch) embedding space.
+- `examples/embed_image.py` — image retrieval over a folder.
+- Docs: [embeddings guide](docs/guides/embeddings.md) and `YoloNASEmbedder` API page.
+
 ## [0.5.0] - 2026-09-18
 
 ### Changed — breaking

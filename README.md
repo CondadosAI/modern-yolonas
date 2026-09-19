@@ -208,6 +208,46 @@ for frame_idx, frame, detections in det.detect_video(source=0):  # 0 = default c
 cv2.destroyAllWindows()
 ```
 
+### Feature embeddings
+
+The detector throws the backbone's representation away and keeps four numbers per object.
+`YoloNASEmbedder` keeps the representation — for image retrieval, near-duplicate search,
+clustering and re-identification. Nothing extra is trained: same weights, read one stage earlier.
+
+```python
+import numpy as np
+from modern_yolonas import YoloNASEmbedder
+
+embedder = YoloNASEmbedder("yolo_nas_s")
+
+vector = embedder("image.jpg")                     # (768,) L2-normalized
+gallery = embedder.embed_batch(["a.jpg", "b.jpg"]) # (2, 768)
+
+# Both sides are normalized, so a dot product is the cosine similarity.
+ranking = np.argsort(-(gallery @ vector))
+```
+
+Per-object vectors for recognition and re-ID — `roi_align` on the feature maps, so a
+whole frame costs one forward pass:
+
+```python
+from modern_yolonas import COCOClass, YoloNASDetector
+
+detections = YoloNASDetector("yolo_nas_s")(image)
+people = detections[detections.class_id == COCOClass.PERSON]
+
+vectors = embedder.embed_boxes(image, people.xyxy)   # (len(people), 768)
+```
+
+Raw feature maps, if you want to pool them yourself:
+
+```python
+features = model.forward_features(x)   # c2 c3 c4 c5 (backbone) + p3 p4 p5 (neck)
+```
+
+See the [embeddings guide](https://condadosai.github.io/modern-yolonas/guides/embeddings/)
+for layer choice and why the letterbox padding is excluded from pooling.
+
 ### Low-level model API
 
 ```python
@@ -288,6 +328,7 @@ Step-by-step notebooks in [`tutorials/`](https://github.com/CondadosAI/modern-yo
 | | [`roboflow/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/roboflow/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
 | **FiftyOne** | [`fiftyone/01_explore_dataset.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/01_explore_dataset.ipynb) | Load from FiftyOne Zoo + explore |
 | | [`fiftyone/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| | [`fiftyone/03_embedding_space.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/03_embedding_space.ipynb) | Explore a YOLO-NAS embedding space + find duplicates |
 | **Export** | [`export_onnx.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/export_onnx.ipynb) | ONNX export from any checkpoint |
 | **Quantization** | [`quantization_ptq.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_ptq.ipynb) | Post-Training Quantization |
 | | [`quantization_qat.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_qat.ipynb) | Quantization-Aware Training |

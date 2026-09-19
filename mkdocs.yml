@@ -32,12 +32,14 @@ nav:
   - CLI Reference: cli.md
   - API Reference:
     - Detector: api/detector.md
+    - Embedder: api/embedder.md
     - YoloNAS Model: api/model.md
     - Training: api/training.md
     - Data: api/data.md
     - Weights: api/weights.md
   - Guides:
     - Training: guides/training.md
+    - Embeddings: guides/embeddings.md
     - Training code review (2026-09-13): guides/training-review-2026-09-13.md
     - Export: guides/export.md
     - Extending: guides/extending.md
