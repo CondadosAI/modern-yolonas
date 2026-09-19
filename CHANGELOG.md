@@ -164,6 +164,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `examples/embed_image.py` — image retrieval over a folder.
 - Docs: [embeddings guide](docs/guides/embeddings.md) and `YoloNASEmbedder` API page.
 
+### Changed
+- Funding now points at the **CondadosAI organization** rather than a personal account:
+  `github.com/sponsors/Gabriellgpc` has no Sponsors profile, so the `Funding` URL in the
+  package metadata, the README badge and the docs site were all dead links. Added
+  `SPONSORS.md`; the README keeps the ask and leaves the argument for it — the Deci
+  license, the cost of a from-scratch COCO run — to the sponsors page and `ROADMAP.md`.
+
 ## [0.5.0] - 2026-09-18
 
 ### Changed — breaking

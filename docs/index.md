@@ -46,7 +46,13 @@ cv2.imwrite("output.jpg", det.annotate(image, detections))
 
 ## Sponsoring
 
-Training is the part of this project that costs money: COCO weights from scratch, published
-under Apache-2.0 so they carry no non-commercial restriction, are roughly $40–80 of GPU time
-for YOLO-NAS-S and several times that for L. If the library is useful to you, you can fund
-those runs on [GitHub Sponsors](https://github.com/sponsors/Gabriellgpc).
+Sponsorship funds the GPU time behind this project — chiefly the from-scratch COCO weights
+that will replace Deci's non-commercial checkpoints. What that costs and where the money goes
+is on the [sponsors page](https://github.com/sponsors/CondadosAI); sponsors are listed in
+[SPONSORS.md](https://github.com/CondadosAI/modern-yolonas/blob/main/SPONSORS.md).
+
+<!-- sponsor-logos:start -->
+<p align="center">
+  <sub><i>No company sponsors yet — yours would be the first.</i></sub>
+</p>
+<!-- sponsor-logos:end -->
