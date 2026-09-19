@@ -13,7 +13,7 @@ import onnx
 from onnx import TensorProto, helper, numpy_helper
 
 
-def _make_constant(name: str, value: np.ndarray) -> onnx.NodeProto:
+def make_constant(name: str, value: np.ndarray) -> onnx.NodeProto:
     """Create a Constant node that produces *value* as a tensor."""
     return helper.make_node(
         "Constant",
@@ -57,10 +57,10 @@ def make_frigate_onnx(
         # Cast uint8 → float32
         helper.make_node("Cast", ["images_uint8"], ["images_float"], to=TensorProto.FLOAT),
         # Divide by 255
-        _make_constant("div_const", np.array(255.0, dtype=np.float32)),
+        make_constant("div_const", np.array(255.0, dtype=np.float32)),
         helper.make_node("Div", ["images_float", "div_const"], ["images_norm"]),
         # BGR → RGB channel swap: Gather along axis=1 with indices [2, 1, 0]
-        _make_constant("bgr_indices", np.array([2, 1, 0], dtype=np.int64)),
+        make_constant("bgr_indices", np.array([2, 1, 0], dtype=np.int64)),
         helper.make_node("Gather", ["images_norm", "bgr_indices"], [orig_input_name], axis=1),
     ]
 
@@ -69,12 +69,12 @@ def make_frigate_onnx(
     # ------------------------------------------------------------------
     nms_nodes = [
         # Transpose scores from [B, N, C] → [B, C, N] for the NMS op
-        _make_constant("score_perm", np.array([0, 2, 1], dtype=np.int64)),
+        make_constant("score_perm", np.array([0, 2, 1], dtype=np.int64)),
         helper.make_node("Transpose", [score_output_name], ["scores_nms"], perm=[0, 2, 1]),
         # NMS constants
-        _make_constant("max_det", np.array([max_detections], dtype=np.int64)),
-        _make_constant("iou_thr", np.array([iou_threshold], dtype=np.float32)),
-        _make_constant("conf_thr", np.array([conf_threshold], dtype=np.float32)),
+        make_constant("max_det", np.array([max_detections], dtype=np.int64)),
+        make_constant("iou_thr", np.array([iou_threshold], dtype=np.float32)),
+        make_constant("conf_thr", np.array([conf_threshold], dtype=np.float32)),
         # NonMaxSuppression → selected_indices [D, 3] with [batch_idx, class_idx, box_idx]
         helper.make_node(
             "NonMaxSuppression",
@@ -88,14 +88,14 @@ def make_frigate_onnx(
     # ------------------------------------------------------------------
     fmt_nodes = [
         # Extract columns: batch_idx (col 0), class_idx (col 1), box_idx (col 2)
-        _make_constant("idx_0", np.array(0, dtype=np.int64)),
-        _make_constant("idx_1", np.array(1, dtype=np.int64)),
-        _make_constant("idx_2", np.array(2, dtype=np.int64)),
+        make_constant("idx_0", np.array(0, dtype=np.int64)),
+        make_constant("idx_1", np.array(1, dtype=np.int64)),
+        make_constant("idx_2", np.array(2, dtype=np.int64)),
         helper.make_node("Gather", ["selected_indices", "idx_0"], ["batch_col"], axis=1),
         helper.make_node("Gather", ["selected_indices", "idx_1"], ["class_col"], axis=1),
         helper.make_node("Gather", ["selected_indices", "idx_2"], ["box_col"], axis=1),
         # Unsqueeze each [D] → [D, 1]
-        _make_constant("unsq_axis", np.array([1], dtype=np.int64)),
+        make_constant("unsq_axis", np.array([1], dtype=np.int64)),
         helper.make_node("Unsqueeze", ["batch_col", "unsq_axis"], ["batch_2d"]),
         helper.make_node("Unsqueeze", ["class_col", "unsq_axis"], ["class_2d"]),
         helper.make_node("Unsqueeze", ["box_col", "unsq_axis"], ["box_2d"]),

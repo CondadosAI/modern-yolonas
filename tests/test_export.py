@@ -279,3 +279,178 @@ class TestCliProducesAWorkingGraph:
         model = onnx.load(str(output), load_external_data=False)
         exported = {i.domain or "ai.onnx": i.version for i in model.opset_import}
         assert exported["ai.onnx"] >= 18
+
+
+# ----------------------------------------------------------------------
+# Self-contained object-embedding graph (NMS + ROI pooling inside)
+# ----------------------------------------------------------------------
+
+
+def _export_objects(fused_model, path, pooler, conf_threshold, max_detections=20):
+    """Base export plus the surgery, as the CLI's `objects` target does it."""
+    from modern_yolonas.export.embedding import DetectAndFeatureGraph
+    from modern_yolonas.export.objects import make_object_embedding_onnx
+
+    graph = DetectAndFeatureGraph(fused_model, pooler, CANVAS).eval()
+    base = str(path) + ".base"
+    _export(graph, base, graph.output_names)
+
+    make_object_embedding_onnx(
+        base, str(path), layers=pooler.layers, canvas=CANVAS,
+        pooling=pooler.pooling, normalize=pooler.normalize,
+        conf_threshold=conf_threshold, iou_threshold=0.45, max_detections=max_detections,
+    )
+    return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+
+
+def _score_ceiling(fused_model, images):
+    """Half the top score, so an untrained model still yields detections."""
+    with torch.no_grad():
+        return float(fused_model(images)[1].max()) * 0.5
+
+
+@pytest.fixture(scope="module")
+def object_graph(fused_model, tmp_path_factory):
+    """The self-contained object graph, exported once for the module."""
+    images, _ = _letterboxed([(360, 640), (640, 480)])
+    conf = _score_ceiling(fused_model, images)
+    return _export_objects(
+        fused_model, tmp_path_factory.mktemp("objects") / "objects.onnx", FeaturePooler(), conf
+    )
+
+
+@pytest.fixture(scope="module")
+def quiet_object_graph(fused_model, tmp_path_factory):
+    """Same graph with a threshold nothing reaches, for the empty-frame case."""
+    return _export_objects(
+        fused_model, tmp_path_factory.mktemp("objects_empty") / "objects.onnx",
+        FeaturePooler(), conf_threshold=0.99,
+    )
+
+
+class TestObjectEmbeddingGraph:
+    def test_signature(self, object_graph):
+        assert [i.name for i in object_graph.get_inputs()] == ["images", "valid_region"]
+        assert [o.name for o in object_graph.get_outputs()] == ["detections", "object_embedding", "embedding"]
+
+    def test_rows_line_up_with_pytorch_roi_pooling(self, object_graph, fused_model):
+        """The claim this graph makes: row i of the vectors describes row i of the boxes.
+
+        Checked by taking the graph's own boxes — already clipped, already in
+        canvas coordinates — and pooling them in PyTorch. Both sides then see the
+        same boxes, so this is robust to the garbage detections an untrained model
+        produces, and it is the property a caller actually relies on.
+        """
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, vectors, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert len(detections) > 0, "fixture produced no detections to compare"
+        assert len(vectors) == len(detections)
+
+        pooler = FeaturePooler()
+        with torch.no_grad():
+            features = fused_model.forward_features(images)
+        rois = torch.from_numpy(np.concatenate([detections[:, 0:1], detections[:, 1:5]], axis=1))
+        expected = pooler.finalize(pooler.pool_rois(features, rois.float(), CANVAS))
+
+        assert np.allclose(vectors, expected, atol=1e-4)
+
+    def test_boxes_stay_inside_the_canvas(self, object_graph):
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, _, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert detections[:, 1:5].min() >= 0.0
+        assert detections[:, 1:5].max() <= CANVAS
+        # x2 >= x1 and y2 >= y1: clipping must not invert a box.
+        assert np.all(detections[:, 3] >= detections[:, 1])
+        assert np.all(detections[:, 4] >= detections[:, 2])
+
+    def test_boxes_are_clipped_to_the_valid_region(self, object_graph):
+        """Outside the region is letterbox padding, so no box may reach into it."""
+        images, regions = _letterboxed([(200, 1600)])
+        detections, _, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        left, top, right, bottom = regions[0].tolist()
+        assert detections[:, 1].min() >= left
+        assert detections[:, 2].min() >= top
+        assert detections[:, 3].max() <= right
+        assert detections[:, 4].max() <= bottom
+
+    def test_batch_index_is_carried(self, object_graph):
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, _, _ = object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert set(np.unique(detections[:, 0])) <= {0.0, 1.0}
+
+    def test_image_embedding_still_matches_the_embedding_only_graph(self, object_graph, session):
+        """Surgery must not disturb the output it does not touch."""
+        images, regions = _letterboxed([(360, 640)])
+        feeds = {"images": images.numpy(), "valid_region": regions.numpy()}
+        assert np.allclose(object_graph.run(None, feeds)[2], session.run(None, feeds)[0], atol=1e-5)
+
+
+class TestObjectGraphOnAQuietFrame:
+    """Nothing detected is the normal case on most frames, not an edge case."""
+
+    def test_returns_empty_arrays_without_erroring(self, quiet_object_graph):
+        images, regions = _letterboxed([(360, 640), (640, 480)])
+        detections, vectors, embedding = quiet_object_graph.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert detections.shape == (0, 7)
+        assert vectors.shape[0] == 0
+        # The image-level embedding is unaffected by there being no objects.
+        assert embedding.shape == (2, 768)
+        assert np.isfinite(embedding).all()
+
+
+class TestZeroAreaBoxesStayFinite:
+    def test_no_nan_from_the_normalization(self, fused_model, tmp_path):
+        """A box clipping to zero area samples nothing.
+
+        `F.normalize` guards with max(norm, eps) and leaves such a vector at zero;
+        ONNX `LpNormalization` would produce NaN, so the graph spells the guard out.
+        This asserts the graph took that path.
+        """
+        images, _ = _letterboxed([(200, 1600), (1600, 200)])
+        conf = _score_ceiling(fused_model, images)
+        graph = _export_objects(fused_model, tmp_path / "objects.onnx", FeaturePooler(), conf)
+
+        # A degenerate region forces every box to clip to nothing.
+        degenerate = np.array([[0, 0, 0, 0], [0, 0, 0, 0]], dtype=np.int64)
+        _, vectors, _ = graph.run(None, {"images": images.numpy(), "valid_region": degenerate})
+
+        assert np.isfinite(vectors).all(), "zero-area boxes must not produce NaN"
+        assert not vectors.any(), "they should be zero vectors"
+
+
+class TestObjectGraphCli:
+    def test_cli_objects_target(self, tmp_path, checkpoint):
+        from typer.testing import CliRunner
+
+        from modern_yolonas.cli import app
+
+        output = tmp_path / "objects.onnx"
+        result = CliRunner().invoke(
+            app,
+            ["export", "--model", "yolo_nas_s", "--target", "objects",
+             "--input-size", "320", "--embed-layers", "c4,c5",
+             "--conf-threshold", "0.001",
+             "--output", str(output), "--checkpoint", checkpoint],
+        )
+        assert result.exit_code == 0, result.output
+        assert output.exists()
+        assert not list(tmp_path.glob("*.onnx.data"))
+
+        session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
+        assert [o.name for o in session.get_outputs()] == ["detections", "object_embedding", "embedding"]
+
+        images, regions = _letterboxed([(360, 640)])
+        detections, vectors, _ = session.run(
+            None, {"images": images.numpy(), "valid_region": regions.numpy()}
+        )
+        assert vectors.shape == (len(detections), 384 + 768), "--embed-layers c4,c5 must reach the ROI pooling"

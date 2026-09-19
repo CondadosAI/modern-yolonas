@@ -180,11 +180,16 @@ yolonas export --model yolo_nas_s --target combined  --output combined.onnx
 ```
 
 `combined` is this page's one-pass API as a single graph — `pred_bboxes`, `pred_scores`
-and `embedding` from one backbone run. Both graphs take a second input, `valid_region`,
-which carries the padding information the pooling needs; the
-[export guide](export.md#embedding-export) covers the contract and has a runnable
-snippet. Per-object embeddings stay in PyTorch, because they depend on which boxes
-survive NMS.
+and `embedding` from one backbone run.
+
+Per-object embeddings export too, as `--target objects`: a self-contained graph with NMS
+and ROI pooling inside it, emitting `detections [D, 7]` and `object_embedding [D, E]` with
+the rows lined up. It is built by graph surgery rather than tracing, because which boxes
+exist depends on which survive NMS.
+
+All three take a second input, `valid_region`, which carries the padding information the
+pooling needs; the [export guide](export.md#embedding-export) covers the contract and has
+runnable snippets.
 
 ## FiftyOne embedding space
 

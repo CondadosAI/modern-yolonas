@@ -66,6 +66,9 @@ yolonas export --model yolo_nas_s --format openvino --target frigate
 # Feature embeddings, alone or beside the detections
 yolonas export --model yolo_nas_s --target embedding --output embedding.onnx
 yolonas export --model yolo_nas_s --target combined --output combined.onnx
+
+# Detections + a vector per detection, NMS inside the graph
+yolonas export --model yolo_nas_s --target objects --output objects.onnx
 ```
 
 | Option | Default | Description |
@@ -76,7 +79,7 @@ yolonas export --model yolo_nas_s --target combined --output combined.onnx
 | `--input-size` | `640` | Model input size |
 | `--opset` | `18` | ONNX opset version |
 | `--checkpoint` | `None` | Custom checkpoint path |
-| `--target` | `generic` | Export target (generic/frigate/embedding/combined) |
+| `--target` | `generic` | Export target (generic/frigate/embedding/combined/objects) |
 | `--embed-layers` | `c5` | Feature maps to pool, comma-separated (embedding/combined) |
 | `--embed-pooling` | `avg` | Spatial pooling, `avg` or `max` (embedding/combined) |
 | `--normalize` / `--no-normalize` | normalize | L2-normalize the embedding |

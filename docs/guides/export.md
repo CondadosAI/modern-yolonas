@@ -118,13 +118,59 @@ behaviour the input exists to avoid.
 
 `examples/embed_onnx.py` is this loop over a folder, ranking a gallery against a query.
 
-### What stays in PyTorch
+### Per-object embeddings — the `objects` target
 
-Per-object embeddings (`Task.EMBED_OBJECTS`) are not exported. They depend on which boxes
-survive NMS, so putting them in a graph means putting NMS in the graph first — the kind of
-surgery the `frigate` target does. `torchvision.ops.roi_align` itself exports fine
-(`RoiAlign`, opset ≥ 16), so a graph taking pre-computed ROIs as an input is possible;
-it is not built here.
+```bash
+yolonas export --model yolo_nas_s --target objects --output objects.onnx \
+    --conf-threshold 0.25 --iou-threshold 0.45 --max-detections 20
+```
+
+A self-contained graph: image in, detections **and** one vector per detection out, with
+NMS and ROI pooling inside it.
+
+| Output | Shape | Contents |
+|:---|:---|:---|
+| `detections` | `[D, 7]` | `batch, x1, y1, x2, y2, confidence, class_id` |
+| `object_embedding` | `[D, E]` | one row per detection, same order |
+| `embedding` | `[B, E]` | the whole-image vector, as in the other targets |
+
+Row *i* of `object_embedding` describes row *i* of `detections`. That is the contract, and
+it is what the tests pin.
+
+This one could not be traced out of PyTorch. Which boxes exist depends on which survive
+NMS — a data-dependent shape `torch.export` will not produce — so the graph is built by
+exporting a base model whose feature maps are outputs, then adding `NonMaxSuppression`,
+`RoiAlign` and the pooling as ONNX nodes. Same approach as the `frigate` target.
+
+```python
+detections, object_embedding, embedding = session.run(None, {
+    "images": tensor.numpy(),
+    "valid_region": np.array([region], dtype=np.int64),
+})
+
+people = detections[detections[:, 6] == COCOClass.PERSON]
+```
+
+**Boxes come back in canvas coordinates**, like the plain detection export.
+`rescale_boxes(boxes, scale, pad, image.shape[:2])` maps them to the source image — the
+same function the PyTorch path uses.
+
+**Boxes are clipped to `valid_region` before they are embedded**, matching
+`embed_boxes` and `predict(..., Task.EMBED_OBJECTS)`: outside it there is only letterbox
+padding, so a detection running off the edge is described by the part of it that is real.
+A box that clips to zero area samples nothing and comes back as a zero vector, never NaN.
+
+#### Thresholds are not the same as `postprocess`'s
+
+`--max-detections` is `max_output_boxes_per_class` — the ONNX NMS operator counts **per
+class**, where `postprocess` caps the total per image. The defaults (`--iou-threshold
+0.45`, `--max-detections 20`) are the Frigate-tuned ones this flag has always had. To get
+closer to what `predict` does, pass `--iou-threshold 0.7 --max-detections 300`.
+
+Exact detection parity with `postprocess` is **not** claimed: the graph uses the ONNX NMS
+operator and `postprocess` uses `torchvision.ops.batched_nms` with a top-1024 prefilter,
+so the surviving sets can differ at the margin. What *is* pinned is that for whatever
+boxes the graph does emit, the vectors match PyTorch ROI pooling on those same boxes.
 
 ## OpenVINO export
 

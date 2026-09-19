@@ -98,3 +98,46 @@ class DetectAndEmbedGraph(nn.Module):
         if self.pooler.normalize:
             embedding = nn.functional.normalize(embedding, p=2, dim=-1)
         return pred_bboxes, pred_scores, embedding
+
+
+class DetectAndFeatureGraph(nn.Module):
+    """Detections, an image embedding, and the raw feature maps behind them.
+
+    Not a deployment artifact on its own — it is the base graph that
+    :func:`~modern_yolonas.export.objects.make_object_embedding_onnx` performs
+    surgery on. The feature maps have to leave the graph as outputs so the
+    inserted ``RoiAlign`` nodes have something to reference; the surgery then
+    consumes them and they do not appear in the final model.
+
+    Args:
+        model: A :class:`~modern_yolonas.model.YoloNAS`, already fused and in
+            eval mode.
+        pooler: How the feature maps become the image-level vector, and which
+            maps the object-level pooling will read.
+        canvas: Letterbox side length the graph is exported at.
+
+    Forward:
+        ``(images [B, 3, canvas, canvas], valid_region [B, 4])`` →
+        ``(pred_bboxes, pred_scores, embedding, *feature maps in pooler order)``.
+    """
+
+    def __init__(self, model: nn.Module, pooler: FeaturePooler, canvas: int):
+        super().__init__()
+        self.model = model
+        self.pooler = pooler
+        self.canvas = canvas
+
+    @property
+    def output_names(self) -> list[str]:
+        """Names to export with, in forward order."""
+        return ["pred_bboxes", "pred_scores", "embedding"] + [f"feat_{n}" for n in self.pooler.layers]
+
+    def forward(self, images: Tensor, valid_region: Tensor) -> tuple[Tensor, ...]:
+        features = self.model.forward_features(images)
+        pred_bboxes, pred_scores = self.model.heads(
+            (features["p3"], features["p4"], features["p5"])
+        )
+        embedding = self.pooler.pool_images_masked(features, valid_region, self.canvas)
+        if self.pooler.normalize:
+            embedding = nn.functional.normalize(embedding, p=2, dim=-1)
+        return (pred_bboxes, pred_scores, embedding, *(features[n] for n in self.pooler.layers))
