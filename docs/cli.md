@@ -32,6 +32,44 @@ yolonas detect --source video.mp4 --skip-frames 2
 | `--skip-frames` | `0` | Process every N-th frame (video) |
 | `--codec` | `mp4v` | Video output codec |
 
+## `yolonas track`
+
+Track objects across a video with Deep HM-SORT. See the
+[tracking guide](guides/tracking.md) for what the algorithm does and what the defaults
+assume about your footage.
+
+```bash
+yolonas track --source match.mp4 --classes 0
+yolonas track --source match.mp4 --fusion min                  # the Deep-EIoU baseline
+yolonas track --source match.mp4 --keep-all-tracks             # the paper's memory: unlimited
+yolonas track --source match.mp4 --no-appearance               # motion-only, as a control
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--source` | *required* | Video file path |
+| `--model` | `yolo_nas_s` | Model variant (s/m/l) |
+| `--weights` | — | Custom checkpoint; `--model` then selects the architecture |
+| `--conf` | `--track-low` | Detection threshold. Must stay at or below `--track-low`, or the low-score association round never sees anything |
+| `--iou` | `0.7` | NMS IoU threshold |
+| `--classes` | all | Comma-separated class ids to track, filtered before association |
+| `--appearance` / `--no-appearance` | on | Associate on per-object embeddings as well as motion |
+| `--fusion` | `harmonic` | `harmonic` is Deep HM-SORT; `min` is Deep-EIoU's original |
+| `--track-high` | `0.6` | Score at or above which a detection enters the first round |
+| `--track-low` | `0.4` | Score below which a detection is ignored |
+| `--new-track` | `0.5` | Lowest score that may start a track |
+| `--expansion` | `0.3` | Box growth for the first association round |
+| `--max-lost-seconds` | `2.0` | How long a track may go unmatched, in seconds of video — converted with the clip's own frame rate |
+| `--keep-all-tracks` | off | Never drop a track. The paper's setting, and a closed-environment assumption |
+| `--class-aware` | off | Refuse to associate across classes |
+| `--output` | `results` | Output directory |
+| `--codec` | `mp4v` | Video output codec |
+| `--show-fps` | off | Burn the per-frame time into the output |
+
+Boxes are coloured by track id, not by class, so an ID-swap shows as a colour change.
+The summary reports `unique_ids`: far above the true object count means ids are
+fragmenting.
+
 ## `yolonas train`
 
 Train a YOLO-NAS model.

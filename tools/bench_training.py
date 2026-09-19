@@ -195,6 +195,57 @@ def bench_stages(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# frozen teachers
+# ---------------------------------------------------------------------------
+
+# A distillation step pays for a frozen teacher forward on top of the student's
+# own forward and backward. On a small card that is the difference between a
+# recipe that fits and one that does not, so it has to be measured rather than
+# reasoned about. Only the teacher's *cost* is measured here -- what the
+# distillation loss should be is a separate question.
+TEACHERS = {
+    # DINOv3 emits one patch token per 16x16 cell, which is exactly the stride of
+    # the backbone's c4, so the student feature needs a 1x1 projection and nothing else.
+    "dinov3-s": {"repo": "facebook/dinov3-vits16-pretrain-lvd1689m", "dim": 384, "spatial": True},
+    "dinov3-b": {"repo": "facebook/dinov3-vitb16-pretrain-lvd1689m", "dim": 768, "spatial": True},
+    # D-FINE is query-based: there is no spatial map to align c4 against, so this
+    # measures the forward alone. Distilling from it means matching queries or
+    # logits, which is a different design.
+    "dfine-l": {"repo": "ustc-community/dfine-large-coco", "dim": 256, "spatial": False},
+    "dfine-x": {"repo": "ustc-community/dfine-xlarge-coco", "dim": 256, "spatial": False},
+}
+
+
+def load_teacher(name: str, device: torch.device, channels_last: bool):
+    """Load a frozen teacher. Requires the ``distill`` extra."""
+    try:
+        from transformers import AutoModel, AutoModelForObjectDetection
+    except ImportError:
+        raise SystemExit(
+            "--teacher needs transformers: uv sync --extra distill\n"
+            "DINOv3 is a gated repo, so export HF_TOKEN as well."
+        )
+
+    spec = TEACHERS[name]
+    # A detector checkpoint is a ForObjectDetection model; loading it through
+    # AutoModel silently drops the head and randomly initialises what is left.
+    loader = AutoModel if spec["spatial"] else AutoModelForObjectDetection
+    model = loader.from_pretrained(spec["repo"]).to(device).eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    if channels_last and not spec["spatial"]:
+        model = model.to(memory_format=torch.channels_last)
+    return model, spec
+
+
+def teacher_spatial_features(outputs, batch: int, side: int, dim: int) -> torch.Tensor:
+    """Patch tokens as ``[B, dim, side, side]``, dropping CLS and register tokens."""
+    tokens = outputs.last_hidden_state
+    tokens = tokens[:, tokens.shape[1] - side * side:, :]
+    return tokens.transpose(1, 2).reshape(batch, dim, side, side)
+
+
+# ---------------------------------------------------------------------------
 # model
 # ---------------------------------------------------------------------------
 
@@ -215,7 +266,20 @@ def bench_model(args) -> None:
         # number of ground-truth boxes, which varies per batch by construction.
         model = torch.compile(model)
     criterion = PPYoloELoss(num_classes=80)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+
+    teacher = teacher_spec = projection = None
+    if args.teacher:
+        teacher, teacher_spec = load_teacher(args.teacher, device, args.channels_last)
+        if teacher_spec["spatial"]:
+            # c4 is stride 16 with 384 channels on yolo_nas_s; a 1x1 conv is the
+            # whole distillation head.
+            c4_channels = model.backbone.out_channels[2] if hasattr(model, "backbone") else 384
+            projection = torch.nn.Conv2d(c4_channels, teacher_spec["dim"], 1).to(device)
+            if args.channels_last:
+                projection = projection.to(memory_format=torch.channels_last)
+
+    trainable = list(model.parameters()) + (list(projection.parameters()) if projection else [])
+    optimizer = torch.optim.AdamW(trainable, lr=1e-4)
 
     images = torch.randn(args.batch, 3, args.size, args.size, device=device)
     if args.channels_last:
@@ -240,9 +304,30 @@ def bench_model(args) -> None:
         optimizer.zero_grad(set_to_none=True)
         t = time.perf_counter()
         with torch.autocast("cuda", dtype=amp, enabled=amp is not None):
-            predictions = model(images)
-            t = mark("forward", t)
+            if teacher is None:
+                predictions = model(images)
+                t = mark("forward", t)
+            else:
+                # One student pass serving both heads, as a real distillation step
+                # would do -- running the model twice would double the measurement.
+                features = model.forward_features(images)
+                predictions = model.heads((features["p3"], features["p4"], features["p5"]))
+                t = mark("forward", t)
+                with torch.no_grad():
+                    teacher_out = teacher(images)
+                t = mark("teacher forward (frozen)", t)
+
             loss, _ = criterion(predictions, targets, input_size=(args.size, args.size), epoch=1)
+
+            if teacher is not None and teacher_spec["spatial"]:
+                side = args.size // 16
+                target_feature = teacher_spatial_features(
+                    teacher_out, args.batch, side, teacher_spec["dim"]
+                ).float()
+                student_feature = projection(features["c4"]).float()
+                loss = loss + (1 - torch.nn.functional.cosine_similarity(
+                    student_feature, target_feature, dim=1
+                ).mean())
             t = mark("loss (with assigner)", t)
         loss.backward()
         t = mark("backward", t)
@@ -263,7 +348,8 @@ def bench_model(args) -> None:
 
     print(machine())
     print(f"\n{args.model} | batch={args.batch} size={args.size} amp={args.amp} "
-          f"channels_last={args.channels_last} compile={args.compile}")
+          f"channels_last={args.channels_last} compile={args.compile} "
+          f"teacher={args.teacher or 'none'}")
     print(f"T_model = {args.batch * args.iters / wall:.1f} img/s "
           f"({wall / args.iters * 1000:.1f} ms/step)")
     print(f"peak VRAM {torch.cuda.max_memory_allocated() / 2**30:.2f} GiB\n")
@@ -313,6 +399,9 @@ def main() -> None:
     p.add_argument("--compile", action="store_true",
                    help="torch.compile the model. Warmup is excluded from the timing, "
                         "so raise --warmup: the first steps pay for compilation.")
+    p.add_argument("--teacher", default=None, choices=sorted(TEACHERS),
+                   help="Add a frozen teacher forward to the step, as distillation "
+                        "training would. Needs the 'distill' extra.")
     p.set_defaults(func=bench_model)
 
     args = parser.parse_args()

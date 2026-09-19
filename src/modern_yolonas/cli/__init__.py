@@ -7,21 +7,25 @@ from modern_yolonas.cli.benchmark_cmd import benchmark
 from modern_yolonas.cli.dataset_benchmark_cmd import benchmark_dataset_app
 from modern_yolonas.cli.demo_cmd import demo
 from modern_yolonas.cli.detect_cmd import detect
+from modern_yolonas.cli.distill_cmd import distill
 from modern_yolonas.cli.eval_cmd import eval_cmd
 from modern_yolonas.cli.export_cmd import export
 from modern_yolonas.cli.qat_cmd import qat
 from modern_yolonas.cli.quantize_cmd import quantize
 from modern_yolonas.cli.serve_cmd import serve
+from modern_yolonas.cli.track_cmd import track
 from modern_yolonas.cli.train_cmd import train
 
 app = typer.Typer(help="YOLO-NAS object detection.", no_args_is_help=True)
 app.command()(detect)
+app.command()(track)
 app.command()(train)
 app.command(name="export")(export)
 app.command(name="eval")(eval_cmd)
 app.command()(serve)
 app.command()(benchmark)
 app.command()(demo)
+app.command()(distill)
 app.command()(quantize)
 app.command()(qat)
 # `benchmark` measures latency; this one trains and reports mAP, so it gets its own
