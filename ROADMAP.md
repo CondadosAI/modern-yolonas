@@ -19,19 +19,21 @@ dataloader; that assertion was never measured, and the numbers below are what re
 `Mosaic` is reachable only through `training/run.py`, which the dataset-benchmark commands
 use. Any claim about mosaic cost does not apply to the COCO run this roadmap plans.
 
-Single process, per sample, `yolonas train` pipeline — 19.2 ms total, 52 img/s per core:
+Single process, per sample, `yolonas train` pipeline — 10.8 ms total, 92 img/s per core
+with a warm page cache. (Cold it is 19.2 ms and 52 img/s; the shares below move by at
+most a point either way, so only the absolute figures depend on which you measure.)
 
 | stage | ms | share |
 |---|---:|---:|
-| `HSVAugment` | 3.93 | 20% |
-| `Mixup` | 3.46 | 18% |
-| `RandomAffine` | 3.32 | 17% |
-| `Normalize` | 3.30 | 17% |
-| decode (`load_raw`) | 3.10 | 16% |
-| `RandomResizedCrop` | 1.50 | 8% |
-| flip + channel swap | 0.64 | 3% |
+| `HSVAugment` | 2.18 | 20% |
+| `Mixup` | 2.08 | 19% |
+| decode (`load_raw`) | 1.91 | 18% |
+| `RandomAffine` | 1.91 | 18% |
+| `Normalize` | 1.64 | 15% |
+| `RandomResizedCrop` | 0.80 | 7% |
+| flip + channel swap | 0.29 | 3% |
 
-JPEG decode is 16%, not the bottleneck — so a pre-resized disk cache, nvJPEG or DALI would
+JPEG decode is 18%, not the bottleneck — so a pre-resized disk cache, nvJPEG or DALI would
 buy almost nothing and are dropped from this plan. The two largest entries are both pure
 waste and were prototyped:
 
@@ -50,7 +52,8 @@ waste and were prototyped:
   free; `eval_cmd` and `quantize_cmd` consume batches directly and each need the cast made
   explicit. `inference/preprocess.py` is a separate path and stays independent.
 
-Together that is 31% of loader time, which would move 52 → ~75 img/s per core.
+Together that is roughly a third of loader time. Implemented and measured back to back
+against this branch: **10.8 → 7.5 ms per sample**, and 78.6 → 19.7 MB per batch of 16.
 
 `T_loader`, batch 16, `yolonas train` pipeline:
 
@@ -80,7 +83,7 @@ fp16 here, so it is a `GradScaler` stability argument, not a throughput one — 
 it as a speedup. Backward is 57% of the step and the loss, assigner included, is only 4%,
 so the `TaskAlignedAssigner` is not worth optimising.
 
-**On this hardware training is GPU-bound with roughly 10× headroom** (383 vs 41 img/s), so
+**On this hardware training is GPU-bound with roughly 8× headroom** (~330 vs 41 img/s), so
 none of the loader work pays off locally.
 
 Whether it pays off on a rented 4090 is **not answered here, and should not be guessed**.
