@@ -144,6 +144,24 @@ def fresh_model(name: str):
     return fuse_for_inference(getattr(modern_yolonas, name)(pretrained=True))
 
 
+def with_host_nms(forward):
+    """Wrap a forward pass in the host-side NMS an `external` graph still needs.
+
+    Without this the `external` and `graph` rows are not comparable: the first
+    excludes NMS entirely while the second includes it. This is the leg that says
+    whether baking NMS into the graph pays.
+    """
+    from modern_yolonas.inference.postprocess import postprocess
+
+    def run():
+        boxes, scores = forward()
+        postprocess(boxes.float(), scores.float(), conf_threshold=0.25, iou_threshold=0.45, max_detections=300)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+    return run
+
+
 def bench_pytorch(matrix, name, size, cpu: bool):
     x = torch.randn(1, 3, size, size)
 
@@ -167,6 +185,13 @@ def bench_pytorch(matrix, name, size, cpu: bool):
             torch.cuda.synchronize()
 
         matrix.record("PyTorch", "dGPU", precision, name, size, timeit(run), **gpu_clock_health())
+
+        def forward():
+            with torch.no_grad():
+                return model(xc)
+
+        matrix.record("PyTorch", "dGPU", precision, name, size, timeit(with_host_nms(forward)),
+                      nms="host", **gpu_clock_health())
         model = xc = None
         torch.cuda.empty_cache()
 
@@ -253,6 +278,9 @@ def bench_tensorrt(matrix, name, size, nms, half_onnx, fp32_onnx):
         x = torch.randn(1, 3, size, size, device="cuda", dtype=dtype)
         matrix.record("TensorRT", f"dGPU {variant}", precision, name, size,
                       timeit(lambda: runner(x)), nms=nms, **gpu_clock_health())
+        if nms == "external":
+            matrix.record("TensorRT", f"dGPU {variant}", precision, name, size,
+                          timeit(with_host_nms(lambda: runner(x))), nms="host", **gpu_clock_health())
         runner = None
         torch.cuda.empty_cache()
 

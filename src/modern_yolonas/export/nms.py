@@ -63,10 +63,16 @@ def nms_nodes(
         helper.make_node("Unsqueeze", ["class_col", "unsq_axis"], ["class_2d"]),
         helper.make_node("Unsqueeze", ["box_col", "unsq_axis"], ["box_2d"]),
         helper.make_node("Concat", ["batch_2d", "box_2d"], ["bbox_gather_idx"], axis=1),
-        helper.make_node("GatherND", [bbox_output, "bbox_gather_idx"], ["selected_boxes"]),
+        helper.make_node("GatherND", [bbox_output, "bbox_gather_idx"], ["selected_boxes_raw"]),
         helper.make_node("Concat", ["batch_2d", "box_2d", "class_2d"], ["score_gather_idx"], axis=1),
-        helper.make_node("GatherND", [score_output, "score_gather_idx"], ["selected_scores"]),
-        helper.make_node("Unsqueeze", ["selected_scores", "unsq_axis"], ["scores_2d"]),
+        helper.make_node("GatherND", [score_output, "score_gather_idx"], ["selected_scores_raw"]),
+        helper.make_node("Unsqueeze", ["selected_scores_raw", "unsq_axis"], ["scores_2d_raw"]),
+        # The indices are integers and the tensors may be FP16 — on an FP16 graph
+        # TensorRT rejects the concat outright ("inputs must all be of the same type").
+        # Casting everything to float32 makes the detections tensor one type whatever
+        # precision the graph runs in, which is also what a caller wants to read.
+        helper.make_node("Cast", ["selected_boxes_raw"], ["selected_boxes"], to=TensorProto.FLOAT),
+        helper.make_node("Cast", ["scores_2d_raw"], ["scores_2d"], to=TensorProto.FLOAT),
         helper.make_node("Cast", ["batch_2d"], ["batch_float"], to=TensorProto.FLOAT),
         helper.make_node("Cast", ["class_2d"], ["class_float"], to=TensorProto.FLOAT),
         helper.make_node(

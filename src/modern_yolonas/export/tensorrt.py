@@ -144,6 +144,36 @@ def build_engine(
     return path
 
 
+def _make_output_allocator(trt, torch, device):
+    """An allocator TensorRT calls back into for a data-dependent output shape.
+
+    With NMS in the graph the detection count is not known until the kernel has run,
+    and `get_tensor_shape` keeps reporting -1 before *and* after execution. The
+    allocator callback is the only place TensorRT states the real shape.
+    """
+
+    class _Allocator(trt.IOutputAllocator):
+        def __init__(self):
+            super().__init__()
+            self.buffer = None
+            self.shape = None
+
+        def reallocate_output_async(self, tensor_name, memory, size, alignment, stream):
+            if self.buffer is None or self.buffer.numel() < size:
+                # Kept as bytes; the caller views it as the tensor's dtype afterwards.
+                self.buffer = torch.empty(int(size), dtype=torch.uint8, device=device)
+            return self.buffer.data_ptr()
+
+        # TensorRT picks whichever of the two it supports.
+        def reallocate_output(self, tensor_name, memory, size, alignment):
+            return self.reallocate_output_async(tensor_name, memory, size, alignment, None)
+
+        def notify_shape(self, tensor_name, shape):
+            self.shape = tuple(shape)
+
+    return _Allocator()
+
+
 class EngineRunner:
     """Run a serialised engine, with CUDA buffers owned by torch.
 
@@ -189,6 +219,11 @@ class EngineRunner:
             else:
                 self.output_names.append(name)
 
+        # One allocator per output, kept across calls so the buffer is reused.
+        self._allocators = {
+            name: _make_output_allocator(trt, torch, self.device) for name in self.output_names
+        }
+
     def _torch_dtype(self, name):
         import torch
 
@@ -209,29 +244,29 @@ class EngineRunner:
         # A graph with NMS in it has a data-dependent output shape, which reads as -1
         # before execution. TensorRT gives an upper bound for exactly this case; the
         # buffer is allocated to it and sliced back afterwards.
-        buffers, shapes = [], []
+        buffers, allocators = {}, {}
         for name in self.output_names:
             shape = tuple(self.context.get_tensor_shape(name))
             if any(dim < 0 for dim in shape):
-                dtype = self._torch_dtype(name)
-                count = self.context.get_max_output_size(name) // dtype.itemsize
-                buffer = torch.empty(count, dtype=dtype, device=self.device)
+                allocators[name] = self._allocators[name]
+                self.context.set_output_allocator(name, allocators[name])
             else:
                 buffer = torch.empty(shape, dtype=self._torch_dtype(name), device=self.device)
-            self.context.set_tensor_address(name, buffer.data_ptr())
-            buffers.append(buffer)
-            shapes.append(shape)
+                self.context.set_tensor_address(name, buffer.data_ptr())
+                buffers[name] = buffer
 
         if not self.context.execute_async_v3(self.stream.cuda_stream):
             raise RuntimeError("TensorRT execution failed")
         self.stream.synchronize()
 
         outputs = []
-        for name, buffer, shape in zip(self.output_names, buffers, shapes):
-            if any(dim < 0 for dim in shape):
-                # Resolved only now that the kernel has run.
-                actual = tuple(self.context.get_tensor_shape(name))
-                outputs.append(buffer[: int(np.prod(actual))].view(actual))
+        for name in self.output_names:
+            if name in allocators:
+                allocator = allocators[name]
+                dtype = self._torch_dtype(name)
+                count = int(np.prod(allocator.shape)) if allocator.shape else 0
+                flat = allocator.buffer[: count * dtype.itemsize].view(dtype)
+                outputs.append(flat.view(allocator.shape))
             else:
-                outputs.append(buffer)
+                outputs.append(buffers[name])
         return tuple(outputs)
