@@ -113,6 +113,18 @@ def test_end2end_graph_matches_torch_nms(small_model, tmp_path):
     assert np.abs(got - want).max() < 1e-4
 
 
+def _plain(output: str) -> str:
+    """CLI output with rich's markup and wrapping removed.
+
+    Asserting on a raw `result.output` is a trap: rich colours a `--flag` by
+    inserting escape sequences *inside* it, and wraps at the terminal width, so
+    `"--target generic"` is present locally and absent on a narrower CI runner.
+    """
+    import re
+
+    return re.sub(r"\s+", " ", re.sub(r"\x1b\[[0-9;]*m", "", output))
+
+
 @pytest.mark.parametrize("target", ["end2end", "frigate", "objects"])
 def test_int8_is_refused_for_every_rewritten_graph(tmp_path, target):
     """NNCF cannot calibrate through a rewritten graph, so the combination is refused."""
@@ -124,7 +136,7 @@ def test_int8_is_refused_for_every_rewritten_graph(tmp_path, target):
         app, ["export", "--target", target, "--format", "openvino", "--precision", "int8"]
     )
     assert result.exit_code != 0
-    assert "--target generic" in result.output
+    assert "--target generic" in _plain(result.output)
 
 
 # --- OpenVINO -------------------------------------------------------------------
