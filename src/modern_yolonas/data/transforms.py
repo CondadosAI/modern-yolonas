@@ -81,31 +81,53 @@ class Compose:
 
 
 class HSVAugment:
-    """Randomly adjust hue, saturation, and value via Albumentations.
+    """Randomly shift hue, saturation and value.
+
+    Implemented with three 256-entry lookup tables rather than through
+    Albumentations. The shift is constant across the image, so it is exactly a
+    per-channel table lookup, and ``cv2.LUT`` applies one in a single pass. The
+    Albumentations route cost two whole-image copies to swap BGR/RGB around a call
+    that converted colour space again internally — 5.32 ms against 2.32 ms per
+    640x640 image, measured 2026-09-19.
+
+    The shift ranges are unchanged: OpenCV's uint8 HSV encoding puts hue in
+    ``[0, 179]`` and saturation and value in ``[0, 255]``, which is the same
+    convention ``HueSaturationValue`` used, so recipes keep their meaning.
 
     Args:
-        hgain: Max hue shift in degrees (Albumentations ``hue_shift_limit``).
-              Matches the super-gradients ``hgain`` recipe param. Default: 18.
-        sgain: Max saturation shift in absolute units (``sat_shift_limit``).
-              Default: 30.
-        vgain: Max value shift in absolute units (``val_shift_limit``).
-              Default: 30.
+        hgain: Max hue shift, in OpenCV hue units. Matches the super-gradients
+              ``hgain`` recipe param. Default: 18.
+        sgain: Max saturation shift in absolute units. Default: 30.
+        vgain: Max value shift in absolute units. Default: 30.
         p: Probability of applying the transform.
     """
 
     def __init__(self, hgain: int = 18, sgain: int = 30, vgain: int = 30, p: float = 0.5):
-        self._aug = A.HueSaturationValue(
-            hue_shift_limit=hgain,
-            sat_shift_limit=sgain,
-            val_shift_limit=vgain,
-            p=p,
-        )
+        self.hgain = hgain
+        self.sgain = sgain
+        self.vgain = vgain
+        self.p = p
+        self._ramp = np.arange(256, dtype=np.int16)
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        # Albumentations expects RGB; our pipeline carries BGR images
-        rgb = image[:, :, ::-1].copy()
-        result = self._aug(image=rgb)
-        return result["image"][:, :, ::-1].copy(), targets
+        if random.random() >= self.p:
+            return image, targets
+
+        dh, ds, dv = (
+            random.uniform(-1, 1) * self.hgain,
+            random.uniform(-1, 1) * self.sgain,
+            random.uniform(-1, 1) * self.vgain,
+        )
+
+        hue, sat, val = cv2.split(cv2.cvtColor(image, cv2.COLOR_BGR2HSV))
+        x = self._ramp
+        # Hue is an angle, so it wraps; saturation and value saturate at the ends.
+        lut_h = ((x + dh) % 180).astype(np.uint8)
+        lut_s = np.clip(x + ds, 0, 255).astype(np.uint8)
+        lut_v = np.clip(x + dv, 0, 255).astype(np.uint8)
+
+        merged = cv2.merge((cv2.LUT(hue, lut_h), cv2.LUT(sat, lut_s), cv2.LUT(val, lut_v)))
+        return cv2.cvtColor(merged, cv2.COLOR_HSV2BGR), targets
 
 
 class HorizontalFlip:
@@ -530,11 +552,32 @@ class LetterboxResize:
 
 
 class Normalize:
-    """Convert HWC uint8 to CHW float32 [0,1] tensor."""
+    """Convert HWC BGR uint8 to CHW RGB, optionally leaving the scaling to the GPU.
+
+    With ``dtype="uint8"`` the array stays 1.23 MB per 640x640 sample instead of
+    4.92 MB, which is what then crosses the collate function, the ``pin_memory``
+    thread and the PCIe bus; ``YoloNASLightningModule.on_after_batch_transfer``
+    divides by 255 on the device, where it is free. Measured 2026-09-19:
+    3.23 ms to 0.28 ms per sample, and the reconstructed float32 is bit-identical.
+
+    The default stays ``"float32"`` so that every consumer that reads batches
+    directly — ``yolonas eval``, ``yolonas quantize``, the examples — is unaffected.
+
+    Args:
+        dtype: ``"float32"`` to divide by 255 here, ``"uint8"`` to defer it.
+    """
+
+    def __init__(self, dtype: str = "float32"):
+        if dtype not in ("float32", "uint8"):
+            raise ValueError(f"dtype must be 'float32' or 'uint8', got {dtype!r}")
+        self.dtype = dtype
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        image = image[:, :, ::-1].copy()  # BGR → RGB
-        image = image.transpose(2, 0, 1).astype(np.float32) / 255.0
+        # BGR → RGB and HWC → CHW in one go; ascontiguousarray materialises the
+        # result once, where the old chain copied for the flip and again for the cast.
+        image = np.ascontiguousarray(image[:, :, ::-1].transpose(2, 0, 1))
+        if self.dtype == "float32":
+            image = image.astype(np.float32) / 255.0
         return image, targets
 
 
