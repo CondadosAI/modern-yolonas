@@ -30,6 +30,8 @@ class YoloNASDetector:
 
     Usage::
 
+        from modern_yolonas import COCOClass, YoloNASDetector
+
         det = YoloNASDetector("yolo_nas_s", device="cuda")
 
         # Single image
@@ -38,7 +40,7 @@ class YoloNASDetector:
         cv2.imwrite("output.jpg", det.annotate(image, detections))
 
         # Filter like any supervision result
-        people = detections[detections.class_id == 0]
+        people = detections[detections.class_id == COCOClass.PERSON]
         confident = detections[detections.confidence > 0.5]
 
         # From a custom checkpoint trained with --num-classes 3
