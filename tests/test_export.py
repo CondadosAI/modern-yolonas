@@ -23,6 +23,10 @@ from modern_yolonas.inference.preprocess import preprocess  # noqa: E402
 
 CANVAS = 320
 
+#: IR version to stamp on hand-built test models. Opset 18 needs at least 8, and
+#: this is low enough for every onnxruntime in the support matrix.
+_MAX_SUPPORTED_IR_VERSION = 10
+
 
 @pytest.fixture(scope="module")
 def fused_model():
@@ -525,6 +529,12 @@ class TestRoiAlignMapsToTorchvision:
             [onnx.helper.make_tensor_value_info("Y", onnx.TensorProto.FLOAT, None)],
         )
         model = onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", 18)])
+        # `make_model` stamps the installed onnx library's IR version, which runs
+        # ahead of what onnxruntime accepts — onnxruntime 1.23.2, the last release
+        # with a cp310 wheel, caps at 11 while onnx 1.22 writes 13. The graphs
+        # under test elsewhere inherit their IR version from torch's exporter and
+        # never hit this; only a hand-built model does.
+        model.ir_version = min(model.ir_version, _MAX_SUPPORTED_IR_VERSION)
         actual = ort.InferenceSession(
             model.SerializeToString(), providers=["CPUExecutionProvider"]
         ).run(None, {"X": features, "rois": boxes, "bidx": batch_indices})[0]
