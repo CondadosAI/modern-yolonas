@@ -45,6 +45,32 @@ class YoloNAS(nn.Module):
         p3, p4, p5 = self.neck(features)
         return self.heads((p3, p4, p5))
 
+    def forward_features(self, x: Tensor) -> dict[str, Tensor]:
+        """Run backbone and neck and return every intermediate feature map.
+
+        The detection head is skipped entirely — this is the representation the
+        model builds *before* it commits to boxes and classes, which is what an
+        image-retrieval or re-identification pipeline wants. See
+        :class:`~modern_yolonas.inference.embed.YoloNASEmbedder` for the
+        image-in, vector-out wrapper around it.
+
+        Deliberately a separate method rather than a flag on ``forward``: the
+        signature of ``forward`` is what ONNX export, the Frigate graph, the
+        parity tests and the FX-traced quantization path all depend on.
+
+        Args:
+            x: Normalized input batch, ``[B, 3, H, W]``.
+
+        Returns:
+            ``{"c2","c3","c4","c5","p3","p4","p5"}`` → feature maps. ``c2``–``c5``
+            are the backbone outputs (``c5`` is post-SPP); ``p3``–``p5`` are the
+            neck's fused pyramid levels. At 640x640 the strides are 4, 8, 16, 32
+            for ``c2``–``c5`` and 8, 16, 32 for ``p3``–``p5``.
+        """
+        c2, c3, c4, c5 = self.backbone(x)
+        p3, p4, p5 = self.neck([c2, c3, c4, c5])
+        return {"c2": c2, "c3": c3, "c4": c4, "c5": c5, "p3": p3, "p4": p4, "p5": p5}
+
     @classmethod
     def from_config(cls, variant: str, num_classes: int = 80) -> "YoloNAS":
         cfg = CONFIGS[variant]

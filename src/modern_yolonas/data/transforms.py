@@ -81,31 +81,53 @@ class Compose:
 
 
 class HSVAugment:
-    """Randomly adjust hue, saturation, and value via Albumentations.
+    """Randomly shift hue, saturation and value.
+
+    Implemented with three 256-entry lookup tables rather than through
+    Albumentations. The shift is constant across the image, so it is exactly a
+    per-channel table lookup, and ``cv2.LUT`` applies one in a single pass. The
+    Albumentations route cost two whole-image copies to swap BGR/RGB around a call
+    that converted colour space again internally — 5.32 ms against 2.32 ms per
+    640x640 image, measured 2026-09-19.
+
+    The shift ranges are unchanged: OpenCV's uint8 HSV encoding puts hue in
+    ``[0, 179]`` and saturation and value in ``[0, 255]``, which is the same
+    convention ``HueSaturationValue`` used, so recipes keep their meaning.
 
     Args:
-        hgain: Max hue shift in degrees (Albumentations ``hue_shift_limit``).
-              Matches the super-gradients ``hgain`` recipe param. Default: 18.
-        sgain: Max saturation shift in absolute units (``sat_shift_limit``).
-              Default: 30.
-        vgain: Max value shift in absolute units (``val_shift_limit``).
-              Default: 30.
+        hgain: Max hue shift, in OpenCV hue units. Matches the super-gradients
+              ``hgain`` recipe param. Default: 18.
+        sgain: Max saturation shift in absolute units. Default: 30.
+        vgain: Max value shift in absolute units. Default: 30.
         p: Probability of applying the transform.
     """
 
     def __init__(self, hgain: int = 18, sgain: int = 30, vgain: int = 30, p: float = 0.5):
-        self._aug = A.HueSaturationValue(
-            hue_shift_limit=hgain,
-            sat_shift_limit=sgain,
-            val_shift_limit=vgain,
-            p=p,
-        )
+        self.hgain = hgain
+        self.sgain = sgain
+        self.vgain = vgain
+        self.p = p
+        self._ramp = np.arange(256, dtype=np.int16)
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        # Albumentations expects RGB; our pipeline carries BGR images
-        rgb = image[:, :, ::-1].copy()
-        result = self._aug(image=rgb)
-        return result["image"][:, :, ::-1].copy(), targets
+        if random.random() >= self.p:
+            return image, targets
+
+        dh, ds, dv = (
+            random.uniform(-1, 1) * self.hgain,
+            random.uniform(-1, 1) * self.sgain,
+            random.uniform(-1, 1) * self.vgain,
+        )
+
+        hue, sat, val = cv2.split(cv2.cvtColor(image, cv2.COLOR_BGR2HSV))
+        x = self._ramp
+        # Hue is an angle, so it wraps; saturation and value saturate at the ends.
+        lut_h = ((x + dh) % 180).astype(np.uint8)
+        lut_s = np.clip(x + ds, 0, 255).astype(np.uint8)
+        lut_v = np.clip(x + dv, 0, 255).astype(np.uint8)
+
+        merged = cv2.merge((cv2.LUT(hue, lut_h), cv2.LUT(sat, lut_s), cv2.LUT(val, lut_v)))
+        return cv2.cvtColor(merged, cv2.COLOR_HSV2BGR), targets
 
 
 class HorizontalFlip:
@@ -295,6 +317,182 @@ class RandomResizedCrop:
         return r["image"], _from_albu(r["bboxes"], r["class_labels"], targets.dtype)
 
 
+class RandomResizedCropFlipAffine:
+    """``RandomResizedCrop`` → ``HorizontalFlip`` → ``RandomAffine``, as one warp.
+
+    The three transforms it replaces are each affine, so their matrices multiply and
+    a single ``cv2.warpAffine`` produces the same output. That is worth doing twice
+    over: it resamples the image once instead of three times, and it drops two full
+    passes over a 640x640 array plus two Albumentations bbox round-trips.
+
+    The parameters are drawn by calling Albumentations' own samplers, so the
+    augmentation distribution is identical by construction rather than by
+    reimplementation — ``A.Affine`` samples x and y scale *independently*, for one,
+    which a hand-rolled version would be unlikely to reproduce.
+
+    **Two matrices, deliberately.** OpenCV's ``resize`` and ``warpAffine`` map pixel
+    *centres*: the source coordinate for output pixel ``d`` is ``(d + 0.5) * s - 0.5``.
+    Albumentations' bbox crop is geometric — ``(src - x1) * S / crop`` with no half-pixel
+    term — which is also why ``A.Affine`` returns a separate ``bbox_matrix``. Composing
+    the image chain with the geometric convention shifts the picture by
+    ``0.5 * (1 - S / crop)`` pixels, half a pixel when the crop is upscaled 2x, while
+    the boxes stay put. Nothing raises; the labels simply stop matching the pixels.
+    Measured: with the geometric matrix the 99th percentile of the difference against
+    the chain is up to 14 grey levels, with the pixel-centre matrix it is 1.
+
+    So ``_image_matrix`` carries the half-pixel terms and ``_box_matrix`` does not.
+    They are not meant to agree.
+
+    Only axis-aligned chains are supported. With rotation or shear, clipping a box once
+    at the end is not the same as clipping it after each step, and this class would
+    silently produce different boxes; it raises instead.
+
+    Args:
+        size: Output square side.
+        scale: Crop area fraction range, as ``A.RandomResizedCrop``.
+        ratio: Crop aspect ratio range, as ``A.RandomResizedCrop``.
+        flip_prob: Probability of the horizontal flip.
+        translate: Affine translation as a fraction of output size.
+        affine_scale: Affine scale range.
+        degrees: Rotation. Must be 0.
+        shear: Shear. Must be 0.
+        pad_value: Fill for pixels pulled in from outside the source.
+        min_box_size: Drop boxes thinner than this, in output pixels. Matches the
+            ``min_width`` / ``min_height`` of ``_BBOX_PARAMS``.
+    """
+
+    def __init__(
+        self,
+        size: int = 640,
+        scale: tuple[float, float] = (0.05, 0.8),
+        ratio: tuple[float, float] = (0.75, 1.33),
+        flip_prob: float = 0.5,
+        translate: float = 0.25,
+        affine_scale: tuple[float, float] = (0.5, 1.5),
+        degrees: float = 0.0,
+        shear: float = 0.0,
+        pad_value: int = 114,
+        min_box_size: float = 2.0,
+    ):
+        if degrees != 0.0 or shear != 0.0:
+            raise ValueError(
+                "RandomResizedCropFlipAffine fuses an axis-aligned chain only. "
+                f"Got degrees={degrees}, shear={shear}. Clipping boxes once at the end "
+                "is equivalent to clipping them at each step only while the transform "
+                "stays axis-aligned; under rotation or shear it is not, and the fused "
+                "boxes would differ from the chain's without any error being raised. "
+                "Use RandomResizedCrop + HorizontalFlip + RandomAffine for those."
+            )
+
+        self.size = size
+        self.flip_prob = flip_prob
+        self.pad_value = pad_value
+        self.min_box_size = min_box_size
+
+        # Sampling is delegated to Albumentations so the distributions cannot drift.
+        self._crop = A.RandomResizedCrop(size=(size, size), scale=scale, ratio=ratio, p=1.0)
+        self._affine = A.Affine(
+            scale=affine_scale,
+            translate_percent={"x": (-translate, translate), "y": (-translate, translate)},
+            rotate=(0, 0),
+            shear=(0, 0),
+            border_mode=cv2.BORDER_CONSTANT,
+            fill=pad_value,
+            p=1.0,
+        )
+
+    # -- matrices -----------------------------------------------------------
+
+    def _crop_matrix(self, crop: tuple[int, int, int, int], *, pixel_centre: bool) -> np.ndarray:
+        x1, y1, x2, y2 = crop
+        sx, sy = self.size / (x2 - x1), self.size / (y2 - y1)
+        if pixel_centre:
+            tx, ty = (0.5 - x1) * sx - 0.5, (0.5 - y1) * sy - 0.5
+        else:
+            tx, ty = -sx * x1, -sy * y1
+        return np.array([[sx, 0.0, tx], [0.0, sy, ty], [0.0, 0.0, 1.0]])
+
+    def _flip_matrix(self, *, pixel_centre: bool) -> np.ndarray:
+        # cv2.flip sends column x to W-1-x; a normalised box coordinate goes to 1-x,
+        # which in pixels is W-x. One pixel apart, and each is right for its target.
+        offset = self.size - 1 if pixel_centre else self.size
+        return np.array([[-1.0, 0.0, offset], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+    # -- api ----------------------------------------------------------------
+
+    def sample_params(self, height: int, width: int) -> dict:
+        """Draw one set of parameters. Split out so tests can drive both paths alike."""
+        crop = self._crop.get_params_dependent_on_data({"shape": (height, width, 3)}, {})["crop_coords"]
+        affine = self._affine.get_params_dependent_on_data({"shape": (self.size, self.size, 3)}, {})
+        return {
+            "crop": tuple(crop),
+            "flip": random.random() < self.flip_prob,
+            "matrix": np.asarray(affine["matrix"], dtype=np.float64),
+            "bbox_matrix": np.asarray(affine["bbox_matrix"], dtype=np.float64),
+        }
+
+    def image_matrix(self, params: dict) -> np.ndarray:
+        eye = np.eye(3)
+        return (
+            params["matrix"]
+            @ (self._flip_matrix(pixel_centre=True) if params["flip"] else eye)
+            @ self._crop_matrix(params["crop"], pixel_centre=True)
+        )
+
+    def box_matrix(self, params: dict) -> np.ndarray:
+        eye = np.eye(3)
+        return (
+            params["bbox_matrix"]
+            @ (self._flip_matrix(pixel_centre=False) if params["flip"] else eye)
+            @ self._crop_matrix(params["crop"], pixel_centre=False)
+        )
+
+    def apply(self, image: np.ndarray, targets: np.ndarray, params: dict) -> tuple[np.ndarray, np.ndarray]:
+        h, w = image.shape[:2]
+        out = cv2.warpAffine(
+            image,
+            self.image_matrix(params)[:2],
+            (self.size, self.size),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(self.pad_value,) * image.shape[2] if image.ndim == 3 else self.pad_value,
+        )
+
+        if not len(targets):
+            return out, targets
+
+        m = self.box_matrix(params)
+        cx, cy, bw, bh = targets[:, 1] * w, targets[:, 2] * h, targets[:, 3] * w, targets[:, 4] * h
+        x1, y1, x2, y2 = cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2
+
+        # Map both corners. Axis-aligned, so the transformed corners are still the
+        # extremes; min/max guards against a negative scale (the flip).
+        px = m[0, 0] * np.stack([x1, x2]) + m[0, 2]
+        py = m[1, 1] * np.stack([y1, y2]) + m[1, 2]
+        nx1, nx2 = px.min(0), px.max(0)
+        ny1, ny2 = py.min(0), py.max(0)
+
+        np.clip(nx1, 0, self.size, out=nx1)
+        np.clip(nx2, 0, self.size, out=nx2)
+        np.clip(ny1, 0, self.size, out=ny1)
+        np.clip(ny2, 0, self.size, out=ny2)
+
+        keep = ((nx2 - nx1) >= self.min_box_size) & ((ny2 - ny1) >= self.min_box_size)
+        if not keep.any():
+            return out, np.zeros((0, 5), dtype=targets.dtype)
+
+        kept = np.empty((int(keep.sum()), 5), dtype=targets.dtype)
+        kept[:, 0] = targets[keep, 0]
+        kept[:, 1] = (nx1[keep] + nx2[keep]) / 2 / self.size
+        kept[:, 2] = (ny1[keep] + ny2[keep]) / 2 / self.size
+        kept[:, 3] = (nx2[keep] - nx1[keep]) / self.size
+        kept[:, 4] = (ny2[keep] - ny1[keep]) / self.size
+        return out, kept
+
+    def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return self.apply(image, targets, self.sample_params(*image.shape[:2]))
+
+
 class RandomChannelSwap:
     """Randomly swap BGR channel order to RGB (and vice-versa) via Albumentations.
 
@@ -479,8 +677,12 @@ class Mixup:
                 targets2[:, 3] = targets2[:, 3] * new_w / target_w
                 targets2[:, 4] = targets2[:, 4] * new_h / target_h
 
-        r = np.random.beta(self.alpha, self.beta)
-        mixed = (image.astype(np.float32) * r + img2.astype(np.float32) * (1 - r)).astype(np.uint8)
+        r = float(np.random.beta(self.alpha, self.beta))
+        # cv2 blends in one SIMD pass over uint8. Promoting both images to float32
+        # first allocated two 4.9 MB arrays per call and cost 1.47 ms against 0.30 ms,
+        # measured 2026-09-19. The results differ by at most one grey level, and in
+        # cv2's favour: it rounds, where the float32 cast truncated.
+        mixed = cv2.addWeighted(image, r, img2, 1.0 - r, 0.0)
 
         if len(targets) and len(targets2):
             combined = np.concatenate([targets, targets2], 0)
@@ -530,11 +732,32 @@ class LetterboxResize:
 
 
 class Normalize:
-    """Convert HWC uint8 to CHW float32 [0,1] tensor."""
+    """Convert HWC BGR uint8 to CHW RGB, optionally leaving the scaling to the GPU.
+
+    With ``dtype="uint8"`` the array stays 1.23 MB per 640x640 sample instead of
+    4.92 MB, which is what then crosses the collate function, the ``pin_memory``
+    thread and the PCIe bus; ``YoloNASLightningModule.on_after_batch_transfer``
+    divides by 255 on the device, where it is free. Measured 2026-09-19:
+    3.23 ms to 0.28 ms per sample, and the reconstructed float32 is bit-identical.
+
+    The default stays ``"float32"`` so that every consumer that reads batches
+    directly — ``yolonas eval``, ``yolonas quantize``, the examples — is unaffected.
+
+    Args:
+        dtype: ``"float32"`` to divide by 255 here, ``"uint8"`` to defer it.
+    """
+
+    def __init__(self, dtype: str = "float32"):
+        if dtype not in ("float32", "uint8"):
+            raise ValueError(f"dtype must be 'float32' or 'uint8', got {dtype!r}")
+        self.dtype = dtype
 
     def __call__(self, image: np.ndarray, targets: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        image = image[:, :, ::-1].copy()  # BGR → RGB
-        image = image.transpose(2, 0, 1).astype(np.float32) / 255.0
+        # BGR → RGB and HWC → CHW in one go; ascontiguousarray materialises the
+        # result once, where the old chain copied for the flip and again for the cast.
+        image = np.ascontiguousarray(image[:, :, ::-1].transpose(2, 0, 1))
+        if self.dtype == "float32":
+            image = image.astype(np.float32) / 255.0
         return image, targets
 
 

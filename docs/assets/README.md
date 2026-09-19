@@ -56,3 +56,37 @@ image leaves most of it unboxed). Roughly 70 detections per frame.
 The `.gif` is what the README shows, because GitHub renders it inline without a player.
 The `.mp4` is a quarter of the size at better quality and is what the documentation site
 uses, where a `<video>` element works.
+
+## `street_nyc.jpg` and `pancakes.jpg` — the retrieval example's gallery
+
+The two gallery images for the embedding figure. One is another street scene, so it should
+land near the query; the other is nothing like it, so it should land far away. Both are
+CC0, like `street.jpg`, so they can be redistributed here.
+
+### `street_nyc.jpg`
+
+- **Source:** [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:People_crossing_street_(Unsplash).jpg)
+  (originally [Unsplash](https://unsplash.com/photos/omi6C5fdiLA))
+- **Author:** Mike Petrucci
+- **Licence:** [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
+- **Changes:** resized to 1400 px wide and re-encoded as JPEG quality 88.
+
+### `pancakes.jpg`
+
+- **Source:** [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Eating_Pancakes_(Unsplash).jpg)
+  (originally [Unsplash](https://unsplash.com/photos/YpngzEY9ijY))
+- **Author:** Gabriel Gurrola
+- **Licence:** [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
+- **Changes:** resized to 1400 px wide and re-encoded as JPEG quality 88.
+
+## `embedding_space.png` — the retrieval figure
+
+`street.jpg` as the query against the two images above, with the three vectors plotted at
+their true angular distances. Regenerate with:
+
+```bash
+uv run examples/embedding_space_figure.py
+```
+
+The script prints the similarities it drew, so the figure and the numbers quoted around it
+cannot drift apart.

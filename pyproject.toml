@@ -175,6 +175,18 @@ dev = [
     # the notebooks that do it.
     "roboflow>=1.2.13",
     "jupyter>=1.1.1",
+    # So CI actually runs tests/test_export.py rather than skipping it. These
+    # mirror the [onnx] extra; without them the export graphs ship unverified.
+    # onnxruntime stopped shipping cp310 wheels after 1.23.2 while still claiming
+    # 3.10 in its metadata, so a resolver only finds out at install time — hence
+    # the split rather than a single specifier.
+    "onnx>=1.14",
+    "onnxruntime>=1.15,<1.24 ; python_version < '3.11'",
+    "onnxruntime>=1.15 ; python_version >= '3.11'",
+    "onnxscript>=0.6.0",
+    # Regenerating docs/assets/embedding_space.png. Only arrives transitively via
+    # jupyter otherwise, which is not something examples/ should rely on.
+    "matplotlib>=3.7",
 ]
 docs = [
     "mkdocs-material>=9.5",

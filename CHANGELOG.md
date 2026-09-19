@@ -69,6 +69,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the repository, so its table could not be regenerated. `examples/runtime_matrix.py`
   replaces it.
 
+### Added
+- **`yolonas export --target objects`** — a self-contained ONNX graph with NMS and ROI
+  pooling inside it: image in, `detections [D, 7]` and `object_embedding [D, E]` out, with
+  row *i* of the vectors describing row *i* of the boxes, plus the image-level `embedding`.
+  This is the deployment form of `predict(..., Task.EMBED_OBJECTS)`, which until now had
+  no export.
+- It is built by graph surgery rather than tracing, because which boxes exist depends on
+  which survive NMS — a data-dependent shape `torch.export` will not produce. A base graph
+  emits its feature maps as outputs, and `NonMaxSuppression`, `RoiAlign`, the grid pooling
+  and the L2 normalization are added as ONNX nodes on top; the feature maps are dropped
+  from the final model. `DetectAndFeatureGraph` is that base, `export/objects.py` the
+  surgery.
+- Boxes are clipped to `valid_region` before being embedded, matching `embed_boxes` and
+  `predict(..., Task.EMBED_OBJECTS)`. A box that clips to zero area comes back as a zero
+  vector rather than NaN — the graph spells out `F.normalize`'s `max(norm, eps)` instead
+  of using `LpNormalization`, which has no such guard.
+- `export/frigate.py`'s constant helper is now public as `make_constant`, shared with the
+  new surgery.
+
+### Notes
+- `--max-detections` is `max_output_boxes_per_class` for the `objects` and `frigate`
+  targets: the ONNX NMS operator counts per class, where `postprocess` caps the total per
+  image. Exact detection parity with `postprocess` is not claimed — it uses
+  `torchvision.ops.batched_nms` behind a top-1024 prefilter — but the vectors are pinned
+  to match PyTorch ROI pooling on whatever boxes the graph emits.
+
+
+### Added
+- **ONNX export for embeddings.** `yolonas export --target embedding` emits a graph that
+  produces feature vectors with no detection head in it; `--target combined` emits
+  `pred_bboxes`, `pred_scores` and `embedding` from a single backbone pass — the
+  deployment form of `predict(..., Task.DETECT | Task.EMBED)`. `--embed-layers`,
+  `--embed-pooling` and `--no-normalize` configure the pooling, matching `FeaturePooler`.
+  Both work for OpenVINO too.
+- Both graphs take a second input, `valid_region` (`[B, 4]` int64, from
+  `modern_yolonas.inference.embed.valid_region`), carrying the letterbox geometry the
+  pooling needs. It cannot be a constant — it depends on the image's aspect ratio — and it
+  cannot be dropped without reintroducing the aspect-ratio clustering the pooling exists to
+  avoid.
+- `FeaturePooler.pool_images_masked` — the traceable sibling of `pool_images`, reducing
+  over a mask built from the region tensor rather than slicing with Python ints. The two
+  are pinned to each other by a test that runs without onnx installed, across eight aspect
+  ratios, both canvases, all seven layers and both pooling modes.
+- `examples/embed_onnx.py` — retrieval over a folder with an exported graph.
+- `tests/test_export.py` — the project's first ONNX tests: ORT against PyTorch for both
+  graphs, dynamic batch, and a check that `valid_region` actually reaches the pooling.
+
+### Changed
+- `yolonas export --opset` now defaults to **18**, was 17. Torch's dynamo exporter (the
+  default since 2.6) has no implementations below 18, so asking for 17 exported at 18 and
+  then failed to convert back down — printing a traceback and silently leaving the model
+  at 18. The flag now says what actually happens.
+
+### Fixed
+- `yolonas export --format onnx` wrote the weights to a sibling `<name>.onnx.data` and
+  reported only the `.onnx` as the output. An `.onnx` shipped without that sidecar loads
+  and then fails at the first inference. All ONNX targets now emit one self-contained
+  file. (Torch's dynamo exporter, which `torch.onnx.export` defaults to from 2.6, turned
+  this on; the `frigate` target was unaffected because its graph surgery already
+  re-serialized inline.)
+
+
+### Added
+- **Feature embeddings.** `YoloNASEmbedder` turns images — or boxes within them — into
+  fixed-length vectors from the backbone and neck, for image retrieval, near-duplicate
+  search, clustering and re-identification. `embed_batch` for galleries, `embed_boxes`
+  for per-object vectors via `roi_align` on the feature maps (one forward pass per frame,
+  and it takes `supervision.Detections.xyxy` as it comes). Vectors are L2-normalized by
+  default, so a dot product is the cosine similarity.
+- **Detections and embeddings from a single forward pass.**
+  `YoloNASDetector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)` returns
+  a `Prediction` carrying whichever outputs were asked for; `predict_batch` is the batched
+  form. The backbone and neck run once — they are shared by detection and embedding, so
+  getting both no longer costs two passes. Per-object vectors go in
+  `detections.data["embedding"]`, so they follow the boxes through supervision's slicing.
+  `Task.EMBED_OBJECTS` implies `Task.DETECT`. `detector(image)` and `detect_batch` are
+  unchanged in behaviour and are now thin wrappers over the same path.
+- `FeaturePooler` holds the layer/pooling/normalize choice, so `YoloNASDetector` and
+  `YoloNASEmbedder` share one implementation rather than two that can drift. Pass one as
+  `YoloNASDetector(..., embedding=FeaturePooler(layers=("c4", "c5")))`.
+- Object embeddings are taken from the box **after** it is clipped to the frame, in both
+  `embed_boxes` and `Task.EMBED_OBJECTS`, so the two agree exactly and a detection running
+  off the edge is described by the part of it that is visible rather than by padding.
+- `YoloNAS.forward_features` returns the raw maps — `c2`–`c5` from the backbone and
+  `p3`–`p5` from the neck — for callers that want to pool them themselves. Additive: the
+  `forward` signature that ONNX export, the Frigate graph and the parity tests depend on
+  is untouched.
+- Pooling excludes the letterbox padding. Averaging the gray canvas in makes embeddings
+  cluster by aspect ratio rather than content: measured with the COCO `yolo_nas_s`
+  weights, full-canvas pooling scores an unrelated noise image against a street photo at
+  0.958 cosine — higher than that photo against a second real photo — purely because both
+  share a padding geometry. Pooling only the valid region puts the pair at 0.396.
+- `tutorials/fiftyone/03_embedding_space.ipynb` — compute the embeddings over a dataset,
+  project with UMAP and explore the space in the FiftyOne App, including near-duplicate
+  detection and an object-level (patch) embedding space.
+- `examples/embed_image.py` — image retrieval over a folder.
+- Docs: [embeddings guide](docs/guides/embeddings.md) and `YoloNASEmbedder` API page.
+
 ## [0.5.0] - 2026-09-18
 
 ### Changed — breaking

@@ -51,6 +51,7 @@ def train(
     close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close).")] = 0,
     grad_clip: Annotated[float, typer.Option(help="Clip gradients to this max norm (0 = disabled).")] = 10.0,
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
+    channels_last: Annotated[bool, typer.Option("--channels-last/--no-channels-last", help="Hold activations in NHWC. Faster for convolutions under AMP on Ampere+; changes layout only, not results.")] = True,
     num_gpus: Annotated[int, typer.Option(help="Number of GPUs for DDP training. 1 = single GPU. Values >1 spawn child processes via torchrun.")] = 1,
     ignore_empty: Annotated[bool, typer.Option("--ignore-empty/--no-ignore-empty", help="Skip images with zero annotations (background-only samples).")] = True,
     # COCO-specific path overrides
@@ -121,7 +122,7 @@ def train(
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, LetterboxResize, RandomChannelSwap, Normalize, Mixup
+    from modern_yolonas.data.transforms import Compose, HSVAugment, LetterboxResize, RandomChannelSwap, RandomResizedCropFlipAffine, Normalize, Mixup
     import lightning as L
     from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
@@ -133,13 +134,22 @@ def train(
 
     train_transforms = Compose([
         HSVAugment(p=0.5),
-        RandomResizedCrop(size=input_size, scale=(0.05, 0.8), ratio=(0.75, 1.33), p=1.0),
-        HorizontalFlip(),
-        RandomAffine(degrees=0.0, translate=0.25, scale=(0.5, 1.5)),
+        # One warp for crop + flip + affine. Same distributions -- the parameters come
+        # from Albumentations' own samplers -- but the image is resampled once.
+        RandomResizedCropFlipAffine(
+            size=input_size,
+            scale=(0.05, 0.8),
+            ratio=(0.75, 1.33),
+            flip_prob=0.5,
+            translate=0.25,
+            affine_scale=(0.5, 1.5),
+        ),
         RandomChannelSwap(p=0.5),
         # LetterboxResize(target_size=input_size),
         # Mixup is appended here after the dataset is created (needs dataset reference)
-        Normalize(),
+        # uint8 crosses pin_memory and PCIe at a quarter the size; the Lightning
+        # module's on_after_batch_transfer divides by 255 on the device.
+        Normalize(dtype="uint8"),
     ])
     # Validation must see the whole image, aspect preserved — that is what detection
     # mAP is defined over, and it is what `yolonas eval` and the inference path use.
@@ -147,7 +157,7 @@ def train(
     # than input_size (most of COCO val2017 at 640).
     val_transforms = Compose([
         LetterboxResize(target_size=input_size),
-        Normalize()
+        Normalize(dtype="uint8"),
     ])
 
     val_ann_file: Path | None = None
@@ -227,6 +237,7 @@ def train(
         warmup_steps=warmup_steps,
         val_ann_file=val_ann_file,
         input_size=input_size,
+        channels_last=channels_last,
     )
 
     data_module = DetectionDataModule(
