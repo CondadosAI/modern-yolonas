@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 
 from pathlib import Path
-from typing import Generator
+from typing import TYPE_CHECKING, Generator
 
 import numpy as np
 import supervision as sv
@@ -28,6 +28,9 @@ from modern_yolonas.inference.preprocess import preprocess
 from modern_yolonas.inference.postprocess import postprocess, rescale_boxes
 from modern_yolonas.inference.visualize import COCO_NAMES
 from modern_yolonas.validation import validate_confidence, validate_device, validate_input_size, validate_iou_threshold, validate_model_name
+
+if TYPE_CHECKING:
+    from modern_yolonas.tracking import DeepHMSort
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
 
@@ -120,6 +123,10 @@ class YoloNASDetector:
 
         self._box_annotator = sv.BoxAnnotator()
         self._label_annotator = sv.LabelAnnotator()
+        # Tracked output is coloured by id, not by class, so a swap shows up as a
+        # colour change instead of hiding inside a row of same-class boxes.
+        self._track_box_annotator = sv.BoxAnnotator(color_lookup=sv.ColorLookup.TRACK)
+        self._track_label_annotator = sv.LabelAnnotator(color_lookup=sv.ColorLookup.TRACK)
 
         if weights is not None:
             # Build the architecture for the requested num_classes (no pretrained
@@ -518,6 +525,196 @@ class YoloNASDetector:
             "total_detections": total_detections,
             "fps": fps,
         }
+
+
+    def track_video(
+        self,
+        source: str | Path | int,
+        tracker: DeepHMSort | None = None,
+        conf_threshold: float | None = None,
+        iou_threshold: float | None = None,
+        appearance: bool = True,
+        skip_frames: int = 0,
+    ) -> Generator[tuple[int, np.ndarray, sv.Detections], None, None]:
+        """Detect and track each frame of a video, in one forward pass per frame.
+
+        The appearance vectors Deep HM-SORT associates on are the same per-object
+        embeddings :meth:`predict` produces, read off the features the detection
+        pass already computed — so tracking with appearance costs one pass per
+        frame, not the two a bolted-on re-identification model would need.
+
+        The detector runs at the tracker's ``track_low_threshold`` unless told
+        otherwise. That is deliberate: Deep HM-SORT's second association round
+        exists to hold a track through a frame where the detector wavers, and it
+        can only do that if those weak detections reach it. Raising
+        ``conf_threshold`` to the tracker's ``track_high_threshold`` turns that
+        round off.
+
+        Args:
+            source: Video file path or camera index (0 for webcam).
+            tracker: A configured :class:`~modern_yolonas.tracking.DeepHMSort`, or
+                ``None`` for a default one. Pass your own to tune it, to keep
+                inspecting ``tracker.tracks``, or to reuse it across calls — it is
+                stateful, so :meth:`~modern_yolonas.tracking.DeepHMSort.reset`
+                between unrelated videos. Its ``frame_rate`` is set from this
+                video, so ``max_lost_seconds`` means the same span of time
+                whatever the clip was shot at.
+            conf_threshold: Override the tracker-derived detection threshold.
+            iou_threshold: Override the instance default.
+            appearance: Compute per-object embeddings and associate on them.
+                ``False`` drops to motion-only association, which is faster by the
+                ROI pooling and markedly worse through occlusions.
+            skip_frames: Process every N-th frame (0 = every frame). Note the
+                tracker sees only the processed frames, so objects move further
+                between them and the expansion has more work to do.
+
+        Yields:
+            ``(frame_index, frame, detections)`` for each processed frame, where
+            ``detections`` carries ``tracker_id`` and holds only the detections
+            that matched a track.
+        """
+        from modern_yolonas.tracking import DeepHMSort
+
+        if tracker is None:
+            tracker = DeepHMSort()
+        if conf_threshold is None:
+            conf_threshold = tracker.track_low_threshold
+
+        tasks = Task.DETECT | Task.EMBED_OBJECTS if appearance else Task.DETECT
+
+        import cv2
+
+        cap = cv2.VideoCapture(str(source) if isinstance(source, Path) else source)
+        if not cap.isOpened():
+            raise FileNotFoundError(f"Cannot open video: {source}")
+
+        # The tracker's memory is written in seconds; tell it how long a frame is.
+        # Files usually report an honest rate, cameras often report 0 or something
+        # absurd, so an implausible value is left alone rather than believed. With
+        # `skip_frames` the tracker sees a slower video than the file claims.
+        reported = cap.get(cv2.CAP_PROP_FPS)
+        if 1.0 <= reported <= 240.0:
+            tracker.frame_rate = reported / (skip_frames + 1)
+
+        frame_idx = 0
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                if skip_frames > 0 and frame_idx % (skip_frames + 1) != 0:
+                    frame_idx += 1
+                    continue
+
+                t0 = time.perf_counter()
+                prediction = self.predict(frame, tasks, conf_threshold, iou_threshold)
+                tracked = tracker.update_with_detections(prediction.detections)
+                self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
+
+                yield frame_idx, frame, tracked
+                frame_idx += 1
+        finally:
+            cap.release()
+
+    def track_video_to_file(
+        self,
+        source: str | Path,
+        output: str | Path,
+        tracker: DeepHMSort | None = None,
+        conf_threshold: float | None = None,
+        iou_threshold: float | None = None,
+        appearance: bool = True,
+        codec: str = "mp4v",
+        show_fps: bool = False,
+    ) -> dict[str, int | float]:
+        """Track a video and write it out with ids drawn on.
+
+        Args:
+            source: Input video path.
+            output: Output video path.
+            tracker: See :meth:`track_video`.
+            conf_threshold: See :meth:`track_video`.
+            iou_threshold: Override the instance default.
+            appearance: See :meth:`track_video`.
+            codec: FourCC codec string.
+            show_fps: Burn the per-frame time and frame rate into the output.
+
+        Returns:
+            Dict with ``total_frames``, ``total_detections`` and ``unique_ids`` —
+            the last being how many distinct objects the tracker believes it saw,
+            which is the number to watch when tuning: far above the truth means
+            ids are fragmenting.
+        """
+        import cv2
+
+        cap = cv2.VideoCapture(str(source))
+        if not cap.isOpened():
+            raise FileNotFoundError(f"Cannot open video: {source}")
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+
+        writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*codec), fps, (width, height))
+        if not writer.isOpened():
+            raise RuntimeError(f"Failed to create video writer for {output} with codec '{codec}'")
+
+        seen: set[int] = set()
+        total_detections = 0
+        frames = 0
+
+        try:
+            for frame_idx, frame, detections in self.track_video(
+                source, tracker, conf_threshold, iou_threshold, appearance
+            ):
+                writer.write(self.annotate_tracks(frame, detections, show_fps=show_fps))
+                frames = frame_idx + 1
+                total_detections += len(detections)
+                if detections.tracker_id is not None:
+                    seen.update(int(i) for i in detections.tracker_id)
+        finally:
+            writer.release()
+
+        return {
+            "total_frames": frames,
+            "total_detections": total_detections,
+            "unique_ids": len(seen),
+            "fps": fps,
+        }
+
+    def annotate_tracks(
+        self, image: np.ndarray, detections: sv.Detections, show_fps: bool = False
+    ) -> np.ndarray:
+        """Draw tracked boxes, coloured and labelled by ``tracker_id``.
+
+        Colouring by id rather than by class is what makes an ID-swap visible: the
+        box changes colour the instant the tracker changes its mind.
+
+        Args:
+            image: BGR frame to draw on.
+            detections: Output of :meth:`track_video`.
+            show_fps: Overlay the last frame's time and frame rate.
+        """
+        if detections.tracker_id is None:
+            return self.annotate(image, detections, show_fps=show_fps)
+
+        labels = []
+        for i, track_id in enumerate(detections.tracker_id):
+            name = detections.data.get("class_name", [None] * len(detections))[i]
+            labels.append(f"#{int(track_id)} {name}" if name is not None else f"#{int(track_id)}")
+
+        annotated = self._track_box_annotator.annotate(image.copy(), detections)
+        annotated = self._track_label_annotator.annotate(annotated, detections, labels=labels)
+        if show_fps and self.last_inference_ms is not None:
+            import cv2
+
+            rate = 1000.0 / self.last_inference_ms if self.last_inference_ms > 0 else 0.0
+            cv2.putText(
+                annotated, f"{self.last_inference_ms:.1f}ms ({rate:.1f} FPS)",
+                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2,
+            )
+        return annotated
 
 
 def _warn_detector_alias(module_name: str) -> type[YoloNASDetector]:

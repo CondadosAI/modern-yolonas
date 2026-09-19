@@ -214,3 +214,21 @@ class TestCLIConfig:
         config = {"epochs": 100}
         result = merge_config(config, {"epochs": None})
         assert result["epochs"] == 100
+
+
+class TestTrackCommand:
+    def test_track_help(self):
+        result = runner.invoke(app, ["track", "--help"])
+        assert result.exit_code == 0
+        out = _plain(result.output)
+        assert "--source" in out
+        assert "--fusion" in out
+        assert "--max-lost" in out
+
+    def test_track_is_listed(self):
+        result = runner.invoke(app, ["--help"])
+        assert "track" in _plain(result.output)
+
+    def test_track_refuses_a_still_image(self):
+        result = runner.invoke(app, ["track", "--source", "photo.jpg"])
+        assert result.exit_code != 0

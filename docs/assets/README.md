@@ -57,6 +57,48 @@ The `.gif` is what the README shows, because GitHub renders it inline without a 
 The `.mp4` is a quarter of the size at better quality and is what the documentation site
 uses, where a `<video>` element works.
 
+## `tracking_demo.gif` / `tracking_demo.mp4` — the tracking clip
+
+Just under two seconds of the Shibuya crossing with Deep HM-SORT ids drawn on, from the
+same source video as `demo_video`. Boxes are coloured by track id rather than by class, so
+an ID-swap would show as a colour change.
+
+- **Source:** [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Shibuya_Crossing,_Tokyo,_Japan_(video).webm)
+- **Author:** [Basile Morin](https://commons.wikimedia.org/wiki/User:Basile_Morin)
+- **Licence:** [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) — the same
+  ShareAlike obligation described above for `demo_video` applies to these two files.
+- **Changes:** 48 consecutive frames from 00:52.05, cropped to the crossing, scaled to
+  960×450, annotated, and encoded at 25 fps (the `.gif` at 640 px and 12.5 fps to keep it
+  under 2.5 MB).
+
+Regenerate with:
+
+```bash
+ffmpeg -ss 52.05 -t 1.85 -i shibuya.webm -vf "crop=1920:900:0:180,scale=960:450" \
+       -c:v libx264 -crf 16 -an crossing.mp4
+uv run examples/track_video.py --source crossing.mp4 --output tracked.mp4 \
+       --model yolo_nas_l --classes 0 --text-scale 0.4
+ffmpeg -i tracked.mp4 -c:v libx264 -crf 23 -preset slow -pix_fmt yuv420p \
+       -movflags +faststart -an docs/assets/tracking_demo.mp4
+ffmpeg -i tracked.mp4 -vf "fps=12.5,scale=640:-2:flags=lanczos,split[a][b];\
+[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=3" \
+       -loop 0 docs/assets/tracking_demo.gif
+```
+
+**Why this shot and not the crowd.** The frames used for `demo_video` are a wall of 70+
+overlapping people at small scale; tracking them produces a flicker of ids that shows
+nothing legible. This shot has 14 pedestrians at a usable size, and the ids hold: 10 of
+them survive at least half the clip, median lifetime 39 of 48 frames, and only 3 ids are
+one- or two-frame noise.
+
+**What the clip does not demonstrate.** `--fusion harmonic`, `--fusion min` and
+`--no-appearance` all produce *identical* output here — same 14 ids, same lifetimes. With
+this few people, this well separated, motion alone settles every association and neither
+the appearance cue nor the choice of fusion ever gets to matter. The harmonic mean earns
+its keep in the crowded lookalike case the paper is about, which is exactly the case this
+clip avoids in order to stay readable. Treat the video as a demonstration that the API
+works, not as evidence that the fusion does.
+
 ## `street_nyc.jpg` and `pancakes.jpg` — the retrieval example's gallery
 
 The two gallery images for the embedding figure. One is another street scene, so it should
