@@ -37,9 +37,15 @@ cv2.imwrite("output.jpg", det.annotate(image, detections))
 so it filters by slicing and works with every supervision annotator, tracker and zone:
 
 ```python
-people = detections[detections.class_id == 0]
+from modern_yolonas import COCOClass
+
+people = detections[detections.class_id == COCOClass.PERSON]
 confident = detections[detections.confidence > 0.5]
 ```
+
+`COCOClass` names the 80 COCO class ids, so a filter reads as what it selects rather than as
+a number. Its members are ints, so anything that took a class id still works. A model
+fine-tuned on your own classes has its own numbering and these names would not apply to it.
 
 ## Using the CLI
 

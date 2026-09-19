@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 
 from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
 from modern_yolonas.data.transforms import (
+    RandomResizedCropFlipAffine,
     Compose,
     HSVAugment,
     HorizontalFlip,
@@ -51,24 +52,43 @@ def build_transforms(recipe: dict, *, train: bool, dataset=None):
     input_size = recipe["input_size"]
 
     if not train:
+        # Deliberately float32. `dataset_benchmark_cmd` and `benchmarks/rf100vl` iterate
+        # this loader themselves and hand the tensor straight to the model, with no
+        # Lightning hook in between to undo a uint8 encoding. Validation runs once per
+        # epoch, so the bytes saved would not pay for that trap.
         return Compose([LetterboxResize(target_size=input_size), Normalize()])
 
     aug = recipe.get("augmentations", {})
 
     # Build per-image transforms
     per_image_steps = []
-    per_image_steps.append(
-        RandomAffine(
-            degrees=aug.get("affine_degrees", 0.0),
-            translate=aug.get("affine_translate", 0.1),
-            scale=aug.get("affine_scale", (0.5, 1.5)),
+    if aug.get("fused_geometry"):
+        # Crop, flip and affine as one warp. It outputs input_size directly, so
+        # the pipeline below skips LetterboxResize, and the flip lives here rather
+        # than as a separate step.
+        per_image_steps.append(
+            RandomResizedCropFlipAffine(
+                size=input_size,
+                scale=aug.get("fused_scale", (0.05, 0.8)),
+                ratio=aug.get("fused_ratio", (0.75, 1.33)),
+                flip_prob=aug.get("flip_prob", 0.5) if aug.get("flip") else 0.0,
+                translate=aug.get("affine_translate", 0.25),
+                affine_scale=aug.get("affine_scale", (0.5, 1.5)),
+            )
         )
-    )
+    else:
+        per_image_steps.append(
+            RandomAffine(
+                degrees=aug.get("affine_degrees", 0.0),
+                translate=aug.get("affine_translate", 0.1),
+                scale=aug.get("affine_scale", (0.5, 1.5)),
+            )
+        )
     if aug.get("channel_shuffle"):
         per_image_steps.append(RandomChannelShuffle(p=aug.get("channel_shuffle_prob", 0.5)))
     if aug.get("hsv"):
         per_image_steps.append(HSVAugment(p=aug.get("hsv_prob", 1.0)))
-    if aug.get("flip"):
+    if aug.get("flip") and not aug.get("fused_geometry"):
         per_image_steps.append(HorizontalFlip(p=aug.get("flip_prob", 0.5)))
     if aug.get("vertical_flip"):
         per_image_steps.append(VerticalFlip(p=aug.get("vertical_flip_prob", 0.5)))
@@ -80,14 +100,17 @@ def build_transforms(recipe: dict, *, train: bool, dataset=None):
         ))
 
     per_image_compose = Compose(per_image_steps)
-    final_compose = Compose([LetterboxResize(target_size=input_size), Normalize()])
+    # The fused transform already emits input_size; letterboxing it again would
+    # only cost a resize.
+    final_steps = [] if aug.get("fused_geometry") else [LetterboxResize(target_size=input_size)]
+    final_compose = Compose([*final_steps, Normalize(dtype="uint8")])
 
     use_mosaic = aug.get("mosaic", False) and dataset is not None
     use_mixup = aug.get("mixup", False) and dataset is not None
 
     if not use_mosaic and not use_mixup:
         # Simple pipeline — no dataset-aware augmentations
-        return Compose(per_image_steps + [LetterboxResize(target_size=input_size), Normalize()])
+        return Compose(per_image_steps + final_steps + [Normalize(dtype="uint8")])
 
     # Build TrainTransformPipeline with Mosaic and/or Mixup
     mosaic = None
@@ -165,6 +188,7 @@ def run_training(
 
     # Lightning module
     lit_model = YoloNASLightningModule(
+        channels_last=recipe.get("channels_last", True),
         model=model,
         num_classes=num_classes,
         lr=recipe["lr"],

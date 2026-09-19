@@ -35,9 +35,9 @@ pip install modern-yolonas
 
 ```python
 import cv2
-from modern_yolonas import Detector  # YoloNASDetector from 0.5.0 on
+from modern_yolonas import YoloNASDetector
 
-detector = Detector("yolo_nas_s", device="cpu")
+detector = YoloNASDetector("yolo_nas_s", device="cpu")
 image = cv2.imread("street.jpg")
 detections = detector(image)
 cv2.imwrite("out.jpg", detector.annotate(image, detections))

@@ -1,9 +1,9 @@
 """Gradio demo for modern-yolonas, sized for a CPU-only Hugging Face Space.
 
 Runs against the `modern-yolonas` release pinned in requirements.txt, not the
-working tree, so this file uses only API that release actually ships: the class
-is `Detector` (renamed to `YoloNASDetector` in 0.5.0, with the old name kept as
-an alias), and inference is timed here rather than read off the detector.
+working tree, so this file uses only API that release actually ships. Inference
+is timed here rather than read off the detector, which keeps this working across
+releases that change what the detector records.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import cv2
 import gradio as gr
 import numpy as np
 
-from modern_yolonas import Detector
+from modern_yolonas import YoloNASDetector
 
 EXAMPLES_DIR = Path(__file__).parent / "examples"
 
@@ -30,10 +30,10 @@ MODELS = {
 }
 DEFAULT_MODEL = "yolo_nas_s"
 
-_detectors: dict[str, Detector] = {}
+_detectors: dict[str, YoloNASDetector] = {}
 
 
-def get_detector(model_name: str) -> Detector:
+def get_detector(model_name: str) -> YoloNASDetector:
     """Return a cached CPU detector, downloading weights on first use.
 
     Only the default variant is loaded at boot; M and L cost 205 MB and 268 MB of
@@ -41,7 +41,7 @@ def get_detector(model_name: str) -> Detector:
     never switch models.
     """
     if model_name not in _detectors:
-        _detectors[model_name] = Detector(model_name, device="cpu")
+        _detectors[model_name] = YoloNASDetector(model_name, device="cpu")
     return _detectors[model_name]
 
 

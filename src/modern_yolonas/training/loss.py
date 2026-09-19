@@ -16,6 +16,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
+from modern_yolonas.coco import CROWD_CLASS
+
 logger = logging.getLogger(__name__)
 
 
@@ -364,15 +366,27 @@ class VarifocalLoss(nn.Module):
         self.alpha = alpha
         self.gamma = gamma
 
-    def forward(self, pred_score: Tensor, gt_score: Tensor, label: Tensor) -> Tensor:
+    def forward(
+        self,
+        pred_score: Tensor,
+        gt_score: Tensor,
+        label: Tensor,
+        ignore_mask: Tensor | None = None,
+    ) -> Tensor:
         """
         Args:
             pred_score: ``[B, N, C]`` predicted logits (pre-sigmoid).
             gt_score: ``[B, N, C]`` soft target scores.
             label: ``[B, N, C]`` binary labels (1 for positive).
+            ignore_mask: ``[B, N]`` anchors to leave out of the sum entirely.
+                Used for crowd regions, which are neither object nor background.
+                Zeroing the weight rather than the loss keeps the reduction a plain
+                sum over the remaining anchors.
         """
         pred_sigmoid = pred_score.sigmoid()
         weight = self.alpha * pred_sigmoid.pow(self.gamma) * (1 - label) + gt_score * label
+        if ignore_mask is not None:
+            weight = weight * (~ignore_mask).to(weight.dtype).unsqueeze(-1)
         bce = F.binary_cross_entropy_with_logits(pred_score, gt_score, reduction="none")
         return (weight * bce).sum()
 
@@ -494,6 +508,39 @@ class PPYoloELoss(nn.Module):
         self.giou_loss = GIoULoss()
         self.dfl_loss = DFLLoss()
 
+    @staticmethod
+    def _crowd_ignore_mask(
+        crowd_targets: Tensor,
+        anchor_points: Tensor,
+        batch_size: int,
+        img_w: Tensor | float,
+        img_h: Tensor | float,
+    ) -> Tensor | None:
+        """``[B, N]`` anchors whose centre lies inside any crowd box.
+
+        ``anchor_points`` are in image pixels, the same space the ground-truth boxes
+        are scaled into, so the containment test needs no stride correction.
+
+        Returns ``None`` when there are no crowd regions, so the common path adds
+        nothing.
+        """
+        if crowd_targets.numel() == 0:
+            return None
+
+        device = anchor_points.device
+        mask = torch.zeros(batch_size, anchor_points.shape[0], dtype=torch.bool, device=device)
+        for b in range(batch_size):
+            rows = crowd_targets[crowd_targets[:, 0] == b]
+            if rows.numel() == 0:
+                continue
+            xc, yc = rows[:, 2] * img_w, rows[:, 3] * img_h
+            w, h = rows[:, 4] * img_w, rows[:, 5] * img_h
+            x1, y1 = (xc - w / 2).view(1, -1), (yc - h / 2).view(1, -1)
+            x2, y2 = (xc + w / 2).view(1, -1), (yc + h / 2).view(1, -1)
+            px, py = anchor_points[:, 0:1], anchor_points[:, 1:2]
+            mask[b] = ((px >= x1) & (px <= x2) & (py >= y1) & (py <= y2)).any(dim=1)
+        return mask
+
     def _bbox2dist(self, anchor_points: Tensor, gt_bboxes: Tensor) -> Tensor:
         """Convert bounding boxes to distances from anchor points."""
         x1y1 = anchor_points - gt_bboxes[..., :2]
@@ -544,7 +591,7 @@ class PPYoloELoss(nn.Module):
         # Validate GT class labels
         if targets.numel() > 0:
             class_ids = targets[:, 1]
-            if (class_ids < 0).any() or (class_ids >= self.num_classes).any():
+            if (class_ids < CROWD_CLASS).any() or (class_ids >= self.num_classes).any():
                 logger.warning(
                     "GT class labels out of range [0, %d): min=%d, max=%d. "
                     "Check your dataset labels.",
@@ -552,6 +599,13 @@ class PPYoloELoss(nn.Module):
                     int(class_ids.min().item()),
                     int(class_ids.max().item()),
                 )
+
+        # Crowd regions are not trainable targets. They are split out here and used
+        # only to build an ignore mask, so the anchors they cover become neither
+        # positives nor background.
+        is_crowd = targets[:, 1] == CROWD_CLASS
+        crowd_targets = targets[is_crowd]
+        targets = targets[~is_crowd]
 
         # Prepare GT in format expected by assigner
         gt_labels_list = []
@@ -608,8 +662,19 @@ class PPYoloELoss(nn.Module):
         # Normalization: sum of assigned soft scores (matches super-gradients)
         assigned_scores_sum = assigned_scores.sum().clamp(min=1)
 
+        # Anchors whose centre falls in a crowd region, and that the assigner did not
+        # already claim for a real object. A real instance overlapping a crowd box
+        # keeps its positive; only the leftover background anchors are dropped.
+        ignore_mask = self._crowd_ignore_mask(
+            crowd_targets, anchor_points, batch_size, img_w, img_h
+        )
+        if ignore_mask is not None:
+            ignore_mask = ignore_mask & ~fg_mask.bool()
+
         # Classification loss (VFL)
-        cls_loss = self.vfl(cls_logits, assigned_scores, (assigned_scores > 0).float()) / assigned_scores_sum
+        cls_loss = self.vfl(
+            cls_logits, assigned_scores, (assigned_scores > 0).float(), ignore_mask
+        ) / assigned_scores_sum
 
         # Box regression loss (GIoU) — weighted by per-anchor assigned scores
         if fg_mask.any():

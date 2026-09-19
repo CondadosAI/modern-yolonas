@@ -45,8 +45,11 @@ dependencies = [
     "huggingface-hub>=0.20",
     "safetensors>=0.4",
     "torchmetrics>=1.3",
-    "albumentations==1.4.24",
+    "albumentations==2.0.8",
     "supervision>=0.30",
+    # Hungarian assignment for the tracker. Already here transitively (supervision,
+    # albumentations); declared because we import it directly.
+    "scipy>=1.10",
     "lightning>=2.4",
 ]
 
@@ -56,16 +59,31 @@ Documentation = "https://condadosai.github.io/modern-yolonas/"
 Repository = "https://github.com/CondadosAI/modern-yolonas"
 Changelog = "https://github.com/CondadosAI/modern-yolonas/blob/main/CHANGELOG.md"
 Issues = "https://github.com/CondadosAI/modern-yolonas/issues"
+Funding = "https://github.com/sponsors/Gabriellgpc"
 
 [project.optional-dependencies]
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
 demo = ["gradio>=4.0"]
 onnx = ["onnx>=1.14", "onnxruntime>=1.15", "onnxscript>=0.6.0"]
+# Same ONNX toolchain against onnxruntime's CUDA build. `onnxruntime` and
+# `onnxruntime-gpu` install the same `onnxruntime` module, so installing both leaves
+# whichever wheel landed last — usually the CPU one, which drops CUDAExecutionProvider
+# without warning. They are declared as conflicting extras below so uv refuses the
+# combination instead of resolving it into a silent CPU benchmark.
+onnx-gpu = ["onnx>=1.14", "onnxruntime-gpu>=1.20", "onnxscript>=0.6.0"]
+# TensorRT engine building. The wheel's CUDA major must match torch's (cu13 here); on
+# Jetson, TensorRT ships with JetPack and must not be installed from PyPI.
+tensorrt = ["onnx>=1.14", "onnxscript>=0.6.0", "tensorrt-cu13>=11.0"]
 benchmark = ["rf100vl>=0.1"]
 fiftyone = ["fiftyone>=1.0"]
-openvino = ["openvino>=2024.0"]
+# nncf rides along because INT8 is the reason most people reach for OpenVINO on a CPU
+# or an integrated GPU, and post-training quantization is where the speedup is.
+openvino = ["openvino>=2024.0", "nncf>=2.12"]
 wandb = ["wandb>=0.16"]
 tensorboard = ["tensorboard>=2.15"]
+# Frozen teachers for the distillation experiments; only tools/bench_training.py
+# and the future distillation trainer need them.
+distill = ["transformers>=4.56"]
 
 [project.scripts]
 yolonas = "modern_yolonas.cli:main"
@@ -107,6 +125,11 @@ omit = [
     "src/modern_yolonas/hub.py",
     "src/modern_yolonas/serve/app.py",
     "src/modern_yolonas/export/frigate.py",
+    # Needs an NVIDIA GPU and a TensorRT install, neither of which CI has. It is
+    # exercised by hand through `examples/runtime_matrix.py` and
+    # `examples/runtime_accuracy.py`, which is how the stream-ordering bug in
+    # `EngineRunner` was caught — a mocked test would not have found that.
+    "src/modern_yolonas/export/tensorrt.py",
     "src/modern_yolonas/data/download.py",
 ]
 
@@ -122,6 +145,21 @@ exclude_lines = [
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+
+[tool.ruff.lint]
+# Ruff's default selection is not a stable contract. 0.16 widened it from
+# E4/E7/E9/F to also include I, UP, B, C4, FURB, BLE and RUF, which turned a
+# routine dependency bump into 131 errors in code that had not changed — and
+# several of those, such as B008 on typer's `Option()` defaults, are wrong for
+# this project by construction.
+#
+# Naming the rules means an upgrade can change how a rule is implemented but
+# never which rules apply. Widening this list is then a deliberate commit with
+# its own diff, rather than a side effect of dependabot.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.uv]
+conflicts = [[{ extra = "onnx" }, { extra = "onnx-gpu" }]]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -143,6 +181,18 @@ dev = [
     # the notebooks that do it.
     "roboflow>=1.2.13",
     "jupyter>=1.1.1",
+    # So CI actually runs tests/test_export.py rather than skipping it. These
+    # mirror the [onnx] extra; without them the export graphs ship unverified.
+    # onnxruntime stopped shipping cp310 wheels after 1.23.2 while still claiming
+    # 3.10 in its metadata, so a resolver only finds out at install time — hence
+    # the split rather than a single specifier.
+    "onnx>=1.14",
+    "onnxruntime>=1.15,<1.24 ; python_version < '3.11'",
+    "onnxruntime>=1.15 ; python_version >= '3.11'",
+    "onnxscript>=0.6.0",
+    # Regenerating docs/assets/embedding_space.png. Only arrives transitively via
+    # jupyter otherwise, which is not something examples/ should rely on.
+    "matplotlib>=3.7",
 ]
 docs = [
     "mkdocs-material>=9.5",

@@ -8,6 +8,8 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+from modern_yolonas.coco import CROWD_CLASS
 from torch.utils.data import Dataset
 
 Transform = Callable[[np.ndarray, dict[str, Any]], tuple[np.ndarray, dict[str, Any]]]
@@ -76,10 +78,21 @@ class COCODetectionDataset(Dataset):
         anns = self.coco.loadAnns(ann_ids)
         targets = []
         for ann in anns:
-            if ann.get("iscrowd", 0):
-                continue
             x, y, bw, bh = ann["bbox"]
-            cls = self.cat_id_to_label[ann["category_id"]]
+            if bw <= 0 or bh <= 0:
+                # COCO train2017 carries two annotations with a zero-height box.
+                # They are not trainable targets, and Albumentations rejects them
+                # outright -- `y_max is less than or equal to y_min` -- which took
+                # a training run down about a thousand steps in, once the images
+                # happened to be drawn. pycocotools ignores zero-area annotations
+                # when scoring, so nothing is lost by never emitting them. Applies
+                # to crowd regions too: a zero-area one covers no anchors, so it
+                # would only be a box waiting to crash a transform.
+                continue
+            # Crowd regions are kept, marked, and used by the loss to ignore the
+            # anchors they cover. Dropping them taught the model that a crowd is
+            # background; training on them would teach one box around many objects.
+            cls = CROWD_CLASS if ann.get("iscrowd", 0) else self.cat_id_to_label[ann["category_id"]]
             xc = (x + bw / 2) / w_img
             yc = (y + bh / 2) / h_img
             nw = bw / w_img
