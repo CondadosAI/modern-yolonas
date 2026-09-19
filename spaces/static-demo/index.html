@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>modern-yolonas</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #262b36; --text: #e7eaf0;
+    --muted: #9aa3b2; --accent: #6ea8fe; --accent-strong: #3d7dfb;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --panel: #ffffff; --border: #e2e5ea; --text: #16191f;
+      --muted: #5d6572; --accent: #2563eb; --accent-strong: #1d4ed8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .tagline { color: var(--muted); margin: 0 0 14px; }
+  .links { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 24px; font-size: .92rem; }
+  a { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .panel h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 14px 0 6px; }
+  label:first-of-type { margin-top: 0; }
+  input[type=range] { width: 100%; accent-color: var(--accent-strong); }
+  .val { color: var(--text); font-variant-numeric: tabular-nums; }
+  button {
+    width: 100%; padding: 10px 14px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--accent-strong); color: #fff; font: inherit; font-weight: 600;
+    cursor: pointer; margin-top: 16px;
+  }
+  button.secondary { background: transparent; color: var(--text); font-weight: 500; margin-top: 8px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input[type=file] { width: 100%; font-size: .85rem; color: var(--muted); }
+  #canvas { width: 100%; height: auto; display: block; border-radius: var(--radius); background: var(--panel); }
+  #status { margin: 14px 0 0; color: var(--muted); font-size: .9rem; min-height: 1.4em; }
+  .bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 10px; display: none; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent-strong); transition: width .15s; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: .88rem; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: .78rem;
+    text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px; }
+  td { padding: 6px 8px; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .notice { margin-top: 28px; padding: 14px 16px; border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--muted); font-size: .85rem; background: var(--panel); }
+  code { background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>modern-yolonas</h1>
+  <p class="tagline">YOLO-NAS object detection running entirely in your browser — no server, no upload.</p>
+  <div class="links">
+    <a href="https://github.com/CondadosAI/modern-yolonas">GitHub</a>
+    <a href="https://condadosai.github.io/modern-yolonas/">Documentation</a>
+    <a href="https://pypi.org/project/modern-yolonas/">PyPI</a>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Input</h2>
+      <label for="file">Image</label>
+      <input type="file" id="file" accept="image/*">
+      <label for="conf">Confidence <span class="val" id="confVal">0.40</span></label>
+      <input type="range" id="conf" min="0.05" max="0.95" step="0.05" value="0.40">
+      <label for="iou">NMS IoU <span class="val" id="iouVal">0.70</span></label>
+      <input type="range" id="iou" min="0.1" max="0.95" step="0.05" value="0.70">
+      <button id="run" disabled>Detect</button>
+      <button id="example" class="secondary" disabled>Load example image</button>
+      <div class="bar" id="bar"><i></i></div>
+      <p id="status">Loading model…</p>
+    </div>
+
+    <div class="panel">
+      <h2>Detections</h2>
+      <canvas id="canvas"></canvas>
+      <table id="table" hidden>
+        <thead><tr><th>Class</th><th>Confidence</th><th>Box (x1, y1, x2, y2)</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="notice">
+    <strong>Weights licence.</strong> The pretrained COCO weights served here were converted from
+    Deci AI's super-gradients releases and remain under the
+    <a href="https://docs.deci.ai/super-gradients/latest/LICENSE.YOLONAS.html">Super Gradients Model EULA</a>
+    — <strong>non-commercial use only</strong>. The modern-yolonas source is Apache-2.0; the weights are not.
+    For commercial deployment, train from scratch.
+    <br><br>
+    Inference runs client-side via <code>onnxruntime-web</code>; your image never leaves the browser.
+    Sample photo by <a href="https://commons.wikimedia.org/wiki/User:Wilfredor">Wilfredor</a>,
+    <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0</a>.
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.min.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
