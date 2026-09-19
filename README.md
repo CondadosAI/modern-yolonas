@@ -351,6 +351,20 @@ of the training stack.
 
 ---
 
+## ⭐ Star History
+
+<p align="center">
+  <a href="https://star-history.com/#CondadosAI/modern-yolonas&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=CondadosAI/modern-yolonas&type=Date&theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=CondadosAI/modern-yolonas&type=Date">
+      <img src="https://api.star-history.com/svg?repos=CondadosAI/modern-yolonas&type=Date" alt="Star history chart for CondadosAI/modern-yolonas" width="70%">
+    </picture>
+  </a>
+</p>
+
+---
+
 ## 📖 Citation
 
 If you use modern-yolonas in your research or project, please cite it:
