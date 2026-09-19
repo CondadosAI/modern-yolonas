@@ -278,8 +278,12 @@ def test_harmonic_mean_prevents_an_id_swap_that_min_fusion_makes():
 
 
 def test_a_track_that_leaves_and_returns_keeps_its_id():
-    """Deep HM-SORT's second contribution: tracklets are never discarded."""
-    tracker = DeepHMSort()
+    """Deep HM-SORT's second contribution: tracklets are never discarded.
+
+    Opt-in here rather than the default — see
+    :func:`test_the_default_memory_is_two_seconds_of_video`.
+    """
+    tracker = DeepHMSort(max_lost_seconds=None)
     vector = np.array([1.0, 0.0])
 
     for _ in range(3):
@@ -294,7 +298,7 @@ def test_a_track_that_leaves_and_returns_keeps_its_id():
 
 
 def test_a_frame_budget_gives_a_returning_object_a_new_id():
-    tracker = DeepHMSort(max_lost=10)
+    tracker = DeepHMSort(max_lost_seconds=0.4, frame_rate=25.0)  # 10 frames
     vector = np.array([1.0, 0.0])
 
     for _ in range(3):
@@ -415,7 +419,8 @@ def test_ids_are_not_reused_after_an_object_disappears():
         ({"feature_momentum": 1.0}, "feature_momentum"),
         ({"expansion_rounds": 0}, "expansion_rounds"),
         ({"fusion": "average"}, "fusion"),
-        ({"max_lost": -1}, "max_lost"),
+        ({"max_lost_seconds": 0}, "max_lost_seconds"),
+        ({"frame_rate": 0}, "frame_rate"),
     ],
 )
 def test_bad_configuration_is_refused(kwargs, message):
@@ -521,3 +526,68 @@ def test_first_frame_tracks_are_confirmed_immediately():
     moved = tracker.update_with_detections(frame([box(145)]))
     assert int(moved.tracker_id[0]) == 1
     assert tracker.tracks[0].hits == 2
+
+def test_the_default_memory_is_two_seconds_of_video():
+    """The budget is written in seconds, so it survives a change of frame rate.
+
+    The paper keeps every tracklet forever, which assumes a fixed camera on a
+    closed scene. The default here is finite because most footage is not that; the
+    length is Deep-EIoU's own (``track_buffer`` 60 at 30 fps).
+    """
+    assert DeepHMSort().max_lost_frames == 60
+    assert DeepHMSort(frame_rate=25.0).max_lost_frames == 50
+    assert DeepHMSort(frame_rate=60.0).max_lost_frames == 120
+    assert DeepHMSort(max_lost_seconds=None).max_lost_frames is None
+
+    # A budget so short it rounds to nothing still means "one frame", not "none".
+    assert DeepHMSort(max_lost_seconds=0.001).max_lost_frames == 1
+
+
+def test_the_default_budget_expires_a_track_at_the_right_frame():
+    """Two seconds at 10 fps is 20 frames, whatever the wall clock says."""
+    vector = np.array([1.0, 0.0])
+
+    def run(gap):
+        tracker = DeepHMSort(frame_rate=10.0)
+        for _ in range(3):
+            first = tracker.update_with_detections(frame([box(100)], [vector]))
+        for _ in range(gap):
+            tracker.update_with_detections(sv.Detections.empty())
+        returned = tracker.update_with_detections(frame([box(105)], [vector]))
+        return int(first.tracker_id[0]) == int(returned.tracker_id[0])
+
+    assert run(19) is True
+    assert run(25) is False
+
+
+def test_track_video_takes_the_frame_rate_from_the_video(detector, tmp_path):
+    """A 10 fps clip must not be given a 30 fps tracker's memory."""
+    import cv2
+
+    path = tmp_path / "slow.mp4"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (160, 120))
+    assert writer.isOpened()
+    for _ in range(2):
+        writer.write(np.zeros((120, 160, 3), dtype=np.uint8))
+    writer.release()
+
+    tracker = DeepHMSort()
+    assert tracker.max_lost_frames == 60
+    list(detector.track_video(path, tracker, conf_threshold=0.9))
+    assert tracker.frame_rate == pytest.approx(10.0)
+    assert tracker.max_lost_frames == 20
+
+
+def test_skipping_frames_shortens_the_effective_frame_rate(detector, tmp_path):
+    """The tracker sees every third frame, so its seconds have to stretch too."""
+    import cv2
+
+    path = tmp_path / "skipped.mp4"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (160, 120))
+    for _ in range(3):
+        writer.write(np.zeros((120, 160, 3), dtype=np.uint8))
+    writer.release()
+
+    tracker = DeepHMSort()
+    list(detector.track_video(path, tracker, conf_threshold=0.9, skip_frames=2))
+    assert tracker.frame_rate == pytest.approx(10.0)

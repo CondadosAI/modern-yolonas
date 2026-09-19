@@ -556,7 +556,9 @@ class YoloNASDetector:
                 ``None`` for a default one. Pass your own to tune it, to keep
                 inspecting ``tracker.tracks``, or to reuse it across calls — it is
                 stateful, so :meth:`~modern_yolonas.tracking.DeepHMSort.reset`
-                between unrelated videos.
+                between unrelated videos. Its ``frame_rate`` is set from this
+                video, so ``max_lost_seconds`` means the same span of time
+                whatever the clip was shot at.
             conf_threshold: Override the tracker-derived detection threshold.
             iou_threshold: Override the instance default.
             appearance: Compute per-object embeddings and associate on them.
@@ -585,6 +587,14 @@ class YoloNASDetector:
         cap = cv2.VideoCapture(str(source) if isinstance(source, Path) else source)
         if not cap.isOpened():
             raise FileNotFoundError(f"Cannot open video: {source}")
+
+        # The tracker's memory is written in seconds; tell it how long a frame is.
+        # Files usually report an honest rate, cameras often report 0 or something
+        # absurd, so an implausible value is left alone rather than believed. With
+        # `skip_frames` the tracker sees a slower video than the file claims.
+        reported = cap.get(cv2.CAP_PROP_FPS)
+        if 1.0 <= reported <= 240.0:
+            tracker.frame_rate = reported / (skip_frames + 1)
 
         frame_idx = 0
         try:

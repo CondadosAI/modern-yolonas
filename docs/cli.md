@@ -40,7 +40,8 @@ assume about your footage.
 
 ```bash
 yolonas track --source match.mp4 --classes 0
-yolonas track --source match.mp4 --fusion min --max-lost 300   # the Deep-EIoU baseline
+yolonas track --source match.mp4 --fusion min                  # the Deep-EIoU baseline
+yolonas track --source match.mp4 --keep-all-tracks             # the paper's memory: unlimited
 yolonas track --source match.mp4 --no-appearance               # motion-only, as a control
 ```
 
@@ -58,7 +59,8 @@ yolonas track --source match.mp4 --no-appearance               # motion-only, as
 | `--track-low` | `0.4` | Score below which a detection is ignored |
 | `--new-track` | `0.5` | Lowest score that may start a track |
 | `--expansion` | `0.3` | Box growth for the first association round |
-| `--max-lost` | unset | Frames a track may go unmatched. Unset keeps every tracklet — the paper's default, and a closed-environment assumption |
+| `--max-lost-seconds` | `2.0` | How long a track may go unmatched, in seconds of video — converted with the clip's own frame rate |
+| `--keep-all-tracks` | off | Never drop a track. The paper's setting, and a closed-environment assumption |
 | `--class-aware` | off | Refuse to associate across classes |
 | `--output` | `results` | Output directory |
 | `--codec` | `mp4v` | Video output codec |

@@ -41,8 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   two people apart. The algorithm is implemented as described, but how well the appearance
   cue performs has not been measured on a re-identification benchmark. `--fusion min` and
   `--no-appearance` exist so the comparison can be run on your own footage.
-- Keeping every tracklet is a *sports* assumption (fixed camera, closed pitch). On
-  open-world footage the track pool grows with every object ever seen; `--max-lost` caps it.
+- **The tracker departs from the paper on one default.** The paper never discards a
+  tracklet; here a lost track is kept for `max_lost_seconds=2.0` and then dropped. Keeping
+  everything is a fixed-camera, closed-pitch assumption — on an open scene the pool grows
+  with every object ever seen, and old boxes wait around to catch a weak detection and
+  resurrect an id on nothing. `max_lost_seconds=None` / `--keep-all-tracks` restores the
+  paper's behaviour.
+- The budget is in **seconds of video**, not frames: `DeepHMSort.frame_rate` converts, and
+  `track_video` sets it from the clip it opens (dividing by `skip_frames + 1`), so the same
+  number means the same span at 25 and at 60 fps. Two seconds is Deep-EIoU's own default
+  (`track_buffer` 60 at 30 fps), and on a 100-frame clip of the Shibuya crossing it
+  reproduces the unlimited result exactly — 17 ids either way — where one second costs two
+  extra ids and splits a 53-frame track in half.
 - Where the paper is ambiguous — its 0.5 "threshold below which we discard tracks" fits
   both `new_track_threshold` and `proximity_threshold` — the reading is stated in the
   docstring. Deep-EIoU's default for the latter is also 0.5, so both readings agree on the

@@ -302,6 +302,19 @@ stats = detector.track_video_to_file("match.mp4", "tracked.mp4")
 stats["unique_ids"]                # distinct objects the tracker believes it saw
 ```
 
+A lost track stays findable for **2 seconds of video** by default, counted with the clip's
+own frame rate rather than in frames, so the number means the same thing at 25 and 60 fps:
+
+```python
+DeepHMSort()                       # 2 s — good default for open scenes
+DeepHMSort(max_lost_seconds=10.0)  # a doorway, where people come back
+DeepHMSort(max_lost_seconds=None)  # the paper: keep every tracklet, forever
+```
+
+The paper never discards a tracklet, which is right for a fixed camera on a closed pitch and
+wrong for a street — there the pool grows with every object ever seen. `--keep-all-tracks`
+restores the paper's behaviour.
+
 [Deep HM-SORT](https://arxiv.org/abs/2406.12081) fuses the motion and appearance costs with
 their **harmonic mean** instead of taking the smaller one, which stops a lookalike from
 stealing an id on appearance alone, and it keeps every tracklet for the whole sequence so an
@@ -344,7 +357,8 @@ yolonas detect --model yolo_nas_m --source video.mp4 --skip-frames 2 --conf 0.3
 
 # Track objects across a video (Deep HM-SORT)
 yolonas track --source match.mp4 --classes 0
-yolonas track --source match.mp4 --fusion min --max-lost 300   # the Deep-EIoU baseline
+yolonas track --source match.mp4 --fusion min                  # the Deep-EIoU baseline
+yolonas track --source lobby.mp4 --max-lost-seconds 10          # remember people for longer
 
 # Training
 yolonas train --model yolo_nas_s --data /path/to/dataset --format yolo --epochs 100

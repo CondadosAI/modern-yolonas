@@ -95,14 +95,31 @@ class DeepHMSort:
         fusion: ``"harmonic"`` is the paper's contribution; ``"min"`` is
             Deep-EIoU's original, kept so the difference can be measured on your
             own footage rather than taken on faith.
-        max_lost: Frames a track may stay unmatched before it is discarded.
-            ``None``, the default, is the paper's second contribution: keep every
-            tracklet for the whole sequence. That is a *sports* assumption — a
-            fixed camera on a closed pitch, where a player who walks off returns
-            to roughly where they left. On open-world footage (a street, a
-            doorway) the pool instead grows with every object that has ever
-            appeared, and both memory and the cost matrix grow with it; set a
-            frame budget there.
+        max_lost_seconds: How long a track may stay unmatched before it is
+            discarded, in **seconds of video** — converted to frames through
+            ``frame_rate``, so the same number means the same thing on a 25 fps
+            clip and a 60 fps one.
+
+            The paper keeps every tracklet for the whole sequence, and ``None``
+            still does that. It is not the default here because it is a *sports*
+            assumption: a fixed camera on a closed pitch, where a player who walks
+            off returns to roughly where they left. On open-world footage the pool
+            grows with every object that has ever appeared, memory and the cost
+            matrix grow with it, and old boxes sit around waiting to catch a weak
+            detection.
+
+            2 s is Deep-EIoU's own default (``track_buffer`` 60 at 30 fps), and on
+            a 100-frame clip of the Shibuya crossing it reproduces the unlimited
+            result exactly — 17 ids either way — where 1 s costs two extra ids and
+            splits a 53-frame track in half. Raise it, or set ``None``, for a fixed
+            camera on a closed scene.
+        frame_rate: Frames per second of the video being tracked, used only to turn
+            ``max_lost_seconds`` into a frame count.
+            :meth:`~modern_yolonas.inference.detect.YoloNASDetector.track_video`
+            sets this from the video it opens; set it yourself when driving the
+            loop, or leave it at 30 and accept that the budget is in 30ths of a
+            second. Processing every N-th frame divides the effective rate, so
+            divide this too.
         class_aware: Refuse to associate a detection with a track of a different
             class. The paper is single-class (athletes) and says nothing about
             this; off is the faithful reading, and a class-agnostic track simply
@@ -125,7 +142,8 @@ class DeepHMSort:
         unconfirmed_match_threshold: float = 0.7,
         feature_momentum: float = 0.9,
         fusion: str = "harmonic",
-        max_lost: int | None = None,
+        max_lost_seconds: float | None = 2.0,
+        frame_rate: float = 30.0,
         class_aware: bool = False,
     ):
         if not 0.0 <= track_low_threshold <= track_high_threshold <= 1.0:
@@ -139,8 +157,10 @@ class DeepHMSort:
             raise ValueError(f"expansion_rounds must be >= 1, got {expansion_rounds}")
         if fusion not in ("harmonic", "min"):
             raise ValueError(f"fusion must be 'harmonic' or 'min', got {fusion!r}")
-        if max_lost is not None and max_lost < 0:
-            raise ValueError(f"max_lost must be >= 0 or None, got {max_lost}")
+        if max_lost_seconds is not None and max_lost_seconds <= 0:
+            raise ValueError(f"max_lost_seconds must be > 0 or None, got {max_lost_seconds}")
+        if frame_rate <= 0:
+            raise ValueError(f"frame_rate must be > 0, got {frame_rate}")
 
         self.track_high_threshold = track_high_threshold
         self.track_low_threshold = track_low_threshold
@@ -156,7 +176,8 @@ class DeepHMSort:
         self.unconfirmed_match_threshold = unconfirmed_match_threshold
         self.feature_momentum = feature_momentum
         self.fusion = fusion
-        self.max_lost = max_lost
+        self.max_lost_seconds = max_lost_seconds
+        self.frame_rate = frame_rate
         self.class_aware = class_aware
 
         self.reset()
@@ -171,6 +192,18 @@ class DeepHMSort:
         self._lost: list[Track] = []
         self.frame_id = 0
         self._next_id = 0
+
+    @property
+    def max_lost_frames(self) -> int | None:
+        """:attr:`max_lost_seconds` in frames at the current :attr:`frame_rate`.
+
+        Never less than one frame: a positive budget that rounds to zero would
+        discard every track the instant it is missed, which is not what any number
+        the caller wrote could have meant.
+        """
+        if self.max_lost_seconds is None:
+            return None
+        return max(1, round(self.max_lost_seconds * self.frame_rate))
 
     @property
     def tracks(self) -> list[Track]:
@@ -396,8 +429,9 @@ class DeepHMSort:
             if track.track_id not in matched_ids and track.state == TrackState.LOST
         ]
 
-        if self.max_lost is not None:
-            self._lost = [t for t in self._lost if self.frame_id - t.frame_id <= self.max_lost]
+        budget = self.max_lost_frames
+        if budget is not None:
+            self._lost = [t for t in self._lost if self.frame_id - t.frame_id <= budget]
 
         self._drop_duplicates()
 

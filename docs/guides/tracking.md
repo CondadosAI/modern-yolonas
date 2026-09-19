@@ -108,20 +108,42 @@ yolonas track --source match.mp4 --fusion min       # Deep-EIoU's original
 yolonas track --source match.mp4 --fusion harmonic  # the default
 ```
 
-### Keeping every tracklet
+### How long a lost track is kept
 
 The paper's second contribution: lost tracks are never discarded, so an object that
-leaves the frame and comes back is re-identified instead of renumbered. That is the
-default here (`max_lost=None`).
+leaves the frame and comes back is re-identified instead of renumbered.
 
-It is a **sports assumption** — a fixed camera on a closed pitch, where a player who
-walks off returns to roughly where they left. On open-world footage the pool grows
-with every object that has ever appeared, and both memory and the cost matrix grow
-with it. Set a frame budget there:
+**This ships with a two-second memory instead, and that is a deliberate departure.**
+Keeping every tracklet is a *sports* assumption — a fixed camera on a closed pitch,
+where a player who walks off returns to roughly where they left. Most footage is not
+that. On an open scene the pool grows with every object that has ever appeared,
+memory and the cost matrix grow with it, and old boxes sit around waiting to catch a
+weak detection and resurrect an id on nothing.
+
+The budget is written in **seconds of video**, not frames, so the same number means
+the same span of time on a 25 fps clip and a 60 fps one:
+
+```python
+DeepHMSort()                            # 2 s — the default
+DeepHMSort(max_lost_seconds=10.0)       # a doorway, where people come back
+DeepHMSort(max_lost_seconds=None)       # the paper: keep everything, forever
+```
 
 ```bash
-yolonas track --source doorway.mp4 --max-lost 300   # 10 s at 30 fps
+yolonas track --source match.mp4 --keep-all-tracks       # the paper's setting
+yolonas track --source lobby.mp4 --max-lost-seconds 10
 ```
+
+`track_video` reads the frame rate off the video and gives it to the tracker, so the
+conversion happens without you. Driving the loop yourself, set `tracker.frame_rate`
+— and divide it if you are skipping frames, since the tracker then sees a slower
+video than the file claims.
+
+Why two seconds, and not one: on a 100-frame clip of the Shibuya crossing, a
+two-second budget reproduces the unlimited result exactly — 17 ids either way —
+while one second costs two extra ids and splits a 53-frame track in half. It is also
+Deep-EIoU's own default (`track_buffer` 60 at 30 fps). Raise it for a fixed camera on
+a closed scene; that is the regime the paper is describing, and there `None` is right.
 
 ## Thresholds worth knowing
 
@@ -135,6 +157,7 @@ yolonas track --source doorway.mp4 --max-lost 300   # 10 s at 30 fps
 | `proximity_threshold` | 0.5 | Above this motion distance, appearance is not trusted |
 | `expansion` / `expansion_step` | 0.3 / 0.3 | Box growth, first round then second |
 | `feature_momentum` | 0.9 | How slowly a track's appearance vector changes |
+| `max_lost_seconds` | 2.0 | How long a lost track stays findable. `None` keeps every tracklet, which is the paper's setting |
 
 The one that catches people: **the detector has to run at or below
 `track_low_threshold`**, or the weak band never arrives and the second association

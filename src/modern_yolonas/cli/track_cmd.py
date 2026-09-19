@@ -40,7 +40,8 @@ def track(
     track_low: Annotated[float, typer.Option(help="Score below which a detection is ignored entirely.")] = 0.4,
     new_track: Annotated[float, typer.Option(help="Lowest score an unmatched detection may have and still start a track.")] = 0.5,
     expansion: Annotated[float, typer.Option(help="Box growth for the first association round.")] = 0.3,
-    max_lost: Annotated[int | None, typer.Option(help="Frames a track may go unmatched before it is dropped. Unset keeps every tracklet for the whole video, which is the paper's default and a closed-environment assumption.")] = None,
+    max_lost_seconds: Annotated[float, typer.Option(help="How long a track may go unmatched before it is dropped, in seconds of video (converted with the clip's own frame rate).")] = 2.0,
+    keep_all_tracks: Annotated[bool, typer.Option(help="Never drop a track — the paper's setting. Right for a fixed camera on a closed scene; on open-world footage the pool grows with every object ever seen.")] = False,
     class_aware: Annotated[bool, typer.Option(help="Refuse to associate a detection with a track of a different class.")] = False,
     show_fps: Annotated[bool, typer.Option(help="Burn the per-frame time and frame rate into the output.")] = False,
 ):
@@ -82,7 +83,7 @@ def track(
         new_track_threshold=new_track,
         expansion=expansion,
         fusion=fusion.value,
-        max_lost=max_lost,
+        max_lost_seconds=None if keep_all_tracks else max_lost_seconds,
         class_aware=class_aware,
     )
 
@@ -91,7 +92,7 @@ def track(
     console.print(
         f"Tracking {source_path.name} — {fusion.value} fusion, "
         f"{'with' if appearance else 'without'} appearance, "
-        f"{'all tracklets kept' if max_lost is None else f'{max_lost}-frame memory'}..."
+        f"{'all tracklets kept' if keep_all_tracks else f'{max_lost_seconds:g}s memory'}..."
     )
 
     stats = _track_video(detector, tracker, source_path, out_path, codec, appearance, keep, show_fps)
@@ -130,6 +131,12 @@ def _track_video(detector, tracker, source_path, out_path, codec, appearance, ke
         raise FileNotFoundError(f"Cannot open video: {source_path}")
     fps = capture.get(cv2.CAP_PROP_FPS)
     size = (int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+
+    # `track_video` does this for us; this hand-rolled loop has to do it itself, or
+    # the tracker's memory would be measured in 30ths of a second on a clip that is
+    # not 30 fps.
+    if 1.0 <= fps <= 240.0:
+        tracker.frame_rate = fps
 
     writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*codec), fps, size)
     if not writer.isOpened():
