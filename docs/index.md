@@ -42,3 +42,10 @@ cv2.imwrite("output.jpg", det.annotate(image, detections))
 - [Getting Started](getting-started.md) — install, first detection, CLI basics
 - [API Reference](api/detector.md) — full Python API
 - [Guides](guides/training.md) — training, export, extending
+
+## Sponsoring
+
+Training is the part of this project that costs money: COCO weights from scratch, published
+under Apache-2.0 so they carry no non-commercial restriction, are roughly $40–80 of GPU time
+for YOLO-NAS-S and several times that for L. If the library is useful to you, you can fund
+those runs on [GitHub Sponsors](https://github.com/sponsors/Gabriellgpc).
