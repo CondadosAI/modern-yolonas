@@ -62,6 +62,10 @@ Export model to ONNX or OpenVINO format.
 ```bash
 yolonas export --model yolo_nas_s --format onnx
 yolonas export --model yolo_nas_s --format openvino --target frigate
+
+# Feature embeddings, alone or beside the detections
+yolonas export --model yolo_nas_s --target embedding --output embedding.onnx
+yolonas export --model yolo_nas_s --target combined --output combined.onnx
 ```
 
 | Option | Default | Description |
@@ -70,9 +74,15 @@ yolonas export --model yolo_nas_s --format openvino --target frigate
 | `--format` | `onnx` | Export format (onnx/openvino) |
 | `--output` | auto | Output file path |
 | `--input-size` | `640` | Model input size |
-| `--opset` | `17` | ONNX opset version |
+| `--opset` | `18` | ONNX opset version |
 | `--checkpoint` | `None` | Custom checkpoint path |
-| `--target` | `generic` | Export target (generic/frigate) |
+| `--target` | `generic` | Export target (generic/frigate/embedding/combined) |
+| `--embed-layers` | `c5` | Feature maps to pool, comma-separated (embedding/combined) |
+| `--embed-pooling` | `avg` | Spatial pooling, `avg` or `max` (embedding/combined) |
+| `--normalize` / `--no-normalize` | normalize | L2-normalize the embedding |
+
+The `embedding` and `combined` targets take a second input, `valid_region` — see the
+[export guide](guides/export.md#the-valid_region-input).
 
 ## `yolonas eval`
 

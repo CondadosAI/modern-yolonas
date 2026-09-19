@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **ONNX export for embeddings.** `yolonas export --target embedding` emits a graph that
+  produces feature vectors with no detection head in it; `--target combined` emits
+  `pred_bboxes`, `pred_scores` and `embedding` from a single backbone pass — the
+  deployment form of `predict(..., Task.DETECT | Task.EMBED)`. `--embed-layers`,
+  `--embed-pooling` and `--no-normalize` configure the pooling, matching `FeaturePooler`.
+  Both work for OpenVINO too.
+- Both graphs take a second input, `valid_region` (`[B, 4]` int64, from
+  `modern_yolonas.inference.embed.valid_region`), carrying the letterbox geometry the
+  pooling needs. It cannot be a constant — it depends on the image's aspect ratio — and it
+  cannot be dropped without reintroducing the aspect-ratio clustering the pooling exists to
+  avoid.
+- `FeaturePooler.pool_images_masked` — the traceable sibling of `pool_images`, reducing
+  over a mask built from the region tensor rather than slicing with Python ints. The two
+  are pinned to each other by a test that runs without onnx installed, across eight aspect
+  ratios, both canvases, all seven layers and both pooling modes.
+- `examples/embed_onnx.py` — retrieval over a folder with an exported graph.
+- `tests/test_export.py` — the project's first ONNX tests: ORT against PyTorch for both
+  graphs, dynamic batch, and a check that `valid_region` actually reaches the pooling.
+
+### Changed
+- `yolonas export --opset` now defaults to **18**, was 17. Torch's dynamo exporter (the
+  default since 2.6) has no implementations below 18, so asking for 17 exported at 18 and
+  then failed to convert back down — printing a traceback and silently leaving the model
+  at 18. The flag now says what actually happens.
+
+### Fixed
+- `yolonas export --format onnx` wrote the weights to a sibling `<name>.onnx.data` and
+  reported only the `.onnx` as the output. An `.onnx` shipped without that sidecar loads
+  and then fails at the first inference. All ONNX targets now emit one self-contained
+  file. (Torch's dynamo exporter, which `torch.onnx.export` defaults to from 2.6, turned
+  this on; the `frigate` target was unaffected because its graph surgery already
+  re-serialized inline.)
+
+
+### Added
 - **Feature embeddings.** `YoloNASEmbedder` turns images — or boxes within them — into
   fixed-length vectors from the backbone and neck, for image retrieval, near-duplicate
   search, clustering and re-identification. `embed_batch` for galleries, `embed_boxes`

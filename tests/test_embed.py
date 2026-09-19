@@ -380,3 +380,81 @@ class TestPredictMatchesStandaloneEmbedder:
 
         edge = detections[touches_edge]
         assert np.allclose(edge.data["embedding"], embedder.embed_boxes(image, edge.xyxy), atol=1e-4)
+
+
+class TestMaskedPoolingMatchesSlicing:
+    """``pool_images_masked`` must equal ``pool_images`` exactly.
+
+    The sliced version is the reference, but its bounds are Python ``int``s, which
+    ``torch.export`` cannot trace — so the export graphs use the masked version
+    instead. These two implementations are only useful if they agree, and this is
+    the test that says so; the ONNX tests then only have to show that ORT matches
+    PyTorch. It runs whether or not onnx is installed, which is the point.
+    """
+
+    SHAPES = [(360, 640), (640, 360), (640, 640), (200, 1600), (1600, 200), (103, 997), (1, 1), (7, 13)]
+
+    def _features_and_regions(self, model, canvas):
+        tensors, regions = [], []
+        for index, (height, width) in enumerate(self.SHAPES):
+            image = _image(height, width, seed=index)
+            tensor, scale, pad = preprocess(image, canvas)
+            tensors.append(tensor)
+            regions.append(valid_region(image, scale, pad))
+        with torch.no_grad():
+            return model.forward_features(torch.cat(tensors)), regions
+
+    @pytest.mark.parametrize("canvas", [320, 640])
+    @pytest.mark.parametrize("layers", [("c5",), FEATURE_LAYERS])
+    @pytest.mark.parametrize("pooling", ["avg", "max"])
+    def test_equivalent(self, model, canvas, layers, pooling):
+        from modern_yolonas import FeaturePooler
+
+        features, regions = self._features_and_regions(model, canvas)
+        pooler = FeaturePooler(layers=layers, pooling=pooling)
+
+        sliced = pooler.pool_images(features, regions, canvas)
+        masked = pooler.pool_images_masked(features, torch.tensor(regions), canvas)
+
+        assert masked.shape == sliced.shape
+        assert torch.allclose(masked, sliced, atol=1e-5)
+
+    def test_mask_covers_the_same_extent_as_the_slice(self, model):
+        """Not just the pooled value — the exact rows and columns each one covers.
+
+        A mask off by one row would still average to something close on smooth
+        features, so the extents are compared directly. The reference extent is
+        read out of ``pool_images`` itself rather than recomputed here: a feature
+        map whose values *are* the row and column indices, max-pooled, reports the
+        last index the slice touched, and the same map negated reports the first.
+        Reimplementing the clamps in the test would only prove the test agrees
+        with itself.
+        """
+        from modern_yolonas import FeaturePooler
+
+        canvas = 640
+        image = _image(200, 1600, seed=42)
+        _, scale, pad = preprocess(image, canvas)
+        region = valid_region(image, scale, pad)
+
+        for size in (160, 80, 40, 20):
+            cols = torch.arange(size, dtype=torch.float32).expand(size, size)
+            rows = cols.t().contiguous()
+            # Channels: +col, +row, -col, -row — so a max-pool reads out
+            # (last_col, last_row, -first_col, -first_row).
+            probe = {"c5": torch.stack([cols, rows, -cols, -rows]).unsqueeze(0)}
+
+            pooler = FeaturePooler(layers=("c5",), pooling="max", normalize=False)
+            sliced = pooler.pool_images(probe, [region], canvas)[0]
+            last_col, last_row, first_col, first_row = (
+                int(sliced[0]), int(sliced[1]), int(-sliced[2]), int(-sliced[3])
+            )
+
+            mask = FeaturePooler._region_mask(
+                torch.tensor([region]), size, size, canvas, torch.device("cpu")
+            )[0]
+            mask_cols = mask.any(dim=0).nonzero().flatten()
+            mask_rows = mask.any(dim=1).nonzero().flatten()
+
+            assert (int(mask_cols[0]), int(mask_cols[-1])) == (first_col, last_col), f"cols at {size}x{size}"
+            assert (int(mask_rows[0]), int(mask_rows[-1])) == (first_row, last_row), f"rows at {size}x{size}"
