@@ -86,7 +86,36 @@ one is in `data/coco.py` and affects both paths. It needs the target tensor to w
 Also open: `Mixup.inner_transforms` is set only in `run.py`, so on the `train` path half of
 all samples blend an aggressively cropped image with an untouched letterboxed one.
 
-**Gate:** a 15-epoch run must produce a sane mAP trajectory before anything longer starts.
+**Gate: the calibration run.** Fifteen epochs on full `train2017` must produce a rising mAP
+trajectory before anything longer starts.
+
+**What it deliberately does not include.** The calibration is stage 3 *alone*: random
+initialisation (`--no-pretrained`), real annotations only, no distilled backbone and no
+pseudo-labels. Running it with the whole pipeline stacked would mean a failure could not say
+which stage broke. Its mAP is therefore a **floor**, not a forecast — the finished recipe
+adds a DINOv3-distilled backbone in place of a random one, 123k pseudo-labelled images, and
+twenty times the epochs.
+
+What it can tell you, and nothing else can this cheaply, is whether the detection pipeline
+converges at all. The known failure mode is specific: a letterbox inversion bug once left
+this repo's mAP pinned near 0.008 while the loss fell perfectly well. The signal to watch is
+recall — if AP is low but AR is climbing, the model is finding objects and learning to name
+them, which is the correct shape. If AR is also flat, the geometry is broken.
+
+Measured 2026-09-19, yolo_nas_s from scratch, batch 16, `--recipe coco` at lr 2e-2:
+
+| epoch | AP | AR |
+|---|---:|---:|
+| 0 | 0.020 | 0.186 |
+| 1 | 0.050 | 0.278 |
+
+**What this gate has already paid for.** In its first four minutes it found two COCO
+annotations with a zero-height box, which Albumentations rejects outright and which had been
+latent since the COCO recipe was written. Setting it up surfaced two more: `close_mosaic`
+equal to the epoch count disables mosaic from epoch zero, and the recipe's SGD learning rate
+had never been validated and converged at half the rate of anything else. None of the three
+raises an error on its own.
+
 
 ### 1 — A clean backbone, distilled from DINOv3
 
