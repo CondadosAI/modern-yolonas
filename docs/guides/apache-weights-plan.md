@@ -130,8 +130,31 @@ distillation head is a 1x1 projection and a cosine loss — already implemented 
 `tools/bench_training.py` for the measurement above. **The architecture does not change**, so
 `state_dict` compatibility with super-gradients survives; only the initialisation differs.
 
-At 51.4 img/s — an upper bound, since this stage runs no detection head — 20 epochs over 241k
-is about **26 hours**. EdgeCrafter used 50, which would be 2.7 days.
+**The cache is disk-bound, not GPU-bound.** This was not anticipated: the plan costed the
+cache pass from the teacher's throughput alone, as if writing were free. Measured on the
+training machine 2026-09-19, the pass runs at 48 img/s until the first shard is flushed and
+then settles at **19 img/s** — with the GPU at 100%, 67 °C, no throttling and no I/O wait in
+instantaneous samples. Each shard writes 2.32 GB, and `dd ... oflag=direct` under contention
+returns 14.6 MB/s.
+
+The drive is an ADATA LEGEND 710, DRAM-less and 78% full. Writing 298 GB continuously
+exhausts its SLC cache and drops it to native speed. So the real figure is **~3 hours for
+the cache**, not the 40 minutes the teacher's 434 img/s on a 4090 would suggest.
+
+The decision to cache still holds, and by a wide margin:
+
+| | total |
+|---|---:|
+| cache (3 h) + distillation at 97 img/s | **16.8 h** |
+| frozen teacher in the loop at 51.4 img/s | 26 h |
+
+Nine hours, even paying three to a slow disk. Caching only `train2017` would halve the write
+to 145 GB and save 1.5 of those hours, at the cost of half the images — a bad trade, since
+the 123k unlabelled ones are exactly what stands in for Objects365 here.
+
+**Generalisable:** a feature cache trades GPU time for disk, and the disk side of that trade
+needs its own measurement. On consumer NVMe the sustained write rate after the SLC cache
+fills is the number that matters, not the burst rate in a benchmark.
 
 **Gate: beat this number.** The distilled backbone has to outperform a random init on a
 short detection fine-tune. The baseline is measured rather than left to judgement --
