@@ -333,6 +333,12 @@ class TestObjectEmbeddingGraph:
         assert [i.name for i in object_graph.get_inputs()] == ["images", "valid_region"]
         assert [o.name for o in object_graph.get_outputs()] == ["detections", "object_embedding", "embedding"]
 
+    def test_declares_its_embedding_width(self, object_graph):
+        """So a caller can size an index from the metadata, without a dummy run."""
+        shapes = {o.name: o.shape for o in object_graph.get_outputs()}
+        assert shapes["object_embedding"][1] == 768
+        assert shapes["detections"][1] == 7
+
     def test_rows_line_up_with_pytorch_roi_pooling(self, object_graph, fused_model):
         """The claim this graph makes: row i of the vectors describes row i of the boxes.
 
@@ -454,3 +460,83 @@ class TestObjectGraphCli:
             None, {"images": images.numpy(), "valid_region": regions.numpy()}
         )
         assert vectors.shape == (len(detections), 384 + 768), "--embed-layers c4,c5 must reach the ROI pooling"
+        assert session.get_outputs()[1].shape[1] == 384 + 768, "the declared width must follow --embed-layers"
+
+
+class TestRoiAlignMapsToTorchvision:
+    """ONNX RoiAlign has to mean exactly what ``FeaturePooler.pool_rois`` means.
+
+    The mapping is not obvious and getting it wrong is silent — the graph still
+    runs and returns plausible vectors:
+
+    * ``aligned=True`` is ``coordinate_transformation_mode="half_pixel"``.
+      ``output_half_pixel`` is the other one, and it is wrong by ~1.4 here.
+    * torchvision's adaptive ``sampling_ratio=-1`` is ONNX's ``0``. ORT rejects
+      ``-1`` outright, and a fixed ratio silently disagrees.
+    * ``mode`` is always ``"avg"``: max pooling is RoiAlign(avg) then a max over
+      the grid, never RoiAlign(max).
+
+    So the operator is pinned against torchvision directly, across every stride
+    the feature maps use and box shapes that stress the adaptive sample count.
+    """
+
+    GEOMETRIES = [(10, 320), (20, 640), (40, 640), (80, 640), (160, 640)]
+
+    def _boxes(self, canvas):
+        return np.array(
+            [
+                [0, 0, 2, 2],                                # smaller than one feature cell
+                [0, 0, 1, 1],                                # one pixel
+                [5, 5, 5, 5],                                # zero area
+                [0, 0, canvas, canvas],                      # the whole canvas
+                [10, 10, canvas / 2, canvas / 2],
+                [100, 3, 105, canvas - 3],                   # thin and tall
+                [3, 100, canvas - 3, 105],                   # thin and wide
+                [canvas - 4, canvas - 4, canvas, canvas],    # the far corner
+            ],
+            dtype=np.float32,
+        )
+
+    @pytest.mark.parametrize("feature_size,canvas", GEOMETRIES)
+    def test_matches_torchvision(self, feature_size, canvas):
+        from torchvision.ops import roi_align
+
+        from modern_yolonas.export.objects import ROI_GRID
+
+        features = np.random.default_rng(7).standard_normal(
+            (2, 6, feature_size, feature_size)
+        ).astype(np.float32)
+        boxes = self._boxes(canvas)
+        batch_indices = np.array([0, 1, 0, 1, 0, 1, 0, 1], dtype=np.int64)
+        spatial_scale = feature_size / canvas
+
+        node = onnx.helper.make_node(
+            "RoiAlign", ["X", "rois", "bidx"], ["Y"], mode="avg",
+            output_height=ROI_GRID, output_width=ROI_GRID, sampling_ratio=0,
+            spatial_scale=spatial_scale, coordinate_transformation_mode="half_pixel",
+        )
+        graph = onnx.helper.make_graph(
+            [node], "roialign",
+            [
+                onnx.helper.make_tensor_value_info("X", onnx.TensorProto.FLOAT, features.shape),
+                onnx.helper.make_tensor_value_info("rois", onnx.TensorProto.FLOAT, boxes.shape),
+                onnx.helper.make_tensor_value_info("bidx", onnx.TensorProto.INT64, batch_indices.shape),
+            ],
+            [onnx.helper.make_tensor_value_info("Y", onnx.TensorProto.FLOAT, None)],
+        )
+        model = onnx.helper.make_model(graph, opset_imports=[onnx.helper.make_opsetid("", 18)])
+        actual = ort.InferenceSession(
+            model.SerializeToString(), providers=["CPUExecutionProvider"]
+        ).run(None, {"X": features, "rois": boxes, "bidx": batch_indices})[0]
+
+        expected = roi_align(
+            torch.from_numpy(features),
+            torch.from_numpy(np.concatenate([batch_indices[:, None].astype(np.float32), boxes], axis=1)),
+            output_size=(ROI_GRID, ROI_GRID),
+            spatial_scale=spatial_scale,
+            sampling_ratio=-1,
+            aligned=True,
+        ).numpy()
+
+        assert np.isfinite(actual).all()
+        assert np.array_equal(actual, expected), "ONNX RoiAlign must be bit-identical to torchvision"

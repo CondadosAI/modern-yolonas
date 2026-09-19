@@ -42,15 +42,19 @@ ROI_GRID = 3
 _NORM_EPS = 1e-12
 
 
-def _feature_width(graph: onnx.GraphProto, name: str) -> int:
-    """Static width of a named graph output, for the ROI spatial scale."""
+def _feature_dims(graph: onnx.GraphProto, name: str) -> tuple[int, int]:
+    """Static ``(channels, width)`` of a named graph output.
+
+    Width sets the ROI spatial scale; channels add up to the embedding width, which
+    is declared on the output so a caller can size an index without a dummy run.
+    """
     for output in graph.output:
         if output.name == name:
             dims = output.type.tensor_type.shape.dim
-            width = dims[3].dim_value
-            if width <= 0:
-                raise ValueError(f"output {name!r} has no static width; export at a fixed input size")
-            return width
+            channels, width = dims[1].dim_value, dims[3].dim_value
+            if channels <= 0 or width <= 0:
+                raise ValueError(f"output {name!r} has no static shape; export at a fixed input size")
+            return channels, width
     raise ValueError(f"base graph has no output named {name!r}")
 
 
@@ -161,9 +165,11 @@ def make_object_embedding_onnx(
     # ROI pooling, one branch per layer, concatenated
     # ------------------------------------------------------------------
     pooled_names = []
+    embedding_width = 0
     for layer in layers:
         feature = f"feat_{layer}"
-        width = _feature_width(graph, feature)
+        channels, width = _feature_dims(graph, feature)
+        embedding_width += channels
         pooled = f"pooled_{layer}"
         nodes += [
             helper.make_node(
@@ -238,7 +244,7 @@ def make_object_embedding_onnx(
     embedding_output = next(o for o in graph.output if o.name == "embedding")
     new_outputs = [
         helper.make_tensor_value_info("detections", TensorProto.FLOAT, [None, 7]),
-        helper.make_tensor_value_info("object_embedding", TensorProto.FLOAT, [None, None]),
+        helper.make_tensor_value_info("object_embedding", TensorProto.FLOAT, [None, embedding_width]),
         embedding_output,
     ]
 
