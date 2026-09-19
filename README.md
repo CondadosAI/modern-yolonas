@@ -7,7 +7,7 @@
   <a href="https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml"><img src="https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml/badge.svg" alt="Tests"></a>
   <a href="https://condadosai.github.io/modern-yolonas/"><img src="https://img.shields.io/badge/docs-mkdocs--material-blue.svg" alt="Documentation"></a>
   <a href="https://pypi.org/project/modern-yolonas/"><img src="https://img.shields.io/pypi/pyversions/modern-yolonas" alt="Python"></a>
-  <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/modern-yolonas" alt="License"></a>
+  <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE"><img src="https://img.shields.io/github/license/CondadosAI/modern-yolonas" alt="License"></a>
   <a href="https://huggingface.co/spaces/CondadosAI/modern-yolonas-demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20demo-Hugging%20Face-yellow" alt="Hugging Face Space"></a>
 </p>
 
