@@ -219,6 +219,31 @@ cannot be published.
 
 ## Later
 
+- Push the augmentation pipeline further, once a pod has said whether it is the bottleneck
+  at all. After the first round of work the remaining per-sample cost is decode 2.27 ms
+  (29%), `RandomAffine` 1.86 ms (24%) and `Mixup` 1.78 ms (23%).
+
+  Three things worth trying, cheapest first, and they are not equally promising:
+
+  **Compose the affine chain.** `RandomResizedCrop`, `HorizontalFlip` and `RandomAffine`
+  each warp the whole image separately, and all three are affine. They multiply into one
+  3x3 matrix and one `warpAffine`. No kernel work, pure algebra, and it is the largest
+  remaining item.
+
+  **Batched augmentation on the GPU**, through the `on_after_batch_transfer` hook that
+  already exists for the uint8 handoff — that hook is the seam, so this needs no refactor.
+  But it spends GPU time to save CPU time, which only pays when the run is CPU-bound *and*
+  the GPU has headroom. Locally the situation is the reverse, with roughly 8x headroom in
+  the loader, so it would be a straight loss here.
+
+  **Custom kernels** last, and probably not on the CPU: `warpAffine` and the JPEG decoder
+  are tuned SIMD, and beating them is unlikely to be where the time goes. If kernels are
+  the answer it will be CUDA ones behind the point above, not replacements for OpenCV.
+
+  None of this should start before `T_loader` and `T_model` have been measured on the
+  rented pod. Every item here is a fix for a bottleneck that has not been shown to exist
+  on the hardware that will do the training.
+
 - A `[train]` extra. `albumentations`, `torchmetrics` and `pycocotools` are core
   dependencies today, so inference-only users pay for the training stack. `albumentations`
   is also pinned to an exact version, which is hostile in a library.
