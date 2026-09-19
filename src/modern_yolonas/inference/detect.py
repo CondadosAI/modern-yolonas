@@ -17,6 +17,13 @@ import numpy as np
 import supervision as sv
 import torch
 
+from modern_yolonas.inference.embed import (
+    FeaturePooler,
+    Prediction,
+    Task,
+    boxes_to_rois,
+    valid_region,
+)
 from modern_yolonas.inference.preprocess import preprocess
 from modern_yolonas.inference.postprocess import postprocess, rescale_boxes
 from modern_yolonas.inference.visualize import COCO_NAMES
@@ -65,6 +72,7 @@ class YoloNASDetector:
         weights: str | Path | None = None,
         num_classes: int = 80,
         class_names: list[str] | None = None,
+        embedding: FeaturePooler | None = None,
     ):
         from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
 
@@ -103,6 +111,12 @@ class YoloNASDetector:
         # Wall-clock of the last single-image detect call, for the FPS overlay and
         # for callers that want to report throughput without timing it themselves.
         self.last_inference_ms: float | None = None
+
+        # How feature maps become vectors, when `predict` is asked for embeddings.
+        # Defaults to the same c5 / average / L2-normalized choice YoloNASEmbedder
+        # makes; pass a FeaturePooler to pick different layers or pooling.
+        self.pooler = embedding if embedding is not None else FeaturePooler()
+        self._embedding_dim: int | None = None
 
         self._box_annotator = sv.BoxAnnotator()
         self._label_annotator = sv.LabelAnnotator()
@@ -164,7 +178,190 @@ class YoloNASDetector:
             cv2.putText(annotated, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
         return annotated
 
+    @property
+    def embedding_dim(self) -> int:
+        """Width of the vectors :meth:`predict` produces, for the configured pooler."""
+        if self._embedding_dim is None:
+            with torch.no_grad():
+                dummy = torch.zeros(1, 3, self.input_size, self.input_size, device=self.device)
+                if self.precision == "fp16":
+                    dummy = dummy.half()
+                self._embedding_dim = self.pooler.dim(self.model.forward_features(dummy))
+        return self._embedding_dim
+
+    def _read(self, source: str | Path | np.ndarray) -> np.ndarray:
+        import cv2
+
+        if isinstance(source, (str, Path)):
+            image = cv2.imread(str(source))
+            if image is None:
+                raise FileNotFoundError(f"Cannot read image: {source}")
+            return image
+        return source
+
     @torch.no_grad()
+    def predict_batch(
+        self,
+        sources: list[str | Path | np.ndarray],
+        tasks: Task = Task.DETECT,
+        conf_threshold: float | None = None,
+        iou_threshold: float | None = None,
+    ) -> list[Prediction]:
+        """Run every requested task over a batch in **one** forward pass.
+
+        Args:
+            sources: File paths or BGR numpy arrays.
+            tasks: Any combination of :class:`Task` flags, combined with ``|``.
+            conf_threshold: Override instance default.
+            iou_threshold: Override instance default.
+
+        Returns:
+            One :class:`Prediction` per input, in input order.
+        """
+        if Task.EMBED_OBJECTS in tasks:
+            # The boxes are what gets embedded, so detection is not optional here.
+            tasks = tasks | Task.DETECT
+        if not tasks:
+            raise ValueError("tasks must name at least one Task flag")
+        if not sources:
+            return []
+
+        images, tensors, scales, pads = [], [], [], []
+        for source in sources:
+            image = self._read(source)
+            tensor, scale, pad = preprocess(image, self.input_size)
+            images.append(image)
+            tensors.append(tensor)
+            scales.append(scale)
+            pads.append(pad)
+
+        batch = torch.cat(tensors, dim=0).to(self.device)
+        if self.precision == "fp16":
+            batch = batch.half()
+
+        # Backbone and neck run exactly once; the head is a thin extra on top of
+        # p3/p4/p5, which is why both outputs cost roughly one detection pass.
+        with torch.amp.autocast("cuda", enabled=self.precision == "fp16"):
+            features = self.model.forward_features(batch)
+            if Task.DETECT in tasks:
+                pred_bboxes, pred_scores = self.model.heads(
+                    (features["p3"], features["p4"], features["p5"])
+                )
+
+        predictions = [Prediction() for _ in sources]
+
+        if Task.EMBED in tasks:
+            regions = [valid_region(img, sc, pd) for img, sc, pd in zip(images, scales, pads)]
+            vectors = self.pooler.finalize(self.pooler.pool_images(features, regions, self.input_size))
+            for prediction, vector in zip(predictions, vectors):
+                prediction.embedding = vector
+
+        if Task.DETECT in tasks:
+            conf = conf_threshold if conf_threshold is not None else self.conf_threshold
+            iou = iou_threshold if iou_threshold is not None else self.iou_threshold
+            results = postprocess(pred_bboxes, pred_scores, conf, iou, multi_label=self.multi_label)
+
+            rescaled = [
+                rescale_boxes(boxes, scales[i], pads[i], images[i].shape[:2])
+                for i, (boxes, _, _) in enumerate(results)
+            ]
+
+            # Embed the boxes *after* rescaling, then map them back onto the canvas.
+            # `rescale_boxes` clips to the frame, and a detection that runs off the
+            # edge should be described by the part of it that is actually visible —
+            # the rest of its extent is letterbox padding. Going through the clipped
+            # boxes is also what makes these vectors identical to the ones
+            # `YoloNASEmbedder.embed_boxes` produces from the same detections.
+            object_vectors = (
+                self._embed_detected(features, rescaled, scales, pads)
+                if Task.EMBED_OBJECTS in tasks
+                else None
+            )
+
+            for i, (_, scores, class_ids) in enumerate(results):
+                detections = self._to_detections(rescaled[i], scores, class_ids)
+                if object_vectors is not None and len(detections):
+                    detections.data["embedding"] = object_vectors[i]
+                predictions[i].detections = detections
+
+        return predictions
+
+    def _embed_detected(
+        self,
+        features: dict[str, torch.Tensor],
+        rescaled: list[torch.Tensor],
+        scales: list[float],
+        pads: list[tuple[int, int]],
+    ) -> list[np.ndarray]:
+        """Per-detection vectors for a whole batch, in one ``roi_align`` call.
+
+        Args:
+            features: Feature maps from the shared forward pass.
+            rescaled: Per image, the detected boxes in source-image coordinates.
+            scales: Per image letterbox scale.
+            pads: Per image letterbox ``(left, top)``.
+        """
+        rois = [
+            boxes_to_rois(boxes.cpu().numpy(), scales[i], pads[i], batch_index=i)
+            for i, boxes in enumerate(rescaled)
+            if len(boxes)
+        ]
+        if not rois:
+            return [np.zeros((0, self.embedding_dim), dtype=np.float32) for _ in rescaled]
+
+        pooled = self.pooler.finalize(
+            self.pooler.pool_rois(features, torch.cat(rois).to(self.device), self.input_size)
+        )
+
+        # Split the flat (K, D) block back into one array per image.
+        per_image, offset = [], 0
+        for boxes in rescaled:
+            per_image.append(pooled[offset : offset + len(boxes)])
+            offset += len(boxes)
+        return per_image
+
+    def predict(
+        self,
+        source: str | Path | np.ndarray,
+        tasks: Task = Task.DETECT,
+        conf_threshold: float | None = None,
+        iou_threshold: float | None = None,
+    ) -> Prediction:
+        """Run every requested task on one image in a single forward pass.
+
+        Detection and embedding share the whole network up to the head, so asking
+        for both costs one pass rather than two::
+
+            from modern_yolonas import Task, YoloNASDetector
+
+            detector = YoloNASDetector("yolo_nas_s")
+            result = detector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)
+
+            result.detections                       # sv.Detections
+            result.embedding                        # (768,) whole-image vector
+            result.detections.data["embedding"]     # (N, 768), one row per detection
+
+        Because the per-object vectors live in ``detections.data``, they follow the
+        boxes through supervision's slicing::
+
+            people = result.detections[result.detections.class_id == COCOClass.PERSON]
+            people.data["embedding"]                # rows still aligned
+
+        Args:
+            source: File path or BGR numpy array.
+            tasks: Any combination of :class:`Task` flags, combined with ``|``.
+                :attr:`Task.EMBED_OBJECTS` implies :attr:`Task.DETECT`.
+            conf_threshold: Override instance default.
+            iou_threshold: Override instance default.
+
+        Returns:
+            A :class:`Prediction`; fields not asked for are ``None``.
+        """
+        t0 = time.perf_counter()
+        prediction = self.predict_batch([source], tasks, conf_threshold, iou_threshold)[0]
+        self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
+        return prediction
+
     def __call__(
         self,
         source: str | Path | np.ndarray,
@@ -173,42 +370,16 @@ class YoloNASDetector:
     ) -> sv.Detections:
         """Run detection on a single image.
 
+        Shorthand for ``predict(source, Task.DETECT).detections``. Use
+        :meth:`predict` when you want embeddings from the same pass.
+
         Args:
             source: File path or BGR numpy array.
             conf_threshold: Override instance default.
             iou_threshold: Override instance default.
         """
-        import cv2
+        return self.predict(source, Task.DETECT, conf_threshold, iou_threshold).detections
 
-        if isinstance(source, (str, Path)):
-            image = cv2.imread(str(source))
-            if image is None:
-                raise FileNotFoundError(f"Cannot read image: {source}")
-        else:
-            image = source
-
-        t0 = time.perf_counter()
-
-        tensor, scale, pad = preprocess(image, self.input_size)
-        tensor = tensor.to(self.device)
-        if self.precision == "fp16":
-            tensor = tensor.half()
-
-        with torch.amp.autocast("cuda", enabled=self.precision == "fp16"):
-            pred_bboxes, pred_scores = self.model(tensor)
-
-        conf = conf_threshold if conf_threshold is not None else self.conf_threshold
-        iou = iou_threshold if iou_threshold is not None else self.iou_threshold
-        results = postprocess(pred_bboxes, pred_scores, conf, iou, multi_label=self.multi_label)
-
-        boxes, scores, class_ids = results[0]
-        boxes = rescale_boxes(boxes, scale, pad, image.shape[:2])
-
-        self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
-
-        return self._to_detections(boxes, scores, class_ids)
-
-    @torch.no_grad()
     def detect_batch(
         self,
         sources: list[str | Path | np.ndarray],
@@ -216,6 +387,9 @@ class YoloNASDetector:
         iou_threshold: float | None = None,
     ) -> list[sv.Detections]:
         """Run detection on a batch of images in a single forward pass.
+
+        Shorthand for the ``detections`` of
+        ``predict_batch(sources, Task.DETECT)``.
 
         Args:
             sources: List of file paths or BGR numpy arrays.
@@ -225,39 +399,8 @@ class YoloNASDetector:
         Returns:
             One ``sv.Detections`` per input image, in input order.
         """
-        import cv2
-
-        images = []
-        tensors = []
-        scales = []
-        pads = []
-
-        for source in sources:
-            if isinstance(source, (str, Path)):
-                image = cv2.imread(str(source))
-                if image is None:
-                    raise FileNotFoundError(f"Cannot read image: {source}")
-            else:
-                image = source
-            images.append(image)
-
-            tensor, scale, pad = preprocess(image, self.input_size)
-            tensors.append(tensor)
-            scales.append(scale)
-            pads.append(pad)
-
-        batch_tensor = torch.cat(tensors, dim=0).to(self.device)
-        pred_bboxes, pred_scores = self.model(batch_tensor)
-
-        conf = conf_threshold if conf_threshold is not None else self.conf_threshold
-        iou = iou_threshold if iou_threshold is not None else self.iou_threshold
-        results = postprocess(pred_bboxes, pred_scores, conf, iou, multi_label=self.multi_label)
-
-        detections = []
-        for i, (boxes, scores, class_ids) in enumerate(results):
-            boxes = rescale_boxes(boxes, scales[i], pads[i], images[i].shape[:2])
-            detections.append(self._to_detections(boxes, scores, class_ids))
-        return detections
+        predictions = self.predict_batch(sources, Task.DETECT, conf_threshold, iou_threshold)
+        return [prediction.detections for prediction in predictions]
 
     def detect_video(
         self,

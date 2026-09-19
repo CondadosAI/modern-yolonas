@@ -208,6 +208,57 @@ for frame_idx, frame, detections in det.detect_video(source=0):  # 0 = default c
 cv2.destroyAllWindows()
 ```
 
+### Feature embeddings
+
+The detector throws the backbone's representation away and keeps four numbers per object.
+`YoloNASEmbedder` keeps the representation — for image retrieval, near-duplicate search,
+clustering and re-identification. Nothing extra is trained: same weights, read one stage earlier.
+
+```python
+import numpy as np
+from modern_yolonas import YoloNASEmbedder
+
+embedder = YoloNASEmbedder("yolo_nas_s")
+
+vector = embedder("image.jpg")                     # (768,) L2-normalized
+gallery = embedder.embed_batch(["a.jpg", "b.jpg"]) # (2, 768)
+
+# Both sides are normalized, so a dot product is the cosine similarity.
+ranking = np.argsort(-(gallery @ vector))
+```
+
+### Detections and embeddings in one pass
+
+Detection and embedding share the whole network up to the head, so there is no reason to
+run the backbone twice. `predict` takes `Task` flags and gives you both:
+
+```python
+from modern_yolonas import COCOClass, Task, YoloNASDetector
+
+detector = YoloNASDetector("yolo_nas_s")
+result = detector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)
+
+result.detections                       # sv.Detections
+result.embedding                        # (768,) whole-image vector
+result.detections.data["embedding"]     # (N, 768), one row per detection
+
+# The per-object vectors live in `data`, so they follow the boxes through slicing:
+people = result.detections[result.detections.class_id == COCOClass.PERSON]
+people.data["embedding"]                # rows still aligned with people.xyxy
+```
+
+`Task.EMBED_OBJECTS` implies `Task.DETECT`; fields you did not ask for come back `None`.
+`detector(image)` still works — it is shorthand for `predict(image, Task.DETECT).detections`.
+
+Raw feature maps, if you want to pool them yourself:
+
+```python
+features = model.forward_features(x)   # c2 c3 c4 c5 (backbone) + p3 p4 p5 (neck)
+```
+
+See the [embeddings guide](https://condadosai.github.io/modern-yolonas/guides/embeddings/)
+for layer choice and why the letterbox padding is excluded from pooling.
+
 ### Low-level model API
 
 ```python
@@ -288,6 +339,7 @@ Step-by-step notebooks in [`tutorials/`](https://github.com/CondadosAI/modern-yo
 | | [`roboflow/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/roboflow/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
 | **FiftyOne** | [`fiftyone/01_explore_dataset.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/01_explore_dataset.ipynb) | Load from FiftyOne Zoo + explore |
 | | [`fiftyone/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| | [`fiftyone/03_embedding_space.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/03_embedding_space.ipynb) | Explore a YOLO-NAS embedding space + find duplicates |
 | **Export** | [`export_onnx.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/export_onnx.ipynb) | ONNX export from any checkpoint |
 | **Quantization** | [`quantization_ptq.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_ptq.ipynb) | Post-Training Quantization |
 | | [`quantization_qat.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_qat.ipynb) | Quantization-Aware Training |

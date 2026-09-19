@@ -12,6 +12,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Feature embeddings.** `YoloNASEmbedder` turns images — or boxes within them — into
+  fixed-length vectors from the backbone and neck, for image retrieval, near-duplicate
+  search, clustering and re-identification. `embed_batch` for galleries, `embed_boxes`
+  for per-object vectors via `roi_align` on the feature maps (one forward pass per frame,
+  and it takes `supervision.Detections.xyxy` as it comes). Vectors are L2-normalized by
+  default, so a dot product is the cosine similarity.
+- **Detections and embeddings from a single forward pass.**
+  `YoloNASDetector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)` returns
+  a `Prediction` carrying whichever outputs were asked for; `predict_batch` is the batched
+  form. The backbone and neck run once — they are shared by detection and embedding, so
+  getting both no longer costs two passes. Per-object vectors go in
+  `detections.data["embedding"]`, so they follow the boxes through supervision's slicing.
+  `Task.EMBED_OBJECTS` implies `Task.DETECT`. `detector(image)` and `detect_batch` are
+  unchanged in behaviour and are now thin wrappers over the same path.
+- `FeaturePooler` holds the layer/pooling/normalize choice, so `YoloNASDetector` and
+  `YoloNASEmbedder` share one implementation rather than two that can drift. Pass one as
+  `YoloNASDetector(..., embedding=FeaturePooler(layers=("c4", "c5")))`.
+- Object embeddings are taken from the box **after** it is clipped to the frame, in both
+  `embed_boxes` and `Task.EMBED_OBJECTS`, so the two agree exactly and a detection running
+  off the edge is described by the part of it that is visible rather than by padding.
+- `YoloNAS.forward_features` returns the raw maps — `c2`–`c5` from the backbone and
+  `p3`–`p5` from the neck — for callers that want to pool them themselves. Additive: the
+  `forward` signature that ONNX export, the Frigate graph and the parity tests depend on
+  is untouched.
+- Pooling excludes the letterbox padding. Averaging the gray canvas in makes embeddings
+  cluster by aspect ratio rather than content: measured with the COCO `yolo_nas_s`
+  weights, full-canvas pooling scores an unrelated noise image against a street photo at
+  0.958 cosine — higher than that photo against a second real photo — purely because both
+  share a padding geometry. Pooling only the valid region puts the pair at 0.396.
+- `tutorials/fiftyone/03_embedding_space.ipynb` — compute the embeddings over a dataset,
+  project with UMAP and explore the space in the FiftyOne App, including near-duplicate
+  detection and an object-level (patch) embedding space.
+- `examples/embed_image.py` — image retrieval over a folder.
+- Docs: [embeddings guide](docs/guides/embeddings.md) and `YoloNASEmbedder` API page.
+
 ## [0.5.0] - 2026-09-18
 
 ### Changed — breaking
