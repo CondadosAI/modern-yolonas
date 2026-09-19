@@ -54,7 +54,7 @@ def main():
     # for frame_idx, frame, detections in det.detect_video(args.video):
     #     print(f"Frame {frame_idx}: {len(detections)} detections")
     #     # detections.xyxy / .confidence / .class_id, and filtering:
-    #     #   people = detections[detections.class_id == 0]
+    #     #   people = detections[detections.class_id == COCOClass.PERSON]
     #     # Or get an annotated frame: det.annotate(frame, detections)
 
 

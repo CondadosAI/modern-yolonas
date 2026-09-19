@@ -141,10 +141,16 @@ cv2.imwrite("output.jpg", det.annotate(image, detections))
 Because the result is a `supervision` container, filtering is slicing:
 
 ```python
-people = detections[detections.class_id == 0]
+from modern_yolonas import COCOClass
+
+people = detections[detections.class_id == COCOClass.PERSON]
 confident = detections[detections.confidence > 0.5]
 big = detections[detections.box_area > 5000]
 ```
+
+`COCOClass` is an `IntEnum`, so its members are ordinary ints — they just say which class
+they are. The ids describe the COCO taxonomy, so they apply to the pretrained checkpoints,
+not to a model fine-tuned on your own classes.
 
 and it plugs straight into the rest of the ecosystem:
 
