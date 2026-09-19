@@ -32,7 +32,7 @@ nav:
   - CLI Reference: cli.md
   - API Reference:
     - Detector: api/detector.md
-    - Embedder: api/embedder.md
+    - Embeddings: api/embedder.md
     - YoloNAS Model: api/model.md
     - Training: api/training.md
     - Data: api/data.md

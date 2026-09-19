@@ -54,6 +54,62 @@ vectors = embedder.embed_boxes(image, people.xyxy)   # (len(people), 768)
 Pair it with a tracker from supervision and those vectors become appearance features for
 re-identification across frames.
 
+## One pass, both outputs
+
+Running the detector and then the embedder pays for the backbone twice, and the
+backbone is essentially the whole cost. Detection and embedding share every layer up to
+the head, so `predict` takes `Task` flags and reads both off a single forward pass:
+
+```python
+from modern_yolonas import Task, YoloNASDetector
+
+detector = YoloNASDetector("yolo_nas_s")
+result = detector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)
+
+result.detections                       # sv.Detections
+result.embedding                        # (768,) whole-image vector
+result.detections.data["embedding"]     # (N, 768), one row per detection
+```
+
+| Flag | Gives you | In |
+|:---|:---|:---|
+| `Task.DETECT` | Boxes, scores, class ids | `result.detections` |
+| `Task.EMBED` | One vector for the image | `result.embedding` |
+| `Task.EMBED_OBJECTS` | One vector per detection | `result.detections.data["embedding"]` |
+
+`Task.EMBED_OBJECTS` implies `Task.DETECT` — the boxes are what gets embedded. Fields
+you did not ask for come back `None`.
+
+Per-object vectors live in `detections.data`, which is the field `supervision` provides
+for exactly this, so they follow the boxes through slicing:
+
+```python
+people = result.detections[result.detections.class_id == COCOClass.PERSON]
+people.data["embedding"]        # rows still aligned with people.xyxy
+```
+
+`detector(image)` is unchanged — it is now shorthand for
+`predict(image, Task.DETECT).detections`. `predict_batch` is the batched form.
+
+To choose different layers or pooling for the detector's embeddings, hand it a
+`FeaturePooler`:
+
+```python
+from modern_yolonas import FeaturePooler
+
+detector = YoloNASDetector("yolo_nas_s", embedding=FeaturePooler(layers=("c4", "c5")))
+```
+
+`YoloNASEmbedder` is still the right tool when you want embeddings *only* — it never runs
+the head or NMS.
+
+### Which coordinates get embedded
+
+`embed_boxes` and `Task.EMBED_OBJECTS` produce identical vectors for the same detections.
+Both embed the box **after** it is clipped to the frame: a detection running off the edge
+is described by the part of it that is actually visible, because the rest of its extent is
+letterbox padding.
+
 ## Choosing a layer
 
 `layers` takes any of `c2`, `c3`, `c4`, `c5` (backbone) and `p3`, `p4`, `p5` (neck).

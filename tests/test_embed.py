@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from modern_yolonas import FEATURE_LAYERS, YoloNASEmbedder, yolo_nas_s
+from modern_yolonas.inference.embed import valid_region
 from modern_yolonas.inference.preprocess import preprocess
 
 
@@ -141,7 +142,7 @@ class TestPaddingIsExcluded:
     def test_valid_region_maps_through_the_letterbox(self, embedder):
         image = _image(300, 900, seed=5)
         _, scale, pad = preprocess(image, 640)
-        left, top, right, bottom = embedder._valid_region(image, scale, pad)
+        left, top, right, bottom = valid_region(image, scale, pad)
         assert (left, top) == pad
         assert right - left == pytest.approx(round(900 * scale))
         assert bottom - top == pytest.approx(round(300 * scale))
@@ -174,3 +175,174 @@ class TestEmbedBoxes:
             class_id=np.array([0]),
         )
         assert embedder.embed_boxes(_image(), detections.xyxy).shape == (1, 768)
+
+
+@pytest.fixture(scope="module")
+def detector():
+    from modern_yolonas import YoloNASDetector
+
+    # conf 0 / single-label so an untrained model still yields boxes to embed.
+    return YoloNASDetector(
+        "yolo_nas_s", device="cpu", pretrained=False, conf_threshold=0.0, multi_label=False
+    )
+
+
+@pytest.fixture(scope="module")
+def weight_shared_pair(detector, embedder):
+    """A detector and an embedder holding the *same* weights.
+
+    Each class builds its own model, so two ``pretrained=False`` instances start
+    from different random initializations and would compare nothing.
+    """
+    detector.model.load_state_dict(embedder.model.state_dict())
+    detector.model.eval()
+    return detector, embedder
+
+
+class TestSinglePassPredict:
+    """``predict`` must get detections and embeddings out of one forward pass.
+
+    Running the detector and the embedder separately costs two passes through the
+    backbone, which is the expensive part. Detection and embedding share every
+    layer up to the head, so the combined call runs the backbone once and reads
+    both off it.
+    """
+
+    def test_backbone_runs_once_for_every_task(self, detector):
+        from modern_yolonas import Task
+
+        calls = []
+        handle = detector.model.backbone.register_forward_hook(lambda *_: calls.append(1))
+        try:
+            detector.predict(_image(), Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)
+        finally:
+            handle.remove()
+        assert len(calls) == 1
+
+    def test_detect_only_matches_the_call_shorthand(self, detector):
+        from modern_yolonas import Task
+
+        image = _image()
+        result = detector.predict(image, Task.DETECT)
+        direct = detector(image)
+
+        assert result.embedding is None
+        assert "embedding" not in result.detections.data
+        assert np.allclose(result.detections.xyxy, direct.xyxy)
+        assert np.allclose(result.detections.confidence, direct.confidence)
+        assert np.array_equal(result.detections.class_id, direct.class_id)
+
+    def test_embed_only_returns_no_detections(self, detector):
+        from modern_yolonas import Task
+
+        result = detector.predict(_image(), Task.EMBED)
+        assert result.detections is None
+        assert result.embedding.shape == (768,)
+        assert np.linalg.norm(result.embedding) == pytest.approx(1.0, abs=1e-5)
+
+    def test_embed_objects_implies_detect(self, detector):
+        from modern_yolonas import Task
+
+        result = detector.predict(_image(), Task.EMBED_OBJECTS)
+        assert result.detections is not None
+        assert result.detections.data["embedding"].shape == (len(result.detections), 768)
+
+    def test_object_vectors_slice_with_the_detections(self, detector):
+        """The whole point of ``detections.data``: filtering keeps rows aligned."""
+        from modern_yolonas import Task
+
+        detections = detector.predict(_image(), Task.EMBED_OBJECTS).detections
+        assert len(detections) > 1
+
+        keep = np.zeros(len(detections), dtype=bool)
+        keep[[0, 2]] = True
+        subset = detections[keep]
+
+        assert subset.data["embedding"].shape == (2, 768)
+        assert np.allclose(subset.data["embedding"], detections.data["embedding"][[0, 2]])
+
+    def test_rejects_empty_task_set(self, detector):
+        from modern_yolonas import Task
+
+        with pytest.raises(ValueError, match="at least one Task"):
+            detector.predict(_image(), Task.DETECT & Task.EMBED)
+
+    def test_batch_matches_single(self, detector):
+        from modern_yolonas import Task
+
+        a, b = _image(360, 640, seed=7), _image(480, 480, seed=8)
+        batch = detector.predict_batch([a, b], Task.DETECT | Task.EMBED)
+        assert len(batch) == 2
+        assert np.allclose(batch[0].embedding, detector.predict(a, Task.EMBED).embedding, atol=1e-5)
+        assert np.allclose(batch[1].embedding, detector.predict(b, Task.EMBED).embedding, atol=1e-5)
+
+    def test_empty_batch(self, detector):
+        from modern_yolonas import Task
+
+        assert detector.predict_batch([], Task.DETECT) == []
+
+
+class TestPredictMatchesStandaloneEmbedder:
+    """One pass must produce the *same* vectors as the two-pass route."""
+
+    def test_image_embedding_matches(self, weight_shared_pair):
+        from modern_yolonas import Task
+
+        detector, embedder = weight_shared_pair
+        image = _image(360, 640, seed=9)
+        assert np.allclose(detector.predict(image, Task.EMBED).embedding, embedder(image), atol=1e-5)
+
+    def test_object_embeddings_match(self, weight_shared_pair):
+        """``predict`` embeds canvas boxes; ``embed_boxes`` maps source boxes back.
+
+        They travel different coordinate routes to the same ROIs, so this pins the
+        rescale round-trip as well as the pooling.
+        """
+        from modern_yolonas import Task
+
+        detector, embedder = weight_shared_pair
+        image = _image(360, 640, seed=10)
+
+        detections = detector.predict(image, Task.EMBED_OBJECTS).detections
+        assert len(detections) > 0
+
+        standalone = embedder.embed_boxes(image, detections.xyxy)
+        assert np.allclose(detections.data["embedding"], standalone, atol=1e-4)
+
+    def test_custom_pooler_is_honoured(self):
+        from modern_yolonas import FeaturePooler, Task, YoloNASDetector
+
+        detector = YoloNASDetector(
+            "yolo_nas_s",
+            device="cpu",
+            pretrained=False,
+            embedding=FeaturePooler(layers=("c4", "c5"), pooling="max", normalize=False),
+        )
+        vector = detector.predict(_image(), Task.EMBED).embedding
+        assert vector.shape == (384 + 768,)
+        assert np.linalg.norm(vector) != pytest.approx(1.0, abs=1e-3)
+
+    def test_off_frame_boxes_are_embedded_from_the_visible_part(self, weight_shared_pair):
+        """Regression: object vectors must come from the *clipped* boxes.
+
+        ``rescale_boxes`` clips detections to the frame. Embedding the unclipped
+        canvas box instead would describe a region that is partly letterbox
+        padding, and would silently disagree with ``embed_boxes`` on exactly the
+        detections that touch an edge.
+        """
+        from modern_yolonas import Task
+
+        detector, embedder = weight_shared_pair
+        image = _image(360, 640, seed=11)
+
+        detections = detector.predict(image, Task.EMBED_OBJECTS).detections
+        touches_edge = (
+            (detections.xyxy[:, 0] <= 0)
+            | (detections.xyxy[:, 1] <= 0)
+            | (detections.xyxy[:, 2] >= image.shape[1])
+            | (detections.xyxy[:, 3] >= image.shape[0])
+        )
+        assert touches_edge.any(), "fixture no longer produces edge detections"
+
+        edge = detections[touches_edge]
+        assert np.allclose(edge.data["embedding"], embedder.embed_boxes(image, edge.xyxy), atol=1e-4)

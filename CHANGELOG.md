@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   for per-object vectors via `roi_align` on the feature maps (one forward pass per frame,
   and it takes `supervision.Detections.xyxy` as it comes). Vectors are L2-normalized by
   default, so a dot product is the cosine similarity.
+- **Detections and embeddings from a single forward pass.**
+  `YoloNASDetector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)` returns
+  a `Prediction` carrying whichever outputs were asked for; `predict_batch` is the batched
+  form. The backbone and neck run once — they are shared by detection and embedding, so
+  getting both no longer costs two passes. Per-object vectors go in
+  `detections.data["embedding"]`, so they follow the boxes through supervision's slicing.
+  `Task.EMBED_OBJECTS` implies `Task.DETECT`. `detector(image)` and `detect_batch` are
+  unchanged in behaviour and are now thin wrappers over the same path.
+- `FeaturePooler` holds the layer/pooling/normalize choice, so `YoloNASDetector` and
+  `YoloNASEmbedder` share one implementation rather than two that can drift. Pass one as
+  `YoloNASDetector(..., embedding=FeaturePooler(layers=("c4", "c5")))`.
+- Object embeddings are taken from the box **after** it is clipped to the frame, in both
+  `embed_boxes` and `Task.EMBED_OBJECTS`, so the two agree exactly and a detection running
+  off the edge is described by the part of it that is visible rather than by padding.
 - `YoloNAS.forward_features` returns the raw maps — `c2`–`c5` from the backbone and
   `p3`–`p5` from the neck — for callers that want to pool them themselves. Additive: the
   `forward` signature that ONNX export, the Frigate graph and the parity tests depend on

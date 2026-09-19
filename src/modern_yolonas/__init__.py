@@ -4,7 +4,13 @@ from modern_yolonas._version import __version__
 from modern_yolonas.model import YoloNAS
 from modern_yolonas.weights import load_pretrained, load_checkpoint, transfer_to
 from modern_yolonas.inference.detect import YoloNASDetector
-from modern_yolonas.inference.embed import FEATURE_LAYERS, YoloNASEmbedder
+from modern_yolonas.inference.embed import (
+    FEATURE_LAYERS,
+    FeaturePooler,
+    Prediction,
+    Task,
+    YoloNASEmbedder,
+)
 from modern_yolonas.coco import COCOClass
 from modern_yolonas.inference.visualize import COCO_NAMES
 
@@ -45,6 +51,9 @@ __all__ = [
     "YoloNASDetector",
     "YoloNASEmbedder",
     "FEATURE_LAYERS",
+    "FeaturePooler",
+    "Prediction",
+    "Task",
     "COCOClass",
     "COCO_NAMES",
 ]

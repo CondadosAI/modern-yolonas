@@ -227,17 +227,28 @@ gallery = embedder.embed_batch(["a.jpg", "b.jpg"]) # (2, 768)
 ranking = np.argsort(-(gallery @ vector))
 ```
 
-Per-object vectors for recognition and re-ID — `roi_align` on the feature maps, so a
-whole frame costs one forward pass:
+### Detections and embeddings in one pass
+
+Detection and embedding share the whole network up to the head, so there is no reason to
+run the backbone twice. `predict` takes `Task` flags and gives you both:
 
 ```python
-from modern_yolonas import COCOClass, YoloNASDetector
+from modern_yolonas import COCOClass, Task, YoloNASDetector
 
-detections = YoloNASDetector("yolo_nas_s")(image)
-people = detections[detections.class_id == COCOClass.PERSON]
+detector = YoloNASDetector("yolo_nas_s")
+result = detector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)
 
-vectors = embedder.embed_boxes(image, people.xyxy)   # (len(people), 768)
+result.detections                       # sv.Detections
+result.embedding                        # (768,) whole-image vector
+result.detections.data["embedding"]     # (N, 768), one row per detection
+
+# The per-object vectors live in `data`, so they follow the boxes through slicing:
+people = result.detections[result.detections.class_id == COCOClass.PERSON]
+people.data["embedding"]                # rows still aligned with people.xyxy
 ```
+
+`Task.EMBED_OBJECTS` implies `Task.DETECT`; fields you did not ask for come back `None`.
+`detector(image)` still works — it is shorthand for `predict(image, Task.DETECT).detections`.
 
 Raw feature maps, if you want to pool them yourself:
 
