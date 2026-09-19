@@ -36,7 +36,7 @@ def export(
     export_format: Annotated[ExportFormat, typer.Option("--format", help="Export format.")] = ExportFormat.onnx,
     output: Annotated[str | None, typer.Option(help="Output file path.")] = None,
     input_size: Annotated[int, typer.Option(help="Model input size.")] = 640,
-    opset: Annotated[int, typer.Option(help="ONNX opset version.")] = 17,
+    opset: Annotated[int, typer.Option(help="ONNX opset version (18 is torch's floor here; lower is requested, not honoured).")] = 18,
     checkpoint: Annotated[str | None, typer.Option(help="Custom checkpoint path.")] = None,
     num_classes: Annotated[int, typer.Option(help="Number of classes (must match checkpoint; default 80 for COCO).")] = 80,
     target: Annotated[ExportTarget, typer.Option(help="Export target.")] = ExportTarget.generic,

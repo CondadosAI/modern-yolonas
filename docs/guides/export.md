@@ -36,7 +36,7 @@ torch.onnx.export(
     input_names=["images"],
     output_names=["pred_bboxes", "pred_scores"],
     dynamic_axes={"images": {0: "batch"}},
-    opset_version=17,
+    opset_version=18,
 )
 ```
 

@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `tests/test_export.py` — the project's first ONNX tests: ORT against PyTorch for both
   graphs, dynamic batch, and a check that `valid_region` actually reaches the pooling.
 
+### Changed
+- `yolonas export --opset` now defaults to **18**, was 17. Torch's dynamo exporter (the
+  default since 2.6) has no implementations below 18, so asking for 17 exported at 18 and
+  then failed to convert back down — printing a traceback and silently leaving the model
+  at 18. The flag now says what actually happens.
+
 ### Fixed
 - `yolonas export --format onnx` wrote the weights to a sibling `<name>.onnx.data` and
   reported only the `.onnx` as the output. An `.onnx` shipped without that sidecar loads

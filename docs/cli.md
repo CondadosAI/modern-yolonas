@@ -74,7 +74,7 @@ yolonas export --model yolo_nas_s --target combined --output combined.onnx
 | `--format` | `onnx` | Export format (onnx/openvino) |
 | `--output` | auto | Output file path |
 | `--input-size` | `640` | Model input size |
-| `--opset` | `17` | ONNX opset version |
+| `--opset` | `18` | ONNX opset version |
 | `--checkpoint` | `None` | Custom checkpoint path |
 | `--target` | `generic` | Export target (generic/frigate/embedding/combined) |
 | `--embed-layers` | `c5` | Feature maps to pool, comma-separated (embedding/combined) |

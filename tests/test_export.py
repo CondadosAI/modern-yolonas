@@ -180,3 +180,102 @@ class TestExportedFileIsSelfContained:
         model = onnx.load(str(path), load_external_data=False)
         external = [i for i in model.graph.initializer if i.data_location == onnx.TensorProto.EXTERNAL]
         assert external == []
+
+
+class TestFusionDoesNotMoveTheEmbedding:
+    """The exported graph runs on a fused model; users compare it to an unfused one.
+
+    `YoloNASEmbedder` never fuses, so if fusion moved the vector, `embed_onnx.py`
+    and `embed_image.py` would quietly rank the same gallery differently. Folding
+    BatchNorm into the preceding convolution is exact in principle and only to
+    float precision in fact, so the size of the gap belongs on record.
+    """
+
+    def test_fused_matches_unfused(self):
+        import copy
+
+        unfused = yolo_nas_s(pretrained=False).eval()
+        fused = copy.deepcopy(unfused)
+        for module in fused.modules():
+            if hasattr(module, "fuse_block_residual_branches"):
+                module.fuse_block_residual_branches()
+
+        images, regions = _letterboxed([(360, 640), (200, 1600)])
+        pooler = FeaturePooler()
+        with torch.no_grad():
+            before = EmbeddingGraph(unfused, pooler, CANVAS).eval()(images, regions)
+            after = EmbeddingGraph(fused, pooler, CANVAS).eval()(images, regions)
+
+        cosine = (before * after).sum(dim=1)
+        assert torch.all(cosine > 0.9999), f"fusion moved the embedding: cosine {cosine.tolist()}"
+
+
+@pytest.fixture(scope="module")
+def checkpoint(tmp_path_factory):
+    """A random-weight checkpoint, so the CLI tests never reach the network."""
+    path = tmp_path_factory.mktemp("ckpt") / "weights.pt"
+    torch.save(yolo_nas_s(pretrained=False).state_dict(), path)
+    return str(path)
+
+
+class TestCliProducesAWorkingGraph:
+    """The graphs working is not the same as the command working."""
+
+    def test_embedding_target(self, tmp_path, checkpoint):
+        from typer.testing import CliRunner
+
+        from modern_yolonas.cli import app
+
+        output = tmp_path / "embedding.onnx"
+        result = CliRunner().invoke(
+            app,
+            [
+                "export", "--model", "yolo_nas_s", "--target", "embedding",
+                "--input-size", "320", "--embed-layers", "c4,c5",
+                "--output", str(output), "--checkpoint", checkpoint,
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert output.exists()
+        assert not list(tmp_path.glob("*.onnx.data"))
+
+        session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
+        assert [i.name for i in session.get_inputs()] == ["images", "valid_region"]
+
+        images, regions = _letterboxed([(360, 640)])
+        out = session.run(None, {"images": images.numpy(), "valid_region": regions.numpy()})[0]
+        assert out.shape == (1, 384 + 768), "--embed-layers c4,c5 must reach the graph"
+
+    def test_combined_target(self, tmp_path, checkpoint):
+        from typer.testing import CliRunner
+
+        from modern_yolonas.cli import app
+
+        output = tmp_path / "combined.onnx"
+        result = CliRunner().invoke(
+            app,
+            ["export", "--model", "yolo_nas_s", "--target", "combined",
+             "--input-size", "320", "--output", str(output), "--checkpoint", checkpoint],
+        )
+        assert result.exit_code == 0, result.output
+
+        session = ort.InferenceSession(str(output), providers=["CPUExecutionProvider"])
+        assert [o.name for o in session.get_outputs()] == ["pred_bboxes", "pred_scores", "embedding"]
+
+    def test_default_opset_needs_no_downconversion(self, tmp_path, checkpoint):
+        """Asking for the default must not trip torch's failed 17-conversion path."""
+        from typer.testing import CliRunner
+
+        from modern_yolonas.cli import app
+
+        output = tmp_path / "default.onnx"
+        result = CliRunner().invoke(
+            app,
+            ["export", "--model", "yolo_nas_s", "--target", "embedding",
+             "--input-size", "320", "--output", str(output), "--checkpoint", checkpoint],
+        )
+        assert result.exit_code == 0, result.output
+
+        model = onnx.load(str(output), load_external_data=False)
+        exported = {i.domain or "ai.onnx": i.version for i in model.opset_import}
+        assert exported["ai.onnx"] >= 18

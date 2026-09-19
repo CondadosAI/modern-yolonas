@@ -419,11 +419,16 @@ class TestMaskedPoolingMatchesSlicing:
         assert masked.shape == sliced.shape
         assert torch.allclose(masked, sliced, atol=1e-5)
 
-    def test_mask_bounds_match_the_slice_bounds(self, model):
-        """Not just the pooled result — the region each one covers.
+    def test_mask_covers_the_same_extent_as_the_slice(self, model):
+        """Not just the pooled value — the exact rows and columns each one covers.
 
-        A mask that was off by a row would still average to something close on
-        smooth features, so the extents are compared directly.
+        A mask off by one row would still average to something close on smooth
+        features, so the extents are compared directly. The reference extent is
+        read out of ``pool_images`` itself rather than recomputed here: a feature
+        map whose values *are* the row and column indices, max-pooled, reports the
+        last index the slice touched, and the same map negated reports the first.
+        Reimplementing the clamps in the test would only prove the test agrees
+        with itself.
         """
         from modern_yolonas import FeaturePooler
 
@@ -432,17 +437,24 @@ class TestMaskedPoolingMatchesSlicing:
         _, scale, pad = preprocess(image, canvas)
         region = valid_region(image, scale, pad)
 
-        for name, size in (("c2", 160), ("c3", 80), ("c4", 40), ("c5", 20)):
+        for size in (160, 80, 40, 20):
+            cols = torch.arange(size, dtype=torch.float32).expand(size, size)
+            rows = cols.t().contiguous()
+            # Channels: +col, +row, -col, -row — so a max-pool reads out
+            # (last_col, last_row, -first_col, -first_row).
+            probe = {"c5": torch.stack([cols, rows, -cols, -rows]).unsqueeze(0)}
+
+            pooler = FeaturePooler(layers=("c5",), pooling="max", normalize=False)
+            sliced = pooler.pool_images(probe, [region], canvas)[0]
+            last_col, last_row, first_col, first_row = (
+                int(sliced[0]), int(sliced[1]), int(-sliced[2]), int(-sliced[3])
+            )
+
             mask = FeaturePooler._region_mask(
                 torch.tensor([region]), size, size, canvas, torch.device("cpu")
             )[0]
-            rows = mask.any(dim=1).nonzero().flatten()
-            cols = mask.any(dim=0).nonzero().flatten()
+            mask_cols = mask.any(dim=0).nonzero().flatten()
+            mask_rows = mask.any(dim=1).nonzero().flatten()
 
-            stride = canvas / size
-            left, top, right, bottom = region
-            assert cols[0].item() == int(np.floor(left / stride))
-            assert cols[-1].item() + 1 == min(size, max(int(np.ceil(right / stride)), 1))
-            assert rows[0].item() == int(np.floor(top / stride))
-            assert rows[-1].item() + 1 == min(size, max(int(np.ceil(bottom / stride)), 1))
-            assert name  # the level this covers, for the failure message
+            assert (int(mask_cols[0]), int(mask_cols[-1])) == (first_col, last_col), f"cols at {size}x{size}"
+            assert (int(mask_rows[0]), int(mask_rows[-1])) == (first_row, last_row), f"rows at {size}x{size}"
