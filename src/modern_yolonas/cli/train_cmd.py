@@ -122,7 +122,7 @@ def train(
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, LetterboxResize, RandomChannelSwap, Normalize, Mixup
+    from modern_yolonas.data.transforms import Compose, HSVAugment, LetterboxResize, RandomChannelSwap, RandomResizedCropFlipAffine, Normalize, Mixup
     import lightning as L
     from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
@@ -134,9 +134,16 @@ def train(
 
     train_transforms = Compose([
         HSVAugment(p=0.5),
-        RandomResizedCrop(size=input_size, scale=(0.05, 0.8), ratio=(0.75, 1.33), p=1.0),
-        HorizontalFlip(),
-        RandomAffine(degrees=0.0, translate=0.25, scale=(0.5, 1.5)),
+        # One warp for crop + flip + affine. Same distributions -- the parameters come
+        # from Albumentations' own samplers -- but the image is resampled once.
+        RandomResizedCropFlipAffine(
+            size=input_size,
+            scale=(0.05, 0.8),
+            ratio=(0.75, 1.33),
+            flip_prob=0.5,
+            translate=0.25,
+            affine_scale=(0.5, 1.5),
+        ),
         RandomChannelSwap(p=0.5),
         # LetterboxResize(target_size=input_size),
         # Mixup is appended here after the dataset is created (needs dataset reference)
