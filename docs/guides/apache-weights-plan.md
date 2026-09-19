@@ -133,8 +133,28 @@ distillation head is a 1x1 projection and a cosine loss — already implemented 
 At 51.4 img/s — an upper bound, since this stage runs no detection head — 20 epochs over 241k
 is about **26 hours**. EdgeCrafter used 50, which would be 2.7 days.
 
-**Gate:** the distilled backbone must beat a random init on a short detection fine-tune. If
-it does not, stages 2 and 3 are wasted on it.
+**Gate: beat this number.** The distilled backbone has to outperform a random init on a
+short detection fine-tune. The baseline is measured rather than left to judgement --
+2026-09-19, `yolo_nas_s` from scratch, `--recipe coco` at lr 2e-2, batch 16, on full
+`train2017`:
+
+| epoch | AP | AR |
+|---:|---:|---:|
+| 0 | 0.020 | 0.186 |
+| 1 | 0.050 | 0.278 |
+| 3 | 0.085 | 0.343 |
+| 5 | 0.118 | 0.386 |
+| **7** | **0.146** | **0.417** |
+
+So: eight epochs of the same recipe, starting from the distilled backbone instead of a
+random one, must clear **AP 0.146**. The comparison is only fair against the same recipe,
+the same epoch count and the same learning rate, so run it exactly that way.
+
+A distillation that transferred nothing looks identical to one that worked until this
+fine-tune, which is why the gate exists and why the baseline needs a number rather than an
+impression. Checkpoint of the baseline run: `runs/calib/epoch=7-step=58632.ckpt`.
+
+If it does not clear the bar, stages 2 and 3 are wasted on it.
 
 ### 2 — Pseudo-label `unlabeled2017`
 
