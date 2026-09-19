@@ -109,9 +109,11 @@ def main():
                 entries.append(artifact(engine, root, model=name, input_size=size, format="tensorrt",
                                         precision="fp16", nms="external", batch="1",
                                         built_on=engine_metadata(),
-                                        note="AMPERE_PLUS: loads on any sm_80+ GPU with this TensorRT "
-                                             "major version, and is slower than an engine built natively "
-                                             "on the target card. Rebuild locally for the last few percent."))
+                                        note="AMPERE_PLUS: loads on any sm_80+ GPU, but only under the "
+                                             "exact TensorRT build recorded in built_on — the engine is "
+                                             "not version-compatible. It is also slower than an engine "
+                                             "built natively on the target card, so rebuilding from the "
+                                             "fp16 ONNX beside it is the better option whenever possible."))
                 print("   tensorrt fp16 (AMPERE_PLUS)")
 
     manifest = Path(args.output) if args.output else root / "manifest.json"

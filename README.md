@@ -304,8 +304,13 @@ Or the standalone scripts in [`examples/`](https://github.com/CondadosAI/modern-
 
 - [`parity_check.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/parity_check.py) — verify this implementation matches
   super-gradients (writes [`docs/benchmarks/parity.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/parity.md))
-- [`bench_devices.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/bench_devices.py) — latency across CPU / Intel iGPU /
-  NVIDIA dGPU and FP32 / FP16 / INT8 (writes [`docs/benchmarks/latency_matrix.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/latency_matrix.md))
+- [`runtime_matrix.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/runtime_matrix.py) — latency across PyTorch /
+  ONNX Runtime / OpenVINO / TensorRT, CPU / Intel iGPU / NVIDIA dGPU, FP32 / FP16 / INT8 and every
+  input size (writes [`docs/benchmarks/runtime_matrix.md`](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/runtime_matrix.md))
+- [`runtime_accuracy.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/runtime_accuracy.py) — COCO AP for an
+  *exported* artifact, so an INT8 file's accuracy is measured rather than assumed
+- [`export_zoo.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/export_zoo.py) — pre-export every variant to every
+  runtime and size, with a manifest
 - [`detect_image.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_image.py) — run detection on a single image
 - [`detect_video.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_video.py) — run detection on a video file
 - [`detect_webcam.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_webcam.py) — live webcam detection

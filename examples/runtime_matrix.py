@@ -29,6 +29,18 @@ import torch
 
 RUNS, WARMUP = 30, 8
 
+# Set by main() from --sample-image. Random noise would be a fine input for the
+# convolutions and a misleading one for NMS: nothing in noise clears a 0.25 score, so
+# every NMS leg would sort an empty list and report itself free.
+SAMPLE: dict[int, "np.ndarray"] = {}
+
+
+def sample_input(size: int):
+    """A real preprocessed frame at *size*, or noise if none was given."""
+    if size in SAMPLE:
+        return SAMPLE[size].copy()
+    return np.random.randn(1, 3, size, size).astype(np.float32)
+
 
 # --------------------------------------------------------------------------------
 # Conditions. A latency number without these is not reproducible: the same laptop GPU
@@ -73,6 +85,7 @@ def environment() -> dict:
         "python": platform.python_version(),
         "torch": torch.__version__,
         "power_source": power_source(),
+        "input": "real frame" if SAMPLE else "random noise (NMS legs are not meaningful)",
     }
     if torch.cuda.is_available():
         env["gpu"] = torch.cuda.get_device_name(0)
@@ -144,12 +157,16 @@ def fresh_model(name: str):
     return fuse_for_inference(getattr(modern_yolonas, name)(pretrained=True))
 
 
-def with_host_nms(forward):
-    """Wrap a forward pass in the host-side NMS an `external` graph still needs.
+def with_torch_nms(forward):
+    """Wrap a forward pass in the `postprocess` an `external` graph still owes.
 
     Without this the `external` and `graph` rows are not comparable: the first
     excludes NMS entirely while the second includes it. This is the leg that says
     whether baking NMS into the graph pays.
+
+    Note what this does *not* include: `postprocess` runs on the tensors where they
+    already are, so on CUDA legs nothing is copied to the host. A pipeline that does
+    move detections host-side pays more than this row shows.
     """
     from modern_yolonas.inference.postprocess import postprocess
 
@@ -163,7 +180,7 @@ def with_host_nms(forward):
 
 
 def bench_pytorch(matrix, name, size, cpu: bool):
-    x = torch.randn(1, 3, size, size)
+    x = torch.from_numpy(sample_input(size))
 
     if cpu:
         model = fresh_model(name)
@@ -190,8 +207,8 @@ def bench_pytorch(matrix, name, size, cpu: bool):
             with torch.no_grad():
                 return model(xc)
 
-        matrix.record("PyTorch", "dGPU", precision, name, size, timeit(with_host_nms(forward)),
-                      nms="host", **gpu_clock_health())
+        matrix.record("PyTorch", "dGPU", precision, name, size, timeit(with_torch_nms(forward)),
+                      nms="torch", **gpu_clock_health())
         model = xc = None
         torch.cuda.empty_cache()
 
@@ -199,16 +216,18 @@ def bench_pytorch(matrix, name, size, cpu: bool):
 def bench_onnxruntime(matrix, onnx_path, name, size, nms):
     from modern_yolonas.export import onnx_session
 
-    x = np.random.randn(1, 3, size, size).astype(np.float32)
+    x = sample_input(size)
     for provider, device in (("cpu", "CPU"), ("cuda", "dGPU")):
         try:
             session = onnx_session(onnx_path, provider)
         except Exception as exc:
             matrix.record("ORT", device, "fp32", name, size, error=f"{type(exc).__name__}: {exc}"[:90], nms=nms)
             continue
+        import onnxruntime as ort
+
         matrix.record(
             "ORT", device, "fp32", name, size,
-            timeit(lambda: session.run(None, {"images": x})), nms=nms,
+            timeit(lambda: session.run(None, {"images": x})), nms=nms, onnxruntime=ort.__version__,
         )
 
 
@@ -218,7 +237,7 @@ def bench_openvino(matrix, onnx_path, name, size, devices, calibration_dir, nms)
     from modern_yolonas.export.openvino import export_openvino
 
     core = ov.Core()
-    x = np.random.randn(1, 3, size, size).astype(np.float32)
+    x = sample_input(size)
 
     for precision in ("fp32", "fp16", "int8"):
         if precision == "int8" and (calibration_dir is None or nms != "external"):
@@ -275,12 +294,12 @@ def bench_tensorrt(matrix, name, size, nms, half_onnx, fp32_onnx):
             continue
 
         dtype = torch.float16 if precision == "fp16" else torch.float32
-        x = torch.randn(1, 3, size, size, device="cuda", dtype=dtype)
+        x = torch.from_numpy(sample_input(size)).to("cuda", dtype)
         matrix.record("TensorRT", f"dGPU {variant}", precision, name, size,
                       timeit(lambda: runner(x)), nms=nms, **gpu_clock_health())
         if nms == "external":
             matrix.record("TensorRT", f"dGPU {variant}", precision, name, size,
-                          timeit(with_host_nms(lambda: runner(x))), nms="host", **gpu_clock_health())
+                          timeit(with_torch_nms(lambda: runner(x))), nms="torch", **gpu_clock_health())
         runner = None
         torch.cuda.empty_cache()
 
@@ -289,12 +308,27 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--models", default="yolo_nas_s", help="Comma-separated variants.")
     parser.add_argument("--sizes", default="320,640", help="Comma-separated square input sizes.")
-    parser.add_argument("--nms", default="external,graph", help="external (host-side) and/or graph (--target end2end).")
+    parser.add_argument("--nms", default="external,graph",
+                        help="external (raw tensors), torch (forward + postprocess), graph (--target end2end).")
     parser.add_argument("--calibration-dir", default=None, help="Images for OpenVINO INT8 calibration.")
     parser.add_argument("--runtimes", default="pytorch,ort,openvino,tensorrt")
     parser.add_argument("--skip-cpu", action="store_true", help="Skip the slow PyTorch-on-CPU legs.")
+    parser.add_argument("--sample-image", default=None,
+                        help="A real frame to time on. Without it the NMS legs see noise, "
+                             "find nothing above threshold and report NMS as free.")
     parser.add_argument("--output", default="docs/benchmarks/runtime_matrix.json")
     args = parser.parse_args()
+
+    if args.sample_image:
+        import cv2
+
+        from modern_yolonas.inference.preprocess import preprocess
+
+        frame = cv2.imread(args.sample_image)
+        if frame is None:
+            raise SystemExit(f"could not read {args.sample_image}")
+        for size in (int(s) for s in args.sizes.split(",")):
+            SAMPLE[size] = preprocess(frame, size)[0].numpy()
 
     from modern_yolonas.export import export_onnx
     from modern_yolonas.export.nms import make_end2end_onnx
