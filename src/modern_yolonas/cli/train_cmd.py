@@ -48,6 +48,8 @@ def train(
     gradient_accum: Annotated[int, typer.Option(help="Gradient accumulation steps (1 = disabled).")] = 1,
     early_stopping_patience: Annotated[int, typer.Option(help="Stop training if train loss doesn't improve for N epochs (0 = disabled).")] = 0,
     early_stopping_min_delta: Annotated[float, typer.Option(help="Minimum improvement in train loss to count as progress.")] = 1e-4,
+    close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close).")] = 0,
+    grad_clip: Annotated[float, typer.Option(help="Clip gradients to this max norm (0 = disabled).")] = 10.0,
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
     num_gpus: Annotated[int, typer.Option(help="Number of GPUs for DDP training. 1 = single GPU. Values >1 spawn child processes via torchrun.")] = 1,
     ignore_empty: Annotated[bool, typer.Option("--ignore-empty/--no-ignore-empty", help="Skip images with zero annotations (background-only samples).")] = True,
@@ -111,16 +113,20 @@ def train(
         gradient_accum  = int(_pick(gradient_accum, "gradient_accum", 1))
         early_stopping_patience  = int(_pick(early_stopping_patience,  "early-stopping-patience",  0))
         early_stopping_min_delta = float(_pick(early_stopping_min_delta, "early-stopping-min-delta", 1e-4))
+        close_mosaic_epochs = int(_pick(close_mosaic_epochs, "close-mosaic-epochs", 0))
+        grad_clip = float(_pick(grad_clip, "grad-clip", 10.0))
         amp      = bool(_pick(amp,      "amp",       True))
         num_gpus = int(_pick(num_gpus,  "num-gpus",  1))
         ignore_empty = bool(_pick(ignore_empty, "ignore-empty", True))
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, CenterCrop, RandomChannelSwap, Normalize, Mixup
-    from modern_yolonas.data.collate import detection_collate_fn
-    from modern_yolonas.training.trainer import Trainer
-    from torch.utils.data import DataLoader
+    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, LetterboxResize, RandomChannelSwap, Normalize, Mixup
+    import lightning as L
+    from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+
+    from modern_yolonas.training import DetectionDataModule, EMACallback, YoloNASLightningModule
+    from modern_yolonas.training.callbacks import CloseMosaicCallback
 
     console = Console()
     data_path = Path(data)
@@ -135,11 +141,16 @@ def train(
         # Mixup is appended here after the dataset is created (needs dataset reference)
         Normalize(),
     ])
+    # Validation must see the whole image, aspect preserved — that is what detection
+    # mAP is defined over, and it is what `yolonas eval` and the inference path use.
+    # A CenterCrop here deletes edge objects, and raises outright on any image smaller
+    # than input_size (most of COCO val2017 at 640).
     val_transforms = Compose([
-        CenterCrop(size=input_size),
-        # LetterboxResize(target_size=input_size),
+        LetterboxResize(target_size=input_size),
         Normalize()
     ])
+
+    val_ann_file: Path | None = None
 
     if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
@@ -171,11 +182,13 @@ def train(
         train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=train_transforms, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset   = COCODetectionDataset(_val_images,   _val_ann,   transforms=val_transforms,   input_size=input_size)
 
+        val_ann_file = _val_ann
+
         if num_classes == 0:
             num_classes = len(train_dataset.cat_id_to_label)
 
     # Wire Mixup now that we have a dataset (placed just before Normalize)
-    train_transforms.transforms.insert(-1, Mixup(train_dataset, p=0.5))
+    train_transforms.transforms.insert(-1, Mixup(train_dataset, prob=0.5))
 
     # Resolve class names from dataset (used for annotation in val image logging)
     class_names: list[str] | None = getattr(train_dataset, "class_names", None)
@@ -205,121 +218,82 @@ def train(
         yolo_model = torch.compile(yolo_model)
         console.print("[green]torch.compile enabled[/green]")
 
-    # DataLoaders --------------------------------------------------------
-    _persistent = workers > 0
-    train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=workers,
-        collate_fn=detection_collate_fn, pin_memory=True, drop_last=True,
-        persistent_workers=_persistent, prefetch_factor=2 if _persistent else None,
-    )
-    val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=workers,
-        collate_fn=detection_collate_fn, pin_memory=True,
-        persistent_workers=_persistent, prefetch_factor=2 if _persistent else None,
+    # Lightning ----------------------------------------------------------
+    warmup_steps = min(1000, max(1, len(train_dataset) // max(1, batch_size)) * 3)
+    lit_model = YoloNASLightningModule(
+        model=yolo_model,
+        num_classes=num_classes,
+        lr=lr,
+        warmup_steps=warmup_steps,
+        val_ann_file=val_ann_file,
+        input_size=input_size,
     )
 
-    # Callbacks ----------------------------------------------------------
-    callbacks = []
+    data_module = DetectionDataModule(
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        batch_size=batch_size,
+        num_workers=workers,
+    )
+
+    # Loggers ------------------------------------------------------------
+    loggers: list[Any] = []
     if wandb:
-        from modern_yolonas.training.callbacks import WandbCallback
-        callbacks.append(WandbCallback(project=wandb_project, name=wandb_name))
+        loggers.append(L.pytorch.loggers.WandbLogger(project=wandb_project, name=wandb_name, save_dir=output))
         console.print(f"[green]W&B logging enabled → project={wandb_project!r}[/green]")
     if tensorboard:
-        from modern_yolonas.training.callbacks import TensorBoardCallback
-        callbacks.append(TensorBoardCallback(log_dir=tensorboard_dir, experiment_name=tensorboard_name))
+        loggers.append(L.pytorch.loggers.TensorBoardLogger(tensorboard_dir, name=tensorboard_name))
         console.print(f"[green]TensorBoard logging enabled → {tensorboard_dir}/{tensorboard_name}[/green]")
+    if not loggers:
+        loggers.append(L.pytorch.loggers.CSVLogger(output))
+
+    # Callbacks ----------------------------------------------------------
+    # With COCO annotations validation reports mAP and never logs val/loss, so
+    # monitoring the wrong one makes Lightning raise at the first validation end.
+    monitor = "val/mAP" if val_ann_file else "val/loss"
+    callbacks: list[Any] = [
+        EMACallback(),
+        ModelCheckpoint(
+            dirpath=output,
+            save_last=True,
+            monitor=monitor,
+            mode="max" if val_ann_file else "min",
+            save_top_k=1,
+        ),
+    ]
     if early_stopping_patience > 0:
-        from modern_yolonas.training.callbacks import EarlyStoppingCallback
-        callbacks.append(EarlyStoppingCallback(patience=early_stopping_patience, min_delta=early_stopping_min_delta))
-        console.print(f"[green]Early stopping enabled → patience={early_stopping_patience}, min_delta={early_stopping_min_delta}[/green]")
-
-    trainer = Trainer(
-        model=yolo_model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        num_classes=num_classes,
-        epochs=epochs,
-        lr=lr,
-        output_dir=output,
-        device=device,
-        callbacks=callbacks,
-        class_names=class_names,
-        val_freq=val_freq,
-        gradient_accum=gradient_accum,
-        use_amp=amp,
-    )
-
-    if resume_path:
-        trainer.resume(resume_path)
+        callbacks.append(
+            EarlyStopping(
+                monitor="train/loss",
+                patience=early_stopping_patience,
+                min_delta=early_stopping_min_delta,
+                mode="min",
+            )
+        )
+        console.print(
+            f"[green]Early stopping enabled → patience={early_stopping_patience}, "
+            f"min_delta={early_stopping_min_delta}[/green]"
+        )
+    # Mosaic and Mixup hold a dataset reference, so the last epochs can train on
+    # unaugmented images — the super-gradients recipes do the same.
+    if close_mosaic_epochs > 0:
+        callbacks.append(CloseMosaicCallback(close_mosaic_epochs=close_mosaic_epochs))
 
     if num_gpus > 1:
-        import os
-        import torch.multiprocessing as mp
-
-        os.environ.setdefault("MASTER_ADDR", "localhost")
-        os.environ.setdefault("MASTER_PORT", "29500")
         console.print(f"[green]DDP training on {num_gpus} GPUs[/green]")
-        mp.spawn(
-            _ddp_worker,
-            args=(num_gpus, yolo_model, train_loader, val_loader, num_classes,
-                  epochs, lr, output, device, callbacks, class_names, val_freq,
-                  gradient_accum, amp, resume_path),
-            nprocs=num_gpus,
-            join=True,
-        )
-    else:
-        trainer.train()
 
-
-def _ddp_worker(
-    local_rank: int,
-    world_size: int,
-    model,
-    train_loader,
-    val_loader,
-    num_classes: int,
-    epochs: int,
-    lr: float,
-    output_dir: str,
-    device: str,
-    callbacks: list,
-    class_names,
-    val_freq: int,
-    gradient_accum: int,
-    use_amp: bool,
-    resume_path: str | None,
-):
-    """DDP worker spawned by ``torch.multiprocessing.spawn`` for multi-GPU training."""
-    import os
-    import torch.distributed as dist
-    from modern_yolonas.training.trainer import Trainer
-
-    os.environ["LOCAL_RANK"] = str(local_rank)
-    os.environ["RANK"]       = str(local_rank)
-    os.environ["WORLD_SIZE"] = str(world_size)
-
-    dist.init_process_group(backend="nccl", init_method="env://",
-                            world_size=world_size, rank=local_rank)
-
-    trainer = Trainer(
-        model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        num_classes=num_classes,
-        epochs=epochs,
-        lr=lr,
-        output_dir=output_dir,
-        device=f"cuda:{local_rank}",
+    trainer = L.Trainer(
+        max_epochs=epochs,
+        accelerator="gpu" if device.startswith("cuda") else device,
+        devices=num_gpus if device.startswith("cuda") else "auto",
+        strategy="ddp" if num_gpus > 1 else "auto",
+        precision="16-mixed" if amp else "32-true",
+        accumulate_grad_batches=gradient_accum,
+        gradient_clip_val=grad_clip or None,
+        check_val_every_n_epoch=val_freq,
         callbacks=callbacks,
-        class_names=class_names,
-        val_freq=val_freq,
-        gradient_accum=gradient_accum,
-        use_amp=use_amp,
-        local_rank=local_rank,
+        logger=loggers,
+        default_root_dir=output,
     )
-    if resume_path:
-        trainer.resume(resume_path)
-    trainer.train()
 
-    dist.destroy_process_group()
-
+    trainer.fit(lit_model, datamodule=data_module, ckpt_path=resume_path)

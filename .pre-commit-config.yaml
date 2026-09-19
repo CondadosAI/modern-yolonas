@@ -1,3 +1,7 @@
+# `pre-commit install` must wire the commit-msg stage too, or the commitizen
+# hook below is installed but never runs.
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -6,7 +10,9 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
-        args: ["--maxkb=1000"]
+        # 1 MB was below the annotated demo GIF in docs/assets. The guard is still
+        # here to stop a checkpoint or a dataset going in; those are megabytes bigger.
+        args: ["--maxkb=5000"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.0
@@ -14,3 +20,12 @@ repos:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
+
+  # Conventional Commits. This only checks the message; version bumps stay
+  # manual, because the changelog here is written prose rather than a
+  # generated list of subjects.
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.18.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]

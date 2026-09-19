@@ -2,10 +2,16 @@
 
 A clean, minimal Python reimplementation of [YOLO-NAS](https://github.com/Deci-AI/super-gradients) object detection. No factory patterns, no registries, no OmegaConf — just PyTorch.
 
+![YOLO-NAS-L detections on a street scene](assets/demo.jpg)
+
+<video src="assets/demo_video.mp4" autoplay loop muted playsinline width="100%">
+  Your browser does not support the video element.
+</video>
+
 ## Features
 
 - **Drop-in pretrained weights** — loads super-gradients COCO checkpoints directly
-- **Simple API** — `Detector("yolo_nas_s")` → call with an image → get `sv.Detections`
+- **Simple API** — `YoloNASDetector("yolo_nas_s")` → call with an image → get `sv.Detections`
 - **Ecosystem native** — results are [supervision](https://github.com/roboflow/supervision) `Detections`: slice to filter, and plug into its annotators, trackers and zones
 - **CLI** — `yolonas detect`, `yolonas train`, `yolonas export`, `yolonas eval`
 - **ONNX / OpenVINO export** — including Frigate-compatible graph surgery
@@ -22,9 +28,9 @@ pip install modern-yolonas
 
 ```python
 import cv2
-from modern_yolonas import Detector
+from modern_yolonas import YoloNASDetector
 
-det = Detector("yolo_nas_s", device="cuda")
+det = YoloNASDetector("yolo_nas_s")
 
 image = cv2.imread("image.jpg")
 detections = det(image)

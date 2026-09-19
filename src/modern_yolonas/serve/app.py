@@ -33,9 +33,9 @@ def create_app(
     @app.on_event("startup")
     async def _load_model():
         nonlocal detector
-        from modern_yolonas.inference.detect import Detector
+        from modern_yolonas.inference.detect import YoloNASDetector
 
-        detector = Detector(
+        detector = YoloNASDetector(
             model=model,
             device=device,
             conf_threshold=conf_threshold,

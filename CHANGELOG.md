@@ -12,6 +12,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-18
+
+### Changed — breaking
+- **License: MIT → Apache-2.0.** The source is Apache-2.0 from this branch on; `v0.4.0`
+  and everything before it shipped under MIT. The pretrained COCO weights are unaffected
+  either way — they come from Deci and carry their own non-commercial terms, which
+  `weights.py` prints at download time.
+- Training runs on [PyTorch Lightning](https://lightning.ai/). The hand-written `Trainer`,
+  `ModelEMA` and the manual callback system (`CSVLoggerCallback`, `EarlyStoppingCallback`,
+  `RichProgressCallback`, `TensorBoardCallback`, `WandbCallback`) are gone; Lightning's own
+  loggers and callbacks replace them. `yolonas train` keeps its full flag surface — `--amp`
+  now picks the precision, `--num-gpus` the device count and ddp strategy, `--val-freq` the
+  validation interval.
+- `Mixup(dataset, p=...)` is now `Mixup(dataset, prob=...)`, matching `Mosaic`.
+
+### Added
+- **`YoloNASDetector`, the new name for `Detector`.** `Detector` said nothing about which
+  library it came from, and the name was about to become a problem: the planned
+  segmentation, pose and feature-extraction entry points need task siblings, and `YoloNAS*`
+  has to stay free for the `nn.Module` classes those tasks will bring (`YoloNASPose` and
+  friends, matching super-gradients). So the ergonomic layer carries a role suffix —
+  `YoloNASDetector` today, `YoloNASSegmenter` and `YoloNASPoseEstimator` later — and the
+  module layer keeps the bare architecture names.
+- Demo media in `docs/assets/`: an annotated street-scene still (CC0) and a 3-second
+  annotated clip of the Shibuya crossing. The clip's source is CC BY-SA 4.0, so those two
+  media files are CC BY-SA 4.0 rather than Apache-2.0; `docs/assets/README.md` records the
+  provenance and the scope of that obligation. The source code is unaffected.
+- Conventional Commits are now enforced, and drive the release bump. A `commitizen`
+  `commit-msg` hook checks the message as you write it, `pr-title.yml` checks the pull
+  request title (which is what a squash merge actually records), and release-drafter reads
+  the bump from that title. Previously the bump came from `major`/`minor`/`patch` labels
+  that no rule ever applied, so every release drafted as a patch — including `v0.4.0`,
+  which was a `feat!`. Labels are now descriptive only, except as a manual override on the
+  release pull request.
+- Quantization: `yolonas quantize` (post-training) and `yolonas qat`
+  (quantization-aware training), built on `torch.ao.quantization` FX graph mode.
+- `yolonas benchmark-dataset coco` and `yolonas benchmark-dataset rf100vl` — train and
+  report mAP. Distinct from `yolonas benchmark`, which measures inference latency.
+- `--close-mosaic-epochs`: train the final N epochs without Mosaic/Mixup, as the
+  super-gradients recipes do.
+- `Detector.annotate(..., show_fps=True)` and `Detector.last_inference_ms` for an inference
+  speed overlay; `detect_video_to_file(show_fps=True)` burns it into the output.
+- Dataset-aware augmentation: `Mosaic`, `Mixup` with inner transforms, `VerticalFlip`,
+  `RandomCrop`, `RandomChannelShuffle`, and a recipe-driven `build_transforms`.
+- `data/dataset_config.py` reads YOLO/Roboflow `data.yaml`; `data/fiftyone.py` and
+  `data/download.py` fetch COCO and RF100-VL.
+- Tutorial notebooks for ONNX export/inference, quantization (PTQ and QAT), FiftyOne and
+  Roboflow workflows.
+
+### Changed
+- `extract_model_state_dict` moved to `weights.py` and is what every consumer now uses, so
+  inference, evaluation and export all read Lightning `.ckpt` files as well as the legacy
+  trainer's format and plain state-dicts.
+- Gradient clipping is on by default at norm 10 (`--grad-clip`), which the training review
+  calls the usual cause of a from-scratch run that NaNs in its first epoch.
+- Accuracy is now measured rather than quoted. The README table carries this project's own
+  COCO val2017 numbers — 47.3 / 51.3 / 52.0 AP for S / M / L — alongside parameters, FLOPs
+  and latency, all regenerable with `uv run examples/model_table.py`.
+- Example scripts are invoked as `uv run <script>`; the previous `python examples/...`
+  only worked with a virtualenv already activated.
+- CI runs on `dev` as well as `main`, and `main` accepts pull requests only from `dev`.
+
+### Deprecated
+- `Detector`, in favour of `YoloNASDetector`. Nothing breaks yet: the old spelling still
+  resolves from `modern_yolonas`, `modern_yolonas.inference` and
+  `modern_yolonas.inference.detect`, raising `DeprecationWarning` on access. It is removed
+  in 0.7.0, which is where the actual break lands.
+
+### Fixed
+- **Mosaic emitted every box at half size.** Cropping the 2s×2s canvas to s×s renormalises
+  coordinates by 2; the centres were scaled and the widths and heights were not. With
+  mosaic at probability 1.0 in the COCO recipe, every training sample taught the model to
+  predict boxes half as large as the objects. Boxes are now clipped to the crop window as
+  well, rather than only filtered by centre.
+- **Validation overwrote BatchNorm running statistics.** The validation step flipped the
+  model to `train()` to get the raw predictions the loss needs; `torch.no_grad` stops
+  gradients but not buffer updates, so validation-set statistics were written into the
+  checkpoint. `NDFLHeads.return_raw_outputs` returns them without touching any module's
+  training flag.
+- **`COCOEvaluator` was missing**, so every path that computes mAP — validation with
+  annotations, `yolonas eval`, both dataset benchmarks — raised `ImportError` on its lazy
+  import.
+- **Predictions were never mapped out of letterboxed space** before being compared with
+  ground truth in original image pixels, which put every mAP this project could produce
+  near zero. Measured on a fixed checkpoint: 0.008 → 0.588.
+- `yolonas train` letterboxes for validation instead of centre-cropping. A centre crop
+  deletes objects at the edges and raises outright on any image smaller than the input
+  size, which is most of COCO val2017 at 640.
+- The checkpoint callback monitors `val/mAP` when annotations are present; it previously
+  hardcoded `val/loss`, which is not logged in that case, so `--format coco` died at the
+  first validation.
+
 ## [0.4.0] - 2026-09-18
 
 ### Changed — breaking

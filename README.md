@@ -1,15 +1,107 @@
-# modern-yolonas
+<h1 align="center">modern-yolonas</h1>
 
-[![PyPI](https://img.shields.io/pypi/v/modern-yolonas)](https://pypi.org/project/modern-yolonas/)
-[![Tests](https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml/badge.svg)](https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/pypi/pyversions/modern-yolonas)](https://pypi.org/project/modern-yolonas/)
-[![License](https://img.shields.io/pypi/l/modern-yolonas)](https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE)
+<h3 align="center">A clean, minimal reimplementation of YOLO-NAS — no factories, no registries, no OmegaConf. Just PyTorch.</h3>
 
-A clean, minimal Python reimplementation of [YOLO-NAS](https://github.com/Deci-AI/super-gradients) object detection. No factory patterns, no registries, no OmegaConf — just PyTorch.
+<p align="center">
+  <a href="https://pypi.org/project/modern-yolonas/"><img src="https://img.shields.io/pypi/v/modern-yolonas" alt="PyPI"></a>
+  <a href="https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml"><img src="https://github.com/CondadosAI/modern-yolonas/actions/workflows/ci.yml/badge.svg" alt="Tests"></a>
+  <a href="https://condadosai.github.io/modern-yolonas/"><img src="https://img.shields.io/badge/docs-mkdocs--material-blue.svg" alt="Documentation"></a>
+  <a href="https://pypi.org/project/modern-yolonas/"><img src="https://img.shields.io/pypi/pyversions/modern-yolonas" alt="Python"></a>
+  <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/modern-yolonas" alt="License"></a>
+  <a href="https://huggingface.co/spaces/CondadosAI/modern-yolonas-demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20demo-Hugging%20Face-yellow" alt="Hugging Face Space"></a>
+</p>
 
-Results come back as [`supervision`](https://github.com/roboflow/supervision) `Detections`, so every annotator, tracker, zone and metric in that ecosystem works on them out of the box.
+<p align="center">
+  <a href="https://github.com/Gabriellgpc">Luis Condados</a>&nbsp;&nbsp;
+  <a href="https://github.com/alancneves">Alan Neves</a>
+</p>
 
-## Install
+<p align="center">
+  <img src="https://raw.githubusercontent.com/CondadosAI/modern-yolonas/main/docs/assets/demo.jpg" alt="YOLO-NAS-L detections on a street scene" width="100%">
+</p>
+
+<p align="center">
+  <sub>YOLO-NAS-L, confidence 0.40. Source photo by
+  <a href="https://commons.wikimedia.org/wiki/User:Wilfredor">Wilfredor</a>, <a href="https://creativecommons.org/publicdomain/zero/1.0/">CC0</a>.</sub>
+</p>
+
+<p align="center">
+  <a href="https://huggingface.co/spaces/CondadosAI/modern-yolonas-demo"><b>Live demo</b></a> &nbsp;·&nbsp;
+  <a href="https://condadosai.github.io/modern-yolonas/"><b>Documentation</b></a> &nbsp;·&nbsp;
+  <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/CHANGELOG.md">Changelog</a> &nbsp;·&nbsp;
+  <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CONTRIBUTING.md">Contributing</a> &nbsp;·&nbsp;
+  <a href="https://github.com/CondadosAI/modern-yolonas/issues">Issues</a>
+</p>
+
+---
+
+**modern-yolonas** is YOLO-NAS object detection rewritten so you can read the whole thing:
+a model variant is a function, a config is a dataclass, and there is no layer of indirection
+that exists only to be configurable. `state_dict` keys match
+[super-gradients](https://github.com/Deci-AI/super-gradients) exactly, so the original
+pretrained COCO checkpoints load with `strict=True`.
+
+Detections come back as [`supervision`](https://github.com/roboflow/supervision) `Detections`,
+so every annotator, tracker, zone and metric in that ecosystem works on them out of the box.
+Training runs on Lightning, and the model exports to ONNX and OpenVINO — including a
+self-contained graph for [Frigate](https://frigate.video/).
+
+---
+
+## 🚀 Updates
+
+- **[2026-09-18]** `v0.5.0` — training moved to [PyTorch Lightning](https://lightning.ai/);
+  quantization (`yolonas quantize` for PTQ, `yolonas qat` for QAT) on `torch.ao.quantization`
+  FX graph mode; accuracy is now measured by this project rather than quoted; two mAP bugs and
+  a mosaic bug fixed; license changed from MIT to **Apache-2.0** for the source.
+- **[2026-09-18]** `v0.4.0` — `YoloNASDetector` returns `supervision.Detections`, so results slice and
+  plug into the supervision ecosystem directly.
+- **[2026-02-05]** `v0.1` — initial release: S/M/L architectures, pretrained weight loading,
+  training, COCO evaluation, and ONNX export.
+
+---
+
+## 🏆 Model Zoo
+
+Box AP on COCO val2017, all 5000 images, at 640×640. There is nothing to download by hand —
+`yolo_nas_s(pretrained=True)` and `YoloNASDetector("yolo_nas_s")` fetch and cache Deci's COCO
+checkpoints on first use (they carry Deci's own non-commercial terms — see **License** below).
+
+| Model | Params | GFLOPs | Latency (ms) | AP | AP<sub>50</sub> | AP<sub>75</sub> | AP<sub>S</sub> | AP<sub>M</sub> | AP<sub>L</sub> |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **YOLO-NAS-S** | 19.05M | 33.9 | 8.22 | 47.3 | 64.4 | 51.8 | 28.5 | 52.9 | 63.6 |
+| **YOLO-NAS-M** | 51.18M | 94.2 | 14.08 | 51.3 | 68.3 | 56.0 | 33.6 | 57.0 | 68.1 |
+| **YOLO-NAS-L** | 66.98M | 129.0 | 17.89 | 52.0 | 69.1 | 56.9 | 34.5 | 57.4 | 68.5 |
+
+Every column is measured here, not quoted — regenerate the whole table with
+`uv run examples/model_table.py --coco <coco-root> --half`.
+
+<details>
+<summary><b>How these numbers were measured, and what they do and do not mean</b></summary>
+
+<br>
+
+**Latency** is PyTorch FP16 on an RTX 3060 Laptop, batch 1, model forward only (no
+preprocessing, no NMS), median of 30 runs. TensorRT on the same GPU is roughly an order of
+magnitude faster. Leaderboards that publish T4 TensorRT latency are not measuring the same
+thing, so those columns should not be read side by side.
+
+**Accuracy** is measured with NMS at IoU 0.70, which a sweep found to be the optimum.
+`postprocess` still defaults to 0.65 for interactive use, where fewer overlapping boxes
+matters more than a tenth of AP.
+
+**The weights are Deci's pretrained COCO checkpoints**, so this measures the architecture as
+reimplemented here, not weights trained by this project. Deci publishes 47.5 / 51.5 / 52.2,
+so roughly 0.2 is unaccounted for — the [model table](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/model_table.md) lists
+the protocol differences that were tested and ruled out, and does not guess at the rest.
+Numeric agreement with super-gradients is verified far more tightly:
+[class scores are bit-identical](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/parity.md).
+
+</details>
+
+---
+
+## 📦 Installation
 
 ```bash
 uv add modern-yolonas
@@ -17,15 +109,22 @@ uv add modern-yolonas
 pip install modern-yolonas
 ```
 
-## Quick Start
+Optional extras: `[onnx]`, `[openvino]`, `[fiftyone]`, `[benchmark]`, `[serve]`, `[demo]`, `[tensorboard]`, `[wandb]`.
+
+---
+
+## ⚡ Quick Start
+
+`YoloNASDetector` picks CUDA when it is available and falls back to CPU, so the examples below run
+anywhere. Pass `device="cuda"`, `"cpu"` or a `torch.device` to choose explicitly.
 
 ### Detect objects in an image
 
 ```python
 import cv2
-from modern_yolonas import Detector
+from modern_yolonas import YoloNASDetector
 
-det = Detector("yolo_nas_s", device="cuda")
+det = YoloNASDetector("yolo_nas_s")
 
 image = cv2.imread("image.jpg")
 detections = det(image)  # an sv.Detections
@@ -60,10 +159,21 @@ frame = heatmap_annotator.annotate(frame, detections)
 
 ### Detect objects in a video
 
-```python
-from modern_yolonas import Detector
+<p align="center">
+  <img src="https://raw.githubusercontent.com/CondadosAI/modern-yolonas/main/docs/assets/demo_video.gif" alt="YOLO-NAS-L detections on the Shibuya crossing" width="100%">
+</p>
 
-det = Detector("yolo_nas_s", device="cuda")
+<p align="center">
+  <sub>YOLO-NAS-L at confidence 0.25, ~70 detections per frame. Clip by
+  <a href="https://commons.wikimedia.org/wiki/User:Basile_Morin">Basile Morin</a>,
+  <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a> — so this
+  clip, unlike the rest of the repository, is CC BY-SA rather than Apache-2.0.</sub>
+</p>
+
+```python
+from modern_yolonas import YoloNASDetector
+
+det = YoloNASDetector("yolo_nas_s")
 
 # Option 1: Write annotated video directly
 stats = det.detect_video_to_file("input.mp4", "output.mp4")
@@ -80,9 +190,9 @@ for frame_idx, frame, detections in det.detect_video("input.mp4"):
 
 ```python
 import cv2
-from modern_yolonas import Detector
+from modern_yolonas import YoloNASDetector
 
-det = Detector("yolo_nas_s", device="cuda")
+det = YoloNASDetector("yolo_nas_s")
 
 for frame_idx, frame, detections in det.detect_video(source=0):  # 0 = default camera
     cv2.imshow("YOLO-NAS", det.annotate(frame, detections))
@@ -104,7 +214,11 @@ pred_bboxes, pred_scores = model(x)
 # pred_scores: [1, 8400, 80] — class probabilities
 ```
 
-## CLI
+---
+
+## 🖥️ CLI
+
+Full reference: [CLI docs](https://condadosai.github.io/modern-yolonas/cli/).
 
 ```bash
 # Detect in images
@@ -130,12 +244,13 @@ yolonas export --model yolo_nas_s --format onnx --target frigate
 yolonas export --model yolo_nas_s --format openvino --target frigate --input-size 320
 ```
 
-### Frigate Integration
+<details>
+<summary><b>Frigate integration</b></summary>
+
+<br>
 
 The `--target frigate` export produces a self-contained model that accepts raw `uint8` BGR
 input and outputs a flat `[D, 7]` tensor with `[batch, x1, y1, x2, y2, confidence, class_id]`.
-
-Example Frigate configuration:
 
 ```yaml
 detectors:
@@ -152,7 +267,26 @@ model:
   path: /config/model_frigate.xml
 ```
 
-## Examples
+</details>
+
+---
+
+## 📚 Tutorials
+
+Step-by-step notebooks in [`tutorials/`](https://github.com/CondadosAI/modern-yolonas/tree/main/tutorials/):
+
+| Topic | Notebook | Description |
+|---|---|---|
+| **Roboflow** | [`roboflow/01_explore_dataset.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/roboflow/01_explore_dataset.ipynb) | Download from Roboflow + explore |
+| | [`roboflow/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/roboflow/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| **FiftyOne** | [`fiftyone/01_explore_dataset.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/01_explore_dataset.ipynb) | Load from FiftyOne Zoo + explore |
+| | [`fiftyone/02_finetune.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/fiftyone/02_finetune.ipynb) | Fine-tune + evaluate + visualize |
+| **Export** | [`export_onnx.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/export_onnx.ipynb) | ONNX export from any checkpoint |
+| **Quantization** | [`quantization_ptq.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_ptq.ipynb) | Post-Training Quantization |
+| | [`quantization_qat.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/quantization_qat.ipynb) | Quantization-Aware Training |
+| **Inference** | [`inference_onnx.ipynb`](https://github.com/CondadosAI/modern-yolonas/blob/main/tutorials/inference_onnx.ipynb) | ONNX Runtime inference |
+
+### Examples
 
 Start with the notebook — install, detect, visualize, and inspect the raw model output in
 one pass:
@@ -169,25 +303,78 @@ Or the standalone scripts in [`examples/`](https://github.com/CondadosAI/modern-
 - [`detect_video.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_video.py) — run detection on a video file
 - [`detect_webcam.py`](https://github.com/CondadosAI/modern-yolonas/blob/main/examples/detect_webcam.py) — live webcam detection
 
-## Variants
+---
 
-| Model | Params | Input | mAP (COCO val) |
-|---|---|---|---|
-| YOLO-NAS S | 19.05M | 640 | 47.5 |
-| YOLO-NAS M | 51.18M | 640 | 51.5 |
-| YOLO-NAS L | 66.98M | 640 | 52.2 |
-
-Parameter counts are measured with `sum(p.numel() for p in model.parameters())`. The mAP
-column is Deci's published figure, which this project has not independently re-measured.
-
-## Development
+## 🛠️ Development
 
 ```bash
 uv sync --dev
+uv run pre-commit install
+
 uv run pytest tests/ -v
-uv run ruff check src/
+uv run ruff check src/ tests/
 ```
 
-## License
+Contributions are welcome. Please read [CONTRIBUTING.md](https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CONTRIBUTING.md) — it lists
+the API design principles a change is reviewed against — and the
+[Code of Conduct](https://github.com/CondadosAI/modern-yolonas/blob/main/.github/CODE_OF_CONDUCT.md).
 
-MIT
+---
+
+## 📄 License
+
+Apache-2.0 — **applies to the source code only**. See [LICENSE](https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE).
+
+**Pretrained weights notice:** the pretrained COCO weights downloaded by this library (via
+`pretrained=True`) are provided by Deci AI and are subject to
+[Deci's YOLO-NAS license](https://github.com/Deci-AI/super-gradients/blob/master/LICENSE.YOLONAS.md),
+which restricts commercial use and redistribution. The Apache-2.0 license of this repository
+does **not** cover them. If you train your own weights from scratch, those are entirely yours.
+
+---
+
+## 🙏 Acknowledgments
+
+This project is a clean-room reimplementation of the YOLO-NAS architecture originally
+developed by [Deci AI](https://deci.ai/) and published in their
+[super-gradients](https://github.com/Deci-AI/super-gradients) library (Apache-2.0). The model
+architecture, module structure and `state_dict` key naming were derived from the
+super-gradients source to enable pretrained weight compatibility.
+
+It also builds directly on [supervision](https://github.com/roboflow/supervision),
+[PyTorch Lightning](https://lightning.ai/) and [OpenVINO](https://github.com/openvinotoolkit/openvino).
+
+Thanks to everyone who has [contributed](https://github.com/CondadosAI/modern-yolonas/graphs/contributors)
+— in particular [Alan Neves](https://github.com/alancneves), whose work on augmentations,
+metrics, gradient accumulation, the ONNX export path and super-gradients parity shaped much
+of the training stack.
+
+---
+
+## ⭐ Star History
+
+<p align="center">
+  <a href="https://star-history.com/#CondadosAI/modern-yolonas&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=CondadosAI/modern-yolonas&type=Date&theme=dark">
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=CondadosAI/modern-yolonas&type=Date">
+      <img src="https://api.star-history.com/svg?repos=CondadosAI/modern-yolonas&type=Date" alt="Star history chart for CondadosAI/modern-yolonas" width="70%">
+    </picture>
+  </a>
+</p>
+
+---
+
+## 📖 Citation
+
+If you use modern-yolonas in your research or project, please cite it:
+
+```bibtex
+@software{condados2026modernyolonas,
+  author       = {Condados, Luis and Neves, Alan},
+  title        = {modern-yolonas: A Clean Reimplementation of YOLO-NAS},
+  year         = {2026},
+  url          = {https://github.com/CondadosAI/modern-yolonas},
+  license      = {Apache-2.0}
+}
+```

@@ -69,6 +69,44 @@ class TestVersionAndHelp:
         assert "--data" in out
         assert "--split" in out
 
+    def test_quantize_help(self):
+        result = runner.invoke(app, ["quantize", "--help"])
+        assert result.exit_code == 0
+        out = _plain(result.output)
+        assert "--data" in out
+        assert "--backend" in out
+        assert "--num-batches" in out
+
+    def test_qat_help(self):
+        result = runner.invoke(app, ["qat", "--help"])
+        assert result.exit_code == 0
+        out = _plain(result.output)
+        assert "--data" in out
+        assert "--backend" in out
+        assert "--epochs" in out
+
+    def test_benchmark_dataset_lists_subcommands(self):
+        result = runner.invoke(app, ["benchmark-dataset", "--help"])
+        assert result.exit_code == 0
+        out = _plain(result.output)
+        assert "coco" in out
+        assert "rf100vl" in out
+
+    @pytest.mark.parametrize("subcommand", ["coco", "rf100vl"])
+    def test_benchmark_dataset_subcommand_help(self, subcommand):
+        result = runner.invoke(app, ["benchmark-dataset", subcommand, "--help"])
+        assert result.exit_code == 0
+        out = _plain(result.output)
+        assert "--download" in out
+        assert "--logger" in out
+
+    def test_benchmark_is_still_the_latency_one(self):
+        # `benchmark` shipped in 0.4.0 measuring latency; the accuracy benchmarks
+        # live under `benchmark-dataset` rather than taking its name.
+        result = runner.invoke(app, ["benchmark", "--help"])
+        assert result.exit_code == 0
+        assert "latency" in _plain(result.output).lower()
+
 
 class TestDetectValidation:
     def test_invalid_source_type(self):
@@ -97,7 +135,7 @@ class TestDetectIntegration:
 
             out_dir = Path(tmpdir) / "output"
 
-            with patch("modern_yolonas.inference.detect.Detector") as mock_cls:
+            with patch("modern_yolonas.inference.detect.YoloNASDetector") as mock_cls:
                 # Mock detector to avoid weight download
                 mock_det = mock_cls.return_value
                 mock_det.return_value = sv.Detections.empty()
@@ -123,7 +161,7 @@ class TestDetectIntegration:
 
             out_dir = Path(tmpdir) / "output"
 
-            with patch("modern_yolonas.inference.detect.Detector") as mock_cls:
+            with patch("modern_yolonas.inference.detect.YoloNASDetector") as mock_cls:
                 mock_det = mock_cls.return_value
                 mock_det.return_value = sv.Detections.empty()
                 mock_det.annotate.side_effect = lambda image, detections: image

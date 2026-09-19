@@ -8,6 +8,8 @@ project growing its own versions of them.
 
 from __future__ import annotations
 
+import time
+
 from pathlib import Path
 from typing import Generator
 
@@ -23,12 +25,12 @@ from modern_yolonas.validation import validate_confidence, validate_device, vali
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
 
 
-class Detector:
+class YoloNASDetector:
     """High-level detector: load model → preprocess → forward → postprocess.
 
     Usage::
 
-        det = Detector("yolo_nas_s", device="cuda")
+        det = YoloNASDetector("yolo_nas_s", device="cuda")
 
         # Single image
         image = cv2.imread("image.jpg")
@@ -40,7 +42,7 @@ class Detector:
         confident = detections[detections.confidence > 0.5]
 
         # From a custom checkpoint trained with --num-classes 3
-        det = Detector("yolo_nas_s", weights="runs/train/best.pt", num_classes=3,
+        det = YoloNASDetector("yolo_nas_s", weights="runs/train/best.pt", num_classes=3,
                        class_names=["cat", "dog", "bird"])
 
         # Video (yields per-frame results)
@@ -96,22 +98,21 @@ class Detector:
         else:
             self.class_names = COCO_NAMES if num_classes == len(COCO_NAMES) else None
 
+        # Wall-clock of the last single-image detect call, for the FPS overlay and
+        # for callers that want to report throughput without timing it themselves.
+        self.last_inference_ms: float | None = None
+
         self._box_annotator = sv.BoxAnnotator()
         self._label_annotator = sv.LabelAnnotator()
 
         if weights is not None:
-            # Load a custom checkpoint saved by Trainer._save_checkpoint.
             # Build the architecture for the requested num_classes (no pretrained
-            # weights), then overwrite with the checkpoint's model_state_dict.
+            # weights), then overwrite it with whatever the checkpoint holds —
+            # Lightning .ckpt, a legacy trainer dict, or a plain state_dict.
+            from modern_yolonas.weights import extract_model_state_dict
+
             self.model = builders[model](pretrained=False, num_classes=num_classes).to(self.device)
-            ckpt = torch.load(weights, map_location=self.device, weights_only=True)
-            state_dict = ckpt.get("ema", {}).get("ema") or ckpt.get("model_state_dict")
-            if state_dict is None:
-                raise KeyError(
-                    f"Checkpoint {weights!r} does not contain 'model_state_dict' or 'ema'. "
-                    "Make sure it was saved by the Trainer."
-                )
-            self.model.load_state_dict(state_dict)
+            self.model.load_state_dict(extract_model_state_dict(weights, map_location=str(self.device)))
         else:
             self.model = builders[model](pretrained=pretrained, num_classes=num_classes).to(self.device)
 
@@ -137,14 +138,29 @@ class Detector:
             )
         return detections
 
-    def annotate(self, image: np.ndarray, detections: sv.Detections) -> np.ndarray:
+    def annotate(self, image: np.ndarray, detections: sv.Detections, show_fps: bool = False) -> np.ndarray:
         """Draw boxes and labels on a copy of ``image``.
 
         A convenience wrapper over ``sv.BoxAnnotator`` and ``sv.LabelAnnotator``. Build
         your own annotators when you want different styling.
+
+        Args:
+            image: BGR frame to draw on.
+            detections: What to draw.
+            show_fps: Overlay the last call's inference time and the frame rate it
+                implies. Reads `last_inference_ms`, so it reflects the most recent
+                detect call, not the frame passed here — they are the same frame in a
+                normal capture loop.
         """
         annotated = self._box_annotator.annotate(image.copy(), detections)
-        return self._label_annotator.annotate(annotated, detections)
+        annotated = self._label_annotator.annotate(annotated, detections)
+        if show_fps and self.last_inference_ms is not None:
+            import cv2
+
+            fps = 1000.0 / self.last_inference_ms if self.last_inference_ms > 0 else 0.0
+            text = f"{self.last_inference_ms:.1f}ms ({fps:.1f} FPS)"
+            cv2.putText(annotated, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        return annotated
 
     @torch.no_grad()
     def __call__(
@@ -169,6 +185,8 @@ class Detector:
         else:
             image = source
 
+        t0 = time.perf_counter()
+
         tensor, scale, pad = preprocess(image, self.input_size)
         tensor = tensor.to(self.device)
         if self.precision == "fp16":
@@ -183,6 +201,8 @@ class Detector:
 
         boxes, scores, class_ids = results[0]
         boxes = rescale_boxes(boxes, scale, pad, image.shape[:2])
+
+        self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
 
         return self._to_detections(boxes, scores, class_ids)
 
@@ -290,6 +310,7 @@ class Detector:
         iou_threshold: float | None = None,
         codec: str = "mp4v",
         skip_frames: int = 0,
+        show_fps: bool = False,
     ) -> dict[str, int | float]:
         """Run detection on a video and write annotated output.
 
@@ -301,6 +322,7 @@ class Detector:
             codec: FourCC codec string.
             skip_frames: Process every N-th frame (0 = every frame).
                 Skipped frames are written without annotations.
+            show_fps: Burn the per-frame inference time and frame rate into the output.
 
         Returns:
             Dict with ``total_frames``, ``processed_frames``, ``total_detections``.
@@ -334,7 +356,7 @@ class Detector:
 
                 if should_process:
                     detections = self(frame, conf_threshold=conf_threshold, iou_threshold=iou_threshold)
-                    writer.write(self.annotate(frame, detections))
+                    writer.write(self.annotate(frame, detections, show_fps=show_fps))
                     processed += 1
                     total_detections += len(detections)
                 else:
@@ -351,3 +373,27 @@ class Detector:
             "total_detections": total_detections,
             "fps": fps,
         }
+
+
+def _warn_detector_alias(module_name: str) -> type[YoloNASDetector]:
+    """Back the deprecated `Detector` spelling, kept through one minor release.
+
+    Renamed in 0.5.0 so the ergonomic classes can grow task siblings
+    (`YoloNASSegmenter`, `YoloNASPoseEstimator`) without `YoloNAS*` colliding
+    with the `nn.Module` names those tasks will want.
+    """
+    import warnings
+
+    warnings.warn(
+        f"{module_name}.Detector is deprecated and will be removed in 0.7.0; "
+        "use YoloNASDetector instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return YoloNASDetector
+
+
+def __getattr__(name: str) -> type[YoloNASDetector]:
+    if name == "Detector":
+        return _warn_detector_alias(__name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -92,9 +92,85 @@ class TestPostprocess:
         boxes, scores, class_ids = results[0]
         assert len(boxes) == 0
 
+    def test_multi_label_keeps_every_class_over_threshold(self):
+        # An anchor scoring high on two classes yields two detections in
+        # multi-label mode, where single-label mode would keep only the best.
+        pred_bboxes = torch.tensor([[[10, 10, 100, 100]]], dtype=torch.float32)
+        pred_scores = torch.zeros(1, 1, 80)
+        pred_scores[0, 0, 0] = 0.9
+        pred_scores[0, 0, 7] = 0.8
+
+        multi = postprocess(pred_bboxes, pred_scores, conf_threshold=0.5, iou_threshold=0.99, multi_label=True)
+        single = postprocess(pred_bboxes, pred_scores, conf_threshold=0.5, iou_threshold=0.99, multi_label=False)
+
+        assert set(multi[0][2].tolist()) == {0, 7}
+        assert single[0][2].tolist() == [0]
+
+    def test_multi_label_empty_after_filter(self):
+        pred_bboxes = torch.randn(1, 10, 4)
+        pred_scores = torch.full((1, 10, 80), 0.01)
+        boxes, scores, class_ids = postprocess(
+            pred_bboxes, pred_scores, conf_threshold=0.5, multi_label=True
+        )[0]
+        assert len(boxes) == 0
+        assert class_ids.dtype == torch.long
+
+    def test_top_k_caps_candidates_before_nms(self):
+        # 2000 non-overlapping boxes, all above threshold: the 1024-candidate cap
+        # has to kick in before NMS, or NMS runs on the full set.
+        n = 2000
+        xs = torch.arange(n, dtype=torch.float32).unsqueeze(1) * 10
+        pred_bboxes = torch.cat([xs, xs, xs + 5, xs + 5], dim=1).unsqueeze(0)
+        pred_scores = torch.zeros(1, n, 80)
+        pred_scores[0, :, 0] = torch.linspace(0.51, 0.99, n)
+
+        boxes, scores, class_ids = postprocess(
+            pred_bboxes, pred_scores, conf_threshold=0.5, iou_threshold=0.5
+        )[0]
+        assert len(boxes) <= 1024
+
     def test_rescale_boxes(self):
         boxes = torch.tensor([[100, 100, 200, 200]], dtype=torch.float32)
         rescaled = rescale_boxes(boxes, scale=2.0, pad=(10, 20), orig_shape=(320, 320))
         # (100-10)/2=45, (100-20)/2=40, (200-10)/2=95, (200-20)/2=90
         assert rescaled[0, 0].item() == pytest.approx(45.0)
         assert rescaled[0, 1].item() == pytest.approx(40.0)
+
+
+class TestDetectorRenameAlias:
+    """`Detector` was renamed `YoloNASDetector` in 0.5.0; the old spelling still works.
+
+    The alias is a module-level ``__getattr__`` rather than a subclass, so it warns on
+    attribute access without putting an extra class in the MRO. It has to hold on every
+    path people actually import from, including the one the CLI tests patch.
+    """
+
+    MODULES = [
+        "modern_yolonas",
+        "modern_yolonas.inference",
+        "modern_yolonas.inference.detect",
+    ]
+
+    @pytest.mark.parametrize("module_name", MODULES)
+    def test_alias_is_the_renamed_class_and_warns(self, module_name):
+        import importlib
+
+        from modern_yolonas import YoloNASDetector
+
+        module = importlib.import_module(module_name)
+        with pytest.warns(DeprecationWarning, match="use YoloNASDetector instead"):
+            assert module.Detector is YoloNASDetector
+
+    @pytest.mark.parametrize("module_name", MODULES)
+    def test_unknown_attribute_still_raises(self, module_name):
+        import importlib
+
+        module = importlib.import_module(module_name)
+        with pytest.raises(AttributeError):
+            module.NoSuchThing
+
+    def test_new_name_does_not_warn(self, recwarn):
+        import importlib
+
+        importlib.reload(importlib.import_module("modern_yolonas")).YoloNASDetector
+        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]

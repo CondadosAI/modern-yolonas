@@ -1,14 +1,14 @@
 """Example: Run YOLO-NAS inference on a video file.
 
 Usage:
-    python examples/detect_video.py path/to/video.mp4
-    python examples/detect_video.py path/to/video.mp4 --output output.mp4 --model yolo_nas_l
+    uv run examples/detect_video.py path/to/video.mp4
+    uv run examples/detect_video.py path/to/video.mp4 --output output.mp4 --model yolo_nas_l
 """
 
 import argparse
 from pathlib import Path
 
-from modern_yolonas.inference.detect import Detector
+from modern_yolonas.inference.detect import YoloNASDetector
 
 
 def main():
@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--output", default=None, help="Output video path (default: <input>_detect.<ext>)")
     parser.add_argument("--skip-frames", type=int, default=0, help="Process every N-th frame (0 = all)")
     parser.add_argument("--codec", default="mp4v", help="Output video codec")
+    parser.add_argument("--debug", action="store_true", help="Show FPS and inference speed overlay")
     args = parser.parse_args()
 
     # Default output path
@@ -29,7 +30,7 @@ def main():
         args.output = str(src.parent / f"{src.stem}_detect{src.suffix}")
 
     # Create detector
-    det = Detector(args.model, device=args.device, conf_threshold=args.conf, iou_threshold=args.iou)
+    det = YoloNASDetector(args.model, device=args.device, conf_threshold=args.conf, iou_threshold=args.iou)
 
     # --- Option 1: Write annotated video directly ---
     print(f"Processing {args.video} ...")
@@ -38,6 +39,7 @@ def main():
         output=args.output,
         codec=args.codec,
         skip_frames=args.skip_frames,
+        show_fps=args.debug,
     )
     print(
         f"Done! {stats['total_frames']} frames, "

@@ -168,6 +168,12 @@ class NDFLHeads(nn.Module):
         self.reg_max = reg_max
         self.eval_size = eval_size
 
+        # When True, ``forward`` also returns the raw (undecoded) predictions in eval
+        # mode. Validation needs them to compute the loss *without* putting BatchNorm
+        # into training mode, which would update running statistics from the validation
+        # set. Tracing always ignores this and returns decoded outputs only.
+        self.return_raw_outputs = False
+
         proj = torch.linspace(0, self.reg_max, self.reg_max + 1).reshape(1, self.reg_max + 1, 1, 1)
         self.register_buffer("proj_conv", proj, persistent=False)
 
@@ -265,10 +271,11 @@ class NDFLHeads(nn.Module):
         pred_bboxes = _batch_distance2bbox(anchor_points_inference, reg_dist_reduced_list) * stride_tensor
         decoded_predictions = pred_bboxes, pred_scores
 
-        if torch.jit.is_tracing() or not self.training:
+        if torch.jit.is_tracing() or not (self.training or self.return_raw_outputs):
             return decoded_predictions
 
-        # Training: also return raw predictions for loss computation
+        # Training (or eval with ``return_raw_outputs``): also return raw predictions
+        # for loss computation.
         anchors, anchor_points, num_anchors_list, stride_tensor_raw = _generate_anchors_for_grid_cell(
             feats, self.fpn_strides, self.grid_cell_scale, self.grid_cell_offset
         )

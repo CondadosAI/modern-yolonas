@@ -2,10 +2,10 @@
 
 Usage:
     # pretrained COCO weights
-    python examples/export_onnx.py --model yolo_nas_s --output model.onnx
+    uv run examples/export_onnx.py --model yolo_nas_s --output model.onnx
 
     # custom-trained checkpoint
-    python examples/export_onnx.py --model yolo_nas_s --checkpoint runs/train/best.pt --num-classes 3 --output custom.onnx
+    uv run examples/export_onnx.py --model yolo_nas_s --checkpoint runs/train/best.pt --num-classes 3 --output custom.onnx
 """
 
 from __future__ import annotations

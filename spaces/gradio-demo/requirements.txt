@@ -1,0 +1,13 @@
+# CPU-only Space: the default PyPI torch wheel bundles ~2.5 GB of CUDA libraries
+# that this hardware cannot use and the image size will not fit. The +cpu wheels
+# come from PyTorch's own index.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.9.1+cpu
+torchvision==0.24.1+cpu
+
+# Pinned, not floating: this app uses the `Detector` spelling, which 0.5.0 renames
+# to `YoloNASDetector` (keeping `Detector` as a deprecated alias until 0.7.0).
+modern-yolonas==0.4.0
+
+# gradio itself is installed by the Space from `sdk_version` in README.md.

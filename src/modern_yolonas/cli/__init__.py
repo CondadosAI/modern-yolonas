@@ -4,10 +4,13 @@ from typing import Annotated
 import typer
 
 from modern_yolonas.cli.benchmark_cmd import benchmark
+from modern_yolonas.cli.dataset_benchmark_cmd import benchmark_dataset_app
 from modern_yolonas.cli.demo_cmd import demo
 from modern_yolonas.cli.detect_cmd import detect
 from modern_yolonas.cli.eval_cmd import eval_cmd
 from modern_yolonas.cli.export_cmd import export
+from modern_yolonas.cli.qat_cmd import qat
+from modern_yolonas.cli.quantize_cmd import quantize
 from modern_yolonas.cli.serve_cmd import serve
 from modern_yolonas.cli.train_cmd import train
 
@@ -19,6 +22,11 @@ app.command(name="eval")(eval_cmd)
 app.command()(serve)
 app.command()(benchmark)
 app.command()(demo)
+app.command()(quantize)
+app.command()(qat)
+# `benchmark` measures latency; this one trains and reports mAP, so it gets its own
+# name rather than becoming a subcommand of a released command.
+app.add_typer(benchmark_dataset_app, name="benchmark-dataset")
 
 
 def _version_callback(value: bool):

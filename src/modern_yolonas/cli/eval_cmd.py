@@ -44,10 +44,10 @@ def eval_cmd(
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
 
     if checkpoint:
+        from modern_yolonas.weights import extract_model_state_dict
+
         yolo_model = builders[model.value](pretrained=False)
-        ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        sd = ckpt.get("model_state_dict", ckpt)
-        yolo_model.load_state_dict(sd)
+        yolo_model.load_state_dict(extract_model_state_dict(checkpoint))
     else:
         yolo_model = builders[model.value](pretrained=True)
 
@@ -67,7 +67,7 @@ def eval_cmd(
         collate_fn=detection_collate_fn, pin_memory=True,
     )
 
-    evaluator = COCOEvaluator(ann_file)
+    evaluator = COCOEvaluator(ann_file, input_size=input_size)
 
     console.print(f"Evaluating {model.value} on {split} ({len(dataset)} images)...")
 
