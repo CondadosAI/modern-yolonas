@@ -9,7 +9,21 @@ happened, and what LEGACY_RECIPE now records.
 COCO_RECIPE = {
     "epochs": 100,
     "optimizer": "sgd",
-    "lr": 4e-4,
+    # Measured 2026-09-19, not inherited. This was 4e-4, an AdamW-scale value that
+    # survived the switch to SGD in a scaffolding commit and was never validated.
+    # Eight epochs on 5k images, batch 16, averaging train/loss over the final epoch:
+    #
+    #   4e-4   4.739 -> 4.109     5e-3   4.312 -> 3.314
+    #   2e-2   4.220 -> 3.100     5e-2   4.133 -> 2.999
+    #
+    # Monotonic, saturating between 2e-2 and 5e-2, which is the range published YOLO
+    # recipes use with SGD. 2e-2 sits mid-plateau rather than at the edge, where a
+    # 300-epoch run is likelier to destabilise.
+    #
+    # The probe measures convergence *speed* over 8 epochs, not final quality over
+    # 300. What it establishes firmly is that 4e-4 converges at half the rate of
+    # anything else -- enough to stop a week of GPU time going into it.
+    "lr": 2e-2,
     "weight_decay": 5e-4,
     "cosine_final_lr_ratio": 0.1,
     "warmup_epochs": 3,
