@@ -64,30 +64,46 @@ self-contained graph for [Frigate](https://frigate.video/).
 
 ## 🏆 Model Zoo
 
-Box AP on COCO val2017, all 5000 images, at 640×640. There is nothing to download by hand —
-`yolo_nas_s(pretrained=True)` and `YoloNASDetector("yolo_nas_s")` fetch and cache Deci's COCO
-checkpoints on first use (they carry Deci's own non-commercial terms — see **License** below).
+Box AP on COCO val2017, all 5000 images, and latency on the hardware named below. There is
+nothing to download by hand — `yolo_nas_s(pretrained=True)` and `YoloNASDetector("yolo_nas_s")`
+fetch and cache Deci's COCO checkpoints on first use (they carry Deci's own non-commercial
+terms — see **License** below). Pre-exported ONNX, OpenVINO IR and TensorRT engines are on
+[the Hub](https://huggingface.co/CondadosAI/modern-yolonas-export).
 
-| Model | Params | GFLOPs | Latency (ms) | AP | AP<sub>50</sub> | AP<sub>75</sub> | AP<sub>S</sub> | AP<sub>M</sub> | AP<sub>L</sub> |
-|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **YOLO-NAS-S** | 19.05M | 33.9 | 8.22 | 47.3 | 64.4 | 51.8 | 28.5 | 52.9 | 63.6 |
-| **YOLO-NAS-M** | 51.18M | 94.2 | 14.08 | 51.3 | 68.3 | 56.0 | 33.6 | 57.0 | 68.1 |
-| **YOLO-NAS-L** | 66.98M | 129.0 | 17.89 | 52.0 | 69.1 | 56.9 | 34.5 | 57.4 | 68.5 |
+| Model | Input | Params | GFLOPs | AP | AP<sub>50</sub> | dGPU<br><sub>TensorRT FP16</sub> | CPU<br><sub>OpenVINO INT8</sub> | iGPU<br><sub>OpenVINO INT8</sub> |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **YOLO-NAS-S** | 320 | 19.05M | 8.5 | 38.4 | 53.9 | 0.91 ms | 5.19 ms | 6.83 ms |
+| **YOLO-NAS-S** | 640 | 19.05M | 33.9 | 47.3 | 64.4 | 2.15 ms | 19.87 ms | 12.04 ms |
+| **YOLO-NAS-M** | 320 | 51.18M | 23.5 | 43.1 | 59.1 | 1.76 ms | 12.03 ms | 9.45 ms |
+| **YOLO-NAS-M** | 640 | 51.18M | 94.2 | 51.3 | 68.3 | 4.35 ms | 47.47 ms | 25.49 ms |
+| **YOLO-NAS-L** | 320 | 66.98M | 32.2 | 43.8 | 59.9 | 2.18 ms | 15.56 ms | 10.38 ms |
+| **YOLO-NAS-L** | 640 | 66.98M | 129.0 | 52.0 | 69.1 | 5.55 ms | 63.00 ms | 32.07 ms |
 
 Every column is measured here, not quoted — regenerate the whole table with
-`uv run examples/model_table.py --coco <coco-root> --half`.
+`uv run examples/model_table.py` and `uv run examples/render_model_table.py`. The full grid,
+across PyTorch / ONNX Runtime / OpenVINO / TensorRT and CPU / iGPU / dGPU, is in
+[the runtime matrix](https://github.com/CondadosAI/modern-yolonas/blob/main/docs/benchmarks/runtime_matrix.md).
 
 <details>
 <summary><b>How these numbers were measured, and what they do and do not mean</b></summary>
 
 <br>
 
-**Latency** is PyTorch FP16 on an RTX 3060 Laptop, batch 1, model forward only (no
-preprocessing, no NMS), median of 30 runs. TensorRT on the same GPU is roughly an order of
-magnitude faster. Leaderboards that publish T4 TensorRT latency are not measuring the same
-thing, so those columns should not be read side by side.
+**Latency** is model forward only — no preprocessing, no NMS — batch 1, median of 30 runs
+after 8 discarded, on an RTX 3060 Laptop / i7-12700H / Iris Xe, on mains power. The dGPU
+column is a TensorRT engine built natively on that card; an `--hardware-compatible` engine,
+which is the kind worth publishing, costs 17% at 320 and 9% at 640. Leaderboards that publish
+T4 TensorRT latency are not measuring the same thing, so those columns should not be read side
+by side.
 
-**Accuracy** is measured with NMS at IoU 0.70, which a sweep found to be the optimum.
+**320 costs about 9 AP**, consistently across all three variants (−8.9 / −8.2 / −8.2), for
+roughly a quarter of the FLOPs. Worth knowing before choosing it: these weights were trained
+at 640, so this measures the resolution drop and not a model designed for 320. It also rules
+out an obvious-looking trade — YOLO-NAS-L at 320 is faster than YOLO-NAS-S at 640 on a CPU
+(15.6 ms against 19.9) and **3.5 AP worse**, so the bigger model at lower resolution is not
+the free win the latency column alone suggests.
+
+**Accuracy** is measured in FP32 with NMS at IoU 0.70, which a sweep found to be the optimum.
 `postprocess` still defaults to 0.65 for interactive use, where fewer overlapping boxes
 matters more than a tenth of AP.
 

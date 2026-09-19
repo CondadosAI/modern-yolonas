@@ -153,8 +153,14 @@ idle card reports a clock it was not running at.
 | yolo_nas_l | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP16 | external | 320 | 101.48 | 9.9 |
 | yolo_nas_l | OpenVINO | NVIDIA GeForce RTX 3060 Laptop GPU (dGPU) | FP32 | external | 320 | 102.38 | 9.8 |
 | yolo_nas_l | PyTorch | CPU | FP32 | external | 320 | 107.92 | 9.3 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | external | 640 | 5.55 | 180.1 |
+| yolo_nas_l | TensorRT | dGPU native | FP16 | torch | 640 | 5.69 | 175.9 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | external | 640 | 6.08 | 164.5 |
+| yolo_nas_l | TensorRT | dGPU ampere_plus | FP16 | torch | 640 | 6.21 | 161.1 |
 | yolo_nas_l | PyTorch | dGPU | FP16 | external | 640 | 14.26 | 70.1 |
 | yolo_nas_l | PyTorch | dGPU | FP16 | torch | 640 | 14.56 | 68.7 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | external | 640 | 17.03 | 58.7 |
+| yolo_nas_l | TensorRT | dGPU native | FP32 | torch | 640 | 17.46 | 57.3 |
 | yolo_nas_l | PyTorch | dGPU | FP32 | external | 640 | 23.72 | 42.2 |
 | yolo_nas_l | PyTorch | dGPU | FP32 | torch | 640 | 24.56 | 40.7 |
 | yolo_nas_l | OpenVINO | Intel(R) Iris(R) Xe Graphics (iGPU) | INT8 | external | 640 | 32.07 | 31.2 |
