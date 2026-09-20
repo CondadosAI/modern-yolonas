@@ -227,8 +227,14 @@ class BackboneDistillModule(L.LightningModule):
         _, _, c4, _ = self.model.backbone(images)
         predicted = self.projection(c4)
 
-        loss = 1.0 - nn.functional.cosine_similarity(predicted, target, dim=1).mean()
+        similarity = nn.functional.cosine_similarity(predicted, target, dim=1).mean()
+        loss = 1.0 - similarity
+
         self.log(f"{stage}/loss", loss, prog_bar=True, sync_dist=True)
+        # The loss is 1 - cosine, which is the quantity to minimise but not the one
+        # to read. Alignment is what the stage is for, and a cosine of 0.81 says
+        # something a loss of 0.19 does not.
+        self.log(f"{stage}/cosine", similarity, prog_bar=True, sync_dist=True)
         return loss
 
     def training_step(self, batch, batch_idx) -> Tensor:

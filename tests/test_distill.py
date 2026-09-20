@@ -240,3 +240,39 @@ class TestUnevenShards:
         for index in (0, 5, 9, 12):
             _, features = dataset[index]
             assert features.min() == pytest.approx((index + 100) % 127)
+
+
+class TestWhatGetsLogged:
+    """A fourteen-hour run is only as useful as what it records."""
+
+    @staticmethod
+    def _module():
+        from modern_yolonas import yolo_nas_s
+
+        return BackboneDistillModule(
+            model=yolo_nas_s(pretrained=False, num_classes=80), teacher_dim=384
+        )
+
+    def test_both_loss_and_cosine_are_logged(self, monkeypatch):
+        """The loss is 1 - cosine: the quantity to minimise, not the one to read."""
+        module = self._module()
+        logged: dict[str, float] = {}
+        monkeypatch.setattr(module, "log", lambda name, value, **kw: logged.__setitem__(
+            name, float(value)
+        ))
+        images = torch.rand(1, 3, 128, 128)
+        with torch.no_grad():
+            _, _, c4, _ = module.model.backbone(images)
+            target = module.projection(c4)
+        module._step((images, target), "train")
+
+        assert set(logged) == {"train/loss", "train/cosine"}
+        assert logged["train/loss"] + logged["train/cosine"] == pytest.approx(1.0, abs=1e-5)
+
+    def test_the_validation_stage_gets_its_own_names(self, monkeypatch):
+        module = self._module()
+        logged: list[str] = []
+        monkeypatch.setattr(module, "log", lambda name, value, **kw: logged.append(name))
+        images = torch.rand(1, 3, 128, 128)
+        module._step((images, torch.randn(1, 384, 8, 8)), "val")
+        assert logged == ["val/loss", "val/cosine"]
