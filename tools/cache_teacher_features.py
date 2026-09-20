@@ -134,6 +134,11 @@ def main() -> None:
 
     index = {"teacher": repo, "size": args.size, "patch": 16, "grid": grid, "dim": dim,
              "shard_size": args.shard_size, "files": [], "shards": [],
+             # How many images each shard actually holds. A shard is flushed once
+             # the buffer *reaches* shard_size, and the buffer grows a batch at a
+             # time, so a shard overshoots to the next multiple of --batch. Readers
+             # must not assume shard_size; they must use these.
+             "shard_lengths": [],
              "has_flip": bool(args.with_flip)}
     started = time.perf_counter()
     shard_q: list[np.ndarray] = []
@@ -145,8 +150,11 @@ def main() -> None:
         if not shard_q:
             return
         name = f"shard_{shard_index:05d}"
-        np.save(args.out / f"{name}.npy", np.concatenate(shard_q))
+        merged = np.concatenate(shard_q)
+        index["shard_lengths"].append(int(merged.shape[0]))
+        np.save(args.out / f"{name}.npy", merged)
         np.save(args.out / f"{name}_norm.npy", np.concatenate(shard_n))
+        del merged
         if args.with_flip:
             np.save(args.out / f"{name}_flip.npy", np.concatenate(flip_q))
             np.save(args.out / f"{name}_flip_norm.npy", np.concatenate(flip_n))

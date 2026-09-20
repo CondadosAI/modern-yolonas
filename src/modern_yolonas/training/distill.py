@@ -74,9 +74,34 @@ class CachedFeatureDataset(Dataset):
         self.size = index["size"]
         self.grid = index["grid"]
         self.dim = index["dim"]
-        self.shard_size = index["shard_size"]
         self.names: list[str] = index["files"]
         self.shards: list[str] = index["shards"]
+        # Shards do not hold `shard_size` images each. The writer flushes once its
+        # buffer *reaches* that figure, and the buffer grows one batch at a time, so
+        # a shard overshoots to the next multiple of the batch size -- 2016 rather
+        # than 2000 for COCO at batch 48, with the last one short.
+        #
+        # Dividing the index by shard_size therefore lands in the wrong shard at the
+        # wrong offset, and returns another image's features. The error grows by the
+        # overshoot with every shard, and an IndexError only arrives at the very end
+        # -- so a cache whose image count divides evenly would never raise at all,
+        # and would train the whole run against mismatched targets.
+        #
+        # Lengths are read from the index when present, and otherwise from the
+        # shards themselves, so a cache written before this was recorded still works.
+        lengths = index.get("shard_lengths")
+        if not lengths:
+            lengths = [
+                int(np.load(self.cache / f"{name}.npy", mmap_mode="r").shape[0])
+                for name in self.shards
+            ]
+        self.shard_lengths = lengths
+        self._starts = np.cumsum([0, *lengths])
+        if self._starts[-1] != len(self.names):
+            raise ValueError(
+                f"cache index lists {len(self.names)} images but the shards hold "
+                f"{self._starts[-1]}"
+            )
 
         directories = [Path(images)] if isinstance(images, (str, Path)) else [Path(p) for p in images]
         lookup = {p.name: p for directory in directories for p in directory.iterdir()}
@@ -105,8 +130,13 @@ class CachedFeatureDataset(Dataset):
     def __len__(self) -> int:
         return len(self.paths)
 
+    def _locate(self, index: int) -> tuple[int, int]:
+        """Map a dataset index to (shard, offset within that shard)."""
+        shard = int(np.searchsorted(self._starts, index, side="right") - 1)
+        return shard, index - int(self._starts[shard])
+
     def _features(self, index: int, flipped: bool) -> np.ndarray:
-        shard, offset = divmod(index, self.shard_size)
+        shard, offset = self._locate(index)
         key = (shard, flipped)
         if key not in self._open:
             name = self.shards[shard] + ("_flip" if flipped else "")

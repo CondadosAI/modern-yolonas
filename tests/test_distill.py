@@ -23,8 +23,14 @@ from modern_yolonas.training.distill import (
 GRID, DIM, SIZE, SHARD = 4, 8, 64, 3
 
 
-def build_cache(tmp_path, count: int = 7, with_flip: bool = False):
-    """A cache whose every feature is a recognisable constant, so a wrong offset shows."""
+def build_cache(tmp_path, count: int = 7, with_flip: bool = False,
+                lengths: list[int] | None = None, record_lengths: bool = True):
+    """A cache whose every feature is a recognisable constant, so a wrong offset shows.
+
+    `lengths` builds shards of uneven size, which is what the writer actually
+    produces: it flushes once the buffer reaches shard_size, and the buffer grows a
+    batch at a time, so shards overshoot.
+    """
     images = tmp_path / "images"
     cache = tmp_path / "cache"
     images.mkdir()
@@ -36,9 +42,13 @@ def build_cache(tmp_path, count: int = 7, with_flip: bool = False):
         cv2.imwrite(str(images / name), np.full((48, SIZE, 3), i * 7 % 255, np.uint8))
         names.append(name)
 
+    if lengths is None:
+        lengths = [len(range(s0, min(s0 + SHARD, count))) for s0 in range(0, count, SHARD)]
+    assert sum(lengths) == count
+
     shards = []
-    for start in range(0, count, SHARD):
-        n = len(range(start, min(start + SHARD, count)))
+    start = 0
+    for n in lengths:
         shard = f"shard_{len(shards):05d}"
         for suffix, offset in ((("", 0),) if not with_flip else (("", 0), ("_flip", 100))):
             # Value encodes the global index, so a misread is visible in the value.
@@ -49,11 +59,15 @@ def build_cache(tmp_path, count: int = 7, with_flip: bool = False):
             np.save(cache / f"{shard}{suffix}.npy", q)
             np.save(cache / f"{shard}{suffix}_norm.npy", np.ones((n, GRID * GRID), np.float16))
         shards.append(shard)
+        start += n
 
-    (cache / "index.json").write_text(json.dumps({
+    index = {
         "teacher": "test", "size": SIZE, "patch": 16, "grid": GRID, "dim": DIM,
         "shard_size": SHARD, "files": names, "shards": shards, "has_flip": with_flip,
-    }))
+    }
+    if record_lengths:
+        index["shard_lengths"] = lengths
+    (cache / "index.json").write_text(json.dumps(index))
     return images, cache, names
 
 
@@ -166,3 +180,63 @@ def test_collate_stacks_images_and_features():
     images, features = distill_collate_fn(batch)
     assert images.shape == (3, 3, 8, 8) and images.dtype == torch.uint8
     assert features.shape == (3, 4, 2, 2)
+
+
+class TestUnevenShards:
+    """Shards do not hold `shard_size` images each, and assuming they do reads
+    another image's features -- silently, until an index runs off the end.
+
+    The real cache had 119 shards of 2016 and one of 1786 while the index said
+    2000. Index 2016 resolved to shard 1 offset 16 instead of shard 1 offset 0, and
+    the drift grew by 16 per shard. The IndexError only arrived at the last shard;
+    a cache whose image count divided evenly would have trained a whole run against
+    mismatched targets without raising.
+    """
+
+    UNEVEN = [5, 5, 3]  # 13 images: two full shards that overshoot, one short
+
+    def test_every_index_finds_its_own_features(self, tmp_path):
+        images, cache, _ = build_cache(tmp_path, count=13, lengths=self.UNEVEN)
+        dataset = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)
+        for index in range(13):
+            _, features = dataset[index]
+            assert features.min() == features.max() == pytest.approx(index % 127), (
+                f"index {index} got features for another image"
+            )
+
+    def test_shard_boundaries_land_exactly(self, tmp_path):
+        images, cache, _ = build_cache(tmp_path, count=13, lengths=self.UNEVEN)
+        dataset = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)
+        assert dataset._locate(0) == (0, 0)
+        assert dataset._locate(4) == (0, 4)
+        assert dataset._locate(5) == (1, 0)      # first image of the second shard
+        assert dataset._locate(9) == (1, 4)
+        assert dataset._locate(10) == (2, 0)
+        assert dataset._locate(12) == (2, 2)     # last image overall
+
+    def test_lengths_are_recovered_when_the_index_omits_them(self, tmp_path):
+        """Caches written before `shard_lengths` existed must still load."""
+        images, cache, _ = build_cache(tmp_path, count=13, lengths=self.UNEVEN,
+                                       record_lengths=False)
+        dataset = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)
+        assert dataset.shard_lengths == self.UNEVEN
+        for index in (0, 5, 9, 12):
+            _, features = dataset[index]
+            assert features.min() == pytest.approx(index % 127)
+
+    def test_a_cache_that_does_not_add_up_is_refused(self, tmp_path):
+        """Better to refuse than to read past the end halfway through a run."""
+        images, cache, _ = build_cache(tmp_path, count=13, lengths=self.UNEVEN)
+        index = json.loads((cache / "index.json").read_text())
+        index["shard_lengths"] = [5, 5, 2]
+        (cache / "index.json").write_text(json.dumps(index))
+        with pytest.raises(ValueError, match="shards hold"):
+            CachedFeatureDataset(images, cache, flip_prob=0.0)
+
+    def test_the_flip_shards_use_the_same_mapping(self, tmp_path):
+        images, cache, _ = build_cache(tmp_path, count=13, lengths=self.UNEVEN,
+                                       with_flip=True)
+        dataset = CachedFeatureDataset(images, cache, flip_prob=1.0, hsv_prob=0.0)
+        for index in (0, 5, 9, 12):
+            _, features = dataset[index]
+            assert features.min() == pytest.approx((index + 100) % 127)
