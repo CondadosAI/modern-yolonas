@@ -156,6 +156,20 @@ the 123k unlabelled ones are exactly what stands in for Objects365 here.
 needs its own measurement. On consumer NVMe the sustained write rate after the SLC cache
 fills is the number that matters, not the burst rate in a benchmark.
 
+**Reclaim the cache once the gate has passed.** The feature cache is 279 GB and is dead
+weight the moment the distilled backbone is saved — nothing downstream reads it. Leaving it
+costs the next stage directly: the training machine's drive is DRAM-less, and running it near
+full is what dropped sustained writes to 14.6 MB/s during the cache pass. Stage 3 writes
+checkpoints across hundreds of epochs onto that same disk.
+
+Delete it *after* the gate, not before: a failed gate is exactly when the cheap experiments
+— a deeper projection head, MSE instead of cosine — want the cache still there, and
+regenerating it is three hours.
+
+```
+rm -rf ~/featcache          # 279 GB, only after the distilled backbone is saved and scored
+```
+
 **Gate: beat this number.** The distilled backbone has to outperform a random init on a
 short detection fine-tune. The baseline is measured rather than left to judgement --
 2026-09-19, `yolo_nas_s` from scratch, `--recipe coco` at lr 2e-2, batch 16, on full
