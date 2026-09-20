@@ -276,3 +276,51 @@ class TestWhatGetsLogged:
         images = torch.rand(1, 3, 128, 128)
         module._step((images, torch.randn(1, 384, 8, 8)), "val")
         assert logged == ["val/loss", "val/cosine"]
+
+
+class TestValidationIsDeterministic:
+    """A validation metric that moves on its own cannot be read.
+
+    Splitting one augmented dataset hands both halves the same random flip and
+    jitter, so held-out images arrive differently transformed every epoch. Observed
+    on a real run: the validation cosine went 0.8301, 0.8493, 0.8540, 0.8481 while
+    the training cosine rose monotonically. That reads as overfitting and is not --
+    it is the measurement moving, and it cost an hour of reading a trend into it.
+    """
+
+    def test_an_augmented_dataset_returns_a_different_sample_each_time(self, tmp_path):
+        """The premise: this is why a shared dataset cannot serve validation."""
+        images, cache, _ = build_cache(tmp_path, count=7, with_flip=True)
+        augmented = CachedFeatureDataset(images, cache, flip_prob=0.5, hsv_prob=1.0)
+        np.random.seed(0)
+        draws = {augmented[1][0].tobytes() for _ in range(12)}
+        assert len(draws) > 1, "the augmented dataset should vary between reads"
+
+    def test_a_clean_dataset_returns_the_same_sample_every_time(self, tmp_path):
+        images, cache, _ = build_cache(tmp_path, count=7, with_flip=True)
+        clean = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)
+        np.random.seed(0)
+        draws = {clean[1][0].tobytes() for _ in range(12)}
+        assert len(draws) == 1, "validation must see the same pixels every epoch"
+
+    def test_the_clean_dataset_still_pairs_the_right_features(self, tmp_path):
+        """Turning augmentation off must not disturb the index mapping."""
+        images, cache, _ = build_cache(tmp_path, count=7, with_flip=True)
+        clean = CachedFeatureDataset(images, cache, flip_prob=0.0, hsv_prob=0.0)
+        for index in range(7):
+            _, features = clean[index]
+            assert features.min() == pytest.approx(index % 127)
+
+    def test_train_and_validation_indices_do_not_overlap(self, tmp_path):
+        """Two dataset objects over the same cache still need disjoint indices."""
+        import torch
+
+        images, cache, _ = build_cache(tmp_path, count=20, with_flip=True)
+        dataset = CachedFeatureDataset(images, cache, flip_prob=0.5, hsv_prob=0.5)
+        held_out = 4
+        permutation = torch.randperm(len(dataset),
+                                     generator=torch.Generator().manual_seed(0))
+        val_indices = set(permutation[:held_out].tolist())
+        train_indices = set(permutation[held_out:].tolist())
+        assert not (val_indices & train_indices)
+        assert len(val_indices | train_indices) == 20

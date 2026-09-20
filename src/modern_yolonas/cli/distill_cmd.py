@@ -64,7 +64,7 @@ def distill(
     import torch
     from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
     from rich.console import Console
-    from torch.utils.data import DataLoader, random_split
+    from torch.utils.data import DataLoader, Subset
 
     from modern_yolonas import yolo_nas_l, yolo_nas_m, yolo_nas_s
     from modern_yolonas.training.distill import (
@@ -82,11 +82,21 @@ def distill(
         f"| flip cache: {dataset.has_flip}"
     )
 
+    # Validation reads from its own dataset with augmentation switched off.
+    #
+    # Splitting one augmented dataset gives both halves the same random flip and
+    # jitter, so the held-out images arrive differently transformed every epoch and
+    # the metric moves whether or not the model does. Observed on a real run: the
+    # validation cosine went 0.8301, 0.8493, 0.8540, 0.8481 while the training
+    # cosine rose monotonically -- which reads exactly like overfitting and is not.
+    clean = CachedFeatureDataset(images=images, cache=cache, flip_prob=0.0, hsv_prob=0.0)
+
     held_out = max(1, int(len(dataset) * val_fraction))
-    train_set, val_set = random_split(
-        dataset, [len(dataset) - held_out, held_out],
-        generator=torch.Generator().manual_seed(0),
-    )
+    permutation = torch.randperm(len(dataset), generator=torch.Generator().manual_seed(0))
+    val_indices = permutation[:held_out].tolist()
+    train_indices = permutation[held_out:].tolist()
+    train_set = Subset(dataset, train_indices)
+    val_set = Subset(clean, val_indices)
 
     def loader(subset, shuffle: bool) -> DataLoader:
         return DataLoader(
