@@ -214,6 +214,55 @@ Weights to `CondadosAI` on the Hub under Apache-2.0, with "Built with DINOv3" an
 that produced them. Repoint `weights.py` and `hub.py` away from Deci's S3, and keep the EULA
 path available for anyone who wants to reproduce the old numbers.
 
+## Alternatives evaluated and rejected
+
+Recorded so the research is not repeated, and so nobody adopts one of these without
+meeting the licence problem the hard way.
+
+### LightlyTrain
+
+A mature framework for exactly stage 1 — distilling DINOv2/DINOv3 into an arbitrary student
+backbone, with support for custom PyTorch models. Technically it is ahead of what is
+implemented here.
+
+**Rejected on licence.** It is AGPL-3.0 with a separate commercial licence, and the vendor is
+explicit about which side this project falls on: *"Using LightlyTrain at work, in production,
+on the edge, or to build proprietary models? You likely need a Commercial License."*
+
+Whether model weights are a derivative work of the software that trained them is arguable.
+"Arguable" is the problem: this entire effort exists to replace a licence asterisk, and using
+a tool whose vendor claims an interest in the models it produces trades Deci's asterisk for
+another one. The repository is Apache-2.0, and a development-only AGPL dependency still
+complicates the licensing story being built here.
+
+**Worth taking from it anyway**, since a method is not licensed:
+
+- Their `distillationv2`, aimed at dense tasks, applies **MSE on the spatial features** rather
+  than a cosine loss. Cosine was chosen here because scale invariance makes int8 quantisation
+  free, but it discards magnitude, which may carry signal for detection. The cache keeps
+  per-token norms in fp16 precisely so this can be tried without recaching.
+- Their projection head is configurable in depth and width (`n_projection_layers`,
+  `projection_hidden_dim`) where this implementation uses a single 1x1 convolution. A more
+  expressive head can absorb feature-space mismatch that the backbone is otherwise forced to
+  absorb itself. This is the cheapest experiment to run if the stage 1 gate is only narrowly
+  missed, and it does not touch the cache.
+- They apply **identical geometric augmentation to both sides**, with crops from 0.14 to 1.0
+  of the image. That is exactly what the feature cache forbids, and is the clearest statement
+  of what caching costs.
+
+### DEIMv2 and EdgeCrafter
+
+Both Intellindust, both commercial-by-request, and both hold the best numbers in their class
+— DEIMv2-S reaches 50.9 AP at 9.7M parameters. Reading material, not components. EdgeCrafter's
+paper is the origin of the DINOv3-teacher idea used in stage 1.
+
+### SAM 3 as a box source
+
+Its licence is permissive enough, but it is the wrong tool: SAM 3's notion of an instance is
+its own, and a pseudo-labeller misaligned with COCO's annotation conventions injects a bias
+the metric punishes. It earns its place in the segmentation stage instead, prompted with
+boxes that a COCO-trained detector produced.
+
 ## Then instance segmentation
 
 The detection weights are the prerequisite: the mask head trains on top of a backbone that
