@@ -496,6 +496,9 @@ is written out on the [sponsors page](https://github.com/sponsors/CondadosAI).
 Companies that need an invoice, a different arrangement, or a specific benchmark run: open an
 [issue](https://github.com/CondadosAI/modern-yolonas/issues) and we will sort it out there.
 
+Want help with your own models rather than funding this one? That is not sponsorship, and it
+has its own calendar: [cal.com/luis-condados](https://cal.com/luis-condados).
+
 Sponsors are listed in [SPONSORS.md](https://github.com/CondadosAI/modern-yolonas/blob/main/SPONSORS.md);
 company sponsors get their logo here and on the docs site.
 
