@@ -166,8 +166,31 @@ Delete it *after* the gate, not before: a failed gate is exactly when the cheap 
 — a deeper projection head, MSE instead of cosine — want the cache still there, and
 regenerating it is three hours.
 
+**Amended 2026-09-21: the cache is kept, and the trigger was wrong.** The reasoning above
+ties the cache's life to the gate, on the assumption that a passed gate settles the
+question. It does not. The gate measures whether distillation beats random init; it says
+nothing about whether *this* distillation is the best one available, and the margin was
+still growing when the run ended — which is a reason to try the variants, not to stop.
+
+The two experiments the cache exists for are unchanged by the gate passing:
+
+- **MSE on the spatial features** instead of cosine. The cache stores per-token norms in
+  fp16 specifically so this can be run without recaching. Cosine discards magnitude, which
+  may carry signal for detection.
+- **A deeper, wider projection head** than the single 1x1 convolution used here.
+
+So the trigger is "those experiments are done or abandoned", not "the gate returned".
+
+**This is not free, and the cost should be named.** The drive is at 91% with ~173 GB free.
+It is DRAM-less, and running it near full is precisely what dropped sustained writes to
+14.6 MB/s during the cache pass. Stage 3 writes checkpoints across hundreds of epochs onto
+that same disk. The cache should therefore be deleted *before* stage 3 starts even if the
+variant experiments have not been run — holding 279 GB for an experiment nobody has
+scheduled is how the next stage gets slow for a reason nobody remembers.
+
 ```
-rm -rf ~/featcache          # 279 GB, only after the distilled backbone is saved and scored
+rm -rf ~/featcache          # 279 GB; after the MSE / projection-head variants, and in any
+                            # case before stage 3 begins
 ```
 
 **Gate: beat this number.** The distilled backbone has to outperform a random init on a
