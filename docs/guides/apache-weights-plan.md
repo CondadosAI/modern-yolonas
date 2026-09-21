@@ -228,12 +228,135 @@ Weights to `CondadosAI` on the Hub under Apache-2.0, with "Built with DINOv3" an
 that produced them. Repoint `weights.py` and `hub.py` away from Deci's S3, and keep the EULA
 path available for anyone who wants to reproduce the old numbers.
 
+## Self-supervised pretraining, and when it is worth it
+
+Stages 1 and 3 both assume the target is COCO. Most users of this repository are not
+training on COCO — they have a pile of unlabelled frames from their own domain and a
+checkpoint trained on somebody else's. `yolonas pretrain` and `yolonas domain-distance`
+exist for that case, and the second one exists because the first is expensive.
+
+### `lightly` is not LightlyTrain
+
+The alternatives section above rejects **LightlyTrain** on licence, and that rejection
+stands. It does not extend to **`lightly`**, the library, which is a different package
+under a different licence: MIT, and the vendor's own wording is *"always be free to use,
+even for commercial purposes."* MIT places no condition on weights trained with it.
+
+Stating this explicitly because I conflated the two while researching this section, and
+the names make that easy to do. `lightly-train` is AGPL and stays out; `lightly` is MIT
+and is an optional dependency (`modern-yolonas[ssl]`).
+
+### Two scales
+
+**Pretrain the YOLO-NAS backbone directly.** Implemented, as `yolonas pretrain`. It needs
+only images, writes the same `model.backbone.*` checkpoint the distillation stage writes,
+and feeds the same `--init-backbone` flag. On a user's own unlabelled data this is the
+cheap option: one backbone, no teacher, no annotation.
+
+**Adapt DINOv3 first, then distil.** Not implemented. At a larger scale the teacher itself
+can be tuned on the target domain before stage 1 distils it, which moves the whole
+representation rather than just the student. It costs a ViT pretraining run and only makes
+sense with a lot of unlabelled data and a domain far from LVD-1689M. Recorded as the
+extension, not scheduled.
+
+### Why DenseCL and not SimCLR
+
+A per-image contrastive loss optimises one vector per photo. That rewards summarising an
+image, which is the wrong granularity for a detector: it has no pressure to keep positions
+distinguishable. DenseCL (arXiv:2011.09157) adds a second contrastive term between *pixels*
+of the two views, matched by feature similarity rather than position, since the two views
+are different crops and have no positional correspondence.
+
+The published numbers that justify the choice:
+
+| comparison | gain | note |
+|---|---|---|
+| DenseCL vs MoCo-v2, both pretrained on COCO | +1.1 AP | the like-for-like one |
+| DenseCL vs supervised ImageNet init, on VOC | +4.5 AP | the headline, and a weaker baseline |
+
+**Every one of those numbers is on a ResNet.** Our backbone is QARepVGG. The ranking of
+methods should carry across architectures; the margin is unmeasured here, and quoting +1.1
+AP as something this repository will reproduce would be inventing a result.
+
+Two related findings worth recording, both arguing the same way — that detection
+pretraining wants detection-like data and detection-like objectives, not ImageNet:
+
+- **AlignDet** pretrains the detection head as well as the backbone, in 12 epochs.
+- **BEiT pretrained on COCO beats BEiT pretrained on ImageNet** for detection, despite COCO
+  being the smaller and less curated set.
+
+### What this costs that the cached-feature path does not
+
+Stage 1 is restricted to photometric augmentation, because the teacher features are cached
+and a ViT is not flip-equivariant. SSL has no cache and no teacher, so it is free to use the
+full geometric augmentation contrastive learning depends on — random resized crops from 0.2
+of the image, in DenseCL's configuration. That is a genuine advantage of this path over
+stage 1, and the first time in this plan that dropping the cache buys something.
+
+The cost is two forward passes per image instead of one, plus a momentum encoder.
+
+**One known departure from the paper.** MoCo shuffles BatchNorm statistics across GPUs so the
+query and key encoders cannot communicate through their BN buffers. On a single GPU there is
+nothing to shuffle and this backbone is full of BN, so some leakage is expected and some of
+the paper's margin is probably lost with it. The published fix requires multiple GPUs.
+
+### Matching the input scaling
+
+The detection path scales `uint8` by 1/255 and applies no mean/std. `lightly`'s transforms
+default to ImageNet normalisation. Left alone, a backbone pretrained on normalised inputs
+would meet a shifted distribution at its first convolution the moment it was fine-tuned —
+no error, no warning, just a worse number that would have been attributed to the method.
+The transform is built with `normalize=None` and a test pins the range.
+
+## Deciding whether to spend the GPU-days
+
+The honest way to find out whether pretraining helps on a given dataset is to fine-tune with
+and without it and compare, which costs exactly what the decision was supposed to save.
+`yolonas domain-distance` is the cheap proxy: it reports how far a dataset sits from COCO in
+the feature space of the backbone that would actually be transferred.
+
+Two statistics, chosen because they fail differently:
+
+**Proxy A-distance**, `d_A = 2(1 − 2ε)`, where ε is the cross-validated error of a linear
+domain discriminator. The headline, because it comes with a sentence: 0 means a probe cannot
+separate the two sets at all, 2 means it separates them perfectly. The cross-validation is
+not optional — an in-sample error on a few thousand high-dimensional vectors is ~0 for any
+pair, so the uncorrected version reports maximal distance for every dataset including one
+compared against itself, and that failure looks exactly like a working tool.
+
+**KID**, the unbiased MMD² under a polynomial kernel. FID's estimator is biased by sample
+size, so an FID over 2000 images is not comparable to one over 5000 — a mistake a `--samples`
+flag invites. FD-DINOv2 was considered and rejected: it fixes some of FID's domain bias at, in
+its authors' words, tremendous computational cost, which is the wrong trade for a command
+whose purpose is to be cheaper than the experiment it replaces.
+
+### No threshold is invented
+
+There is no experiment anywhere in this project mapping a domain distance to an expected AP
+gain. Rather than print a traffic light backed by nothing, the command takes `--baseline`: a
+second sample of the reference domain, which measures **the floor** — what the statistic reads
+when two sets genuinely are the same domain. The user's number is reported beside it.
+
+The floor is worth publishing on its own. Every domain-shift paper needs to know what "no
+shift" reads as, and none of them report it.
+
+Measured floor, `yolo_nas_s` backbone features, 1000 images per side at 448px:
+
+<!-- ANCHORS -->
+
+The **ceiling is unmeasured**: no dataset far from COCO has been run through this yet, so the
+upper half of the scale has no reference point. That is a gap, and the command's output says
+so rather than implying the scale is calibrated.
+
 ## Alternatives evaluated and rejected
 
 Recorded so the research is not repeated, and so nobody adopts one of these without
 meeting the licence problem the hard way.
 
 ### LightlyTrain
+
+**Not to be confused with `lightly`**, the library, which is MIT and *is* used here — see
+"`lightly` is not LightlyTrain" above. The rejection below is about the AGPL framework only.
 
 A mature framework for exactly stage 1 — distilling DINOv2/DINOv3 into an arbitrary student
 backbone, with support for custom PyTorch models. Technically it is ahead of what is
