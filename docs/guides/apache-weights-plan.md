@@ -470,6 +470,115 @@ its own, and a pseudo-labeller misaligned with COCO's annotation conventions inj
 the metric punishes. It earns its place in the segmentation stage instead, prompted with
 boxes that a COCO-trained detector produced.
 
+## Techniques surveyed, and what to try in what order
+
+Surveyed 2026-09-20, after stage 1 produced a backbone at cosine 0.8808 against its
+DINOv3 teacher. Ranked by the quality of the evidence *for our setup*, not by how
+impressive the paper is — several of these are measured on architectures we do not have.
+
+### Pre-training, before or instead of distillation
+
+**COCO alone is enough to pretrain on.** *Are Large-scale Datasets Necessary for
+Self-Supervised Pre-training?* reports BEiT pretrained on COCO **alone** beating the same
+model pretrained on ImageNet, +0.4 box AP for ViT-B. This contradicts the reasonable
+intuition that 241k images is too small for self-supervised work, and it matters here
+because COCO-only is a licence constraint we cannot relax.
+
+**AlignDet** pretrains for detection specifically, in 12 epochs on COCO. It addresses the
+gap this plan has otherwise ignored: a backbone whose features match DINOv3 at cosine 0.88
+is not thereby a backbone whose features localise objects. Feature similarity is the
+objective we optimise; detection AP is the objective we care about, and nothing so far
+connects them except the gate.
+
+**InsLoc** reports +1.8 AP over supervised ImageNet pretraining for R50-C4. **DMT**
+(multiple self-supervised teachers) beats iBOT by roughly 4 mAP for ViT-S on COCO, which is
+the strongest single number in this survey — and also the least transferable, being ViT.
+
+**LightlyTrain** implements DINOv2-style pretraining as well as distillation. Its licence
+question is **unresolved and worth one email**: the docs and FAQ do not say whether AGPL-3.0
+reaches model weights, and the only explicit statement — *"at work, in production, on the
+edge, or to build proprietary models"* — suggests an openly published model may not trigger
+the commercial case. But AGPL permitting publication is not the same as permitting an
+Apache-2.0 relicence: if AGPL attaches to the weights, they are AGPL, which for most
+adopters is *more* restrictive than the EULA this effort exists to escape.
+
+That question is now **moot for this repository**, though still worth asking if anyone
+revisits the framework. Pre-training here is built on **`lightly`**, the MIT library,
+which is a different package with a different licence — see "`lightly` is not
+LightlyTrain" above and `yolonas pretrain`. Nothing in the implemented path depends on
+the AGPL framework.
+
+### Distillation
+
+**AM-RADIO** is the closest published recipe, and LightlyTrain cites it as a basis.
+
+| choice | theirs | ours |
+|---|---|---|
+| spatial loss | **0.9 · cosine + 0.1 · smooth-L1** | cosine alone |
+| feature normalisation | none, deliberately | none |
+| projection head | **2-layer MLP, LayerNorm + GELU** | one 1x1 convolution |
+
+Their ablation reports cosine beating L1, MSE and smooth-L1 *individually* — which
+**contradicts LightlyTrain**, whose `distillationv2` applies MSE to spatial features for
+dense tasks. Two mature implementations disagree and only one published the ablation.
+
+**EdgeCrafter**, the origin of this plan's stage 1, adds two findings. Teacher capacity
+should be *matched* to the student rather than maximised — DINOv3-S at 21.6M against our
+14.9M backbone is a reasonable match. And **adapting the teacher to detection before
+distilling** improves the result: that is their stage 1, which this plan skips by distilling
+from raw DINOv3.
+
+### Fine-tuning from a distilled backbone
+
+| technique | source | reported gain | applicability here |
+|---|---|---|---|
+| layer-wise LR decay | ViTDet | up to **0.3 AP** | measured on ViT + MAE; our backbone is a CNN |
+| backbone LR at 0.1x | DETR | stability early on | DETR uses a frozen-BN ResNet; ours has trainable BN |
+| freezing the backbone | LightlyTrain | framed as a **VRAM** measure | large dataset, identical domain, so no |
+
+The literature's rule is about domain and scale: freeze for a small dataset in a similar
+domain, train everything for a large dataset or a different domain. Ours is 118k labelled
+images, and the backbone was distilled on those very images — train everything.
+
+**One mechanism none of these sources covers**, specific to this hand-off: the distilled
+backbone's BatchNorm statistics were accumulated under the distillation input distribution
+— letterbox, photometric jitter, **no mosaic**. Detection fine-tuning uses mosaic. All 144
+running mean/variance buffers are therefore wrong for the first steps, until momentum 0.03
+re-adapts them. That transient can depress early-epoch AP for a reason that is not a failure
+of transfer, and it is worth recalibrating before a long run — a few hundred forward passes
+on mosaic batches, no gradients.
+
+### What to try, in order
+
+**First — cheap, no recache, two independent sources agree**
+
+1. **A 2-layer MLP projection head.** AM-RADIO and LightlyTrain arrived at this separately.
+2. **0.9 cosine + 0.1 smooth-L1.** The cache stores per-token norms in fp16 for exactly
+   this, so it costs no recaching.
+
+**Second — cheap, weaker evidence for our architecture**
+
+3. Backbone LR at 0.1x during fine-tuning.
+4. BatchNorm recalibration before fine-tuning.
+5. Layer-wise LR decay.
+
+**Third — expensive, highest ceiling**
+
+6. **A detection-adapted teacher**, EdgeCrafter's actual stage 1. The largest lever in their
+   paper and the largest cost here: it means training a DINOv3-based detector first.
+7. **AlignDet-style detection pretraining**, 12 epochs on COCO, as a bridge between feature
+   matching and detection utility.
+8. Matching multiple layers (c3, c4, c5), which needs the cache rebuilt at several strides.
+
+### A constraint every fine-tuning change imposes
+
+The stage 1 gate's baseline — AP 0.146 — was measured with a uniform learning rate from a
+random initialisation. **Any change to the fine-tuning recipe makes that number
+incomparable.** If stage 3 adopts a backbone LR multiplier, its AP cannot be read against
+0.146; the random-init baseline would have to be re-run under the new recipe, or the plan
+must say plainly that the old number no longer applies. Stating this here so nobody reads a
+stage 3 result against a baseline that measured something else.
+
 ## Then instance segmentation
 
 The detection weights are the prerequisite: the mask head trains on top of a backbone that
