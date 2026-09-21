@@ -10,6 +10,7 @@ from modern_yolonas.cli.detect_cmd import detect
 from modern_yolonas.cli.distill_cmd import distill
 from modern_yolonas.cli.eval_cmd import eval_cmd
 from modern_yolonas.cli.export_cmd import export
+from modern_yolonas.cli.pretrain_cmd import pretrain
 from modern_yolonas.cli.qat_cmd import qat
 from modern_yolonas.cli.quantize_cmd import quantize
 from modern_yolonas.cli.serve_cmd import serve
@@ -26,6 +27,7 @@ app.command()(serve)
 app.command()(benchmark)
 app.command()(demo)
 app.command()(distill)
+app.command()(pretrain)
 app.command()(quantize)
 app.command()(qat)
 # `benchmark` measures latency; this one trains and reports mAP, so it gets its own
