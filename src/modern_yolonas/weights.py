@@ -241,3 +241,56 @@ def transfer_to(
         num_classes,
     )
     return model
+
+
+def load_distilled_backbone(
+    model: nn.Module,
+    checkpoint_path: str | Path,
+    map_location: str = "cpu",
+) -> int:
+    """Initialise *model*'s backbone from a distillation checkpoint, in place.
+
+    Stage 1 of the Apache-2.0 weights plan produces a backbone whose features match
+    a DINOv3 teacher. Detection training then starts from that instead of from
+    random, which is what replaces the Objects365 pretraining whose licence excludes
+    us. Only the backbone transfers: the neck has no teacher in that stage and the
+    heads do not exist there.
+
+    Args:
+        model: A ``YoloNAS``. Its ``backbone`` is modified in place.
+        checkpoint_path: A Lightning checkpoint from ``yolonas distill``.
+        map_location: Passed to ``torch.load``.
+
+    Returns:
+        The number of tensors loaded.
+
+    Raises:
+        ValueError: If the checkpoint carries no backbone weights, or if any of the
+            backbone's own parameters go unmatched. A partial load would train from
+            a half-initialised backbone and look exactly like a successful one --
+            the loss would fall either way -- so it is refused rather than warned
+            about.
+    """
+    checkpoint = torch.load(str(checkpoint_path), map_location=map_location, weights_only=False)
+    raw = checkpoint.get("state_dict", checkpoint)
+
+    prefix = "model.backbone."
+    weights = {k[len(prefix):]: v for k, v in raw.items() if k.startswith(prefix)}
+    if not weights:
+        raise ValueError(
+            f"{checkpoint_path} holds no '{prefix}*' tensors. It does not look like a "
+            f"checkpoint from `yolonas distill`."
+        )
+
+    expected = set(model.backbone.state_dict())
+    missing = expected - set(weights)
+    if missing:
+        raise ValueError(
+            f"{len(missing)} of the backbone's {len(expected)} tensors are absent from "
+            f"{checkpoint_path}, first is {sorted(missing)[0]!r}. Loading anyway would "
+            f"leave part of the backbone at its random initialisation, which trains and "
+            f"converges and is simply worse."
+        )
+
+    model.backbone.load_state_dict({k: weights[k] for k in expected}, strict=True)
+    return len(expected)

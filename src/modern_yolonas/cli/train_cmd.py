@@ -49,6 +49,7 @@ def train(
     early_stopping_patience: Annotated[int, typer.Option(help="Stop training if train loss doesn't improve for N epochs (0 = disabled).")] = 0,
     early_stopping_min_delta: Annotated[float, typer.Option(help="Minimum improvement in train loss to count as progress.")] = 1e-4,
     close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close). Default comes from the recipe.")] = -1,
+    init_backbone: Annotated[Path | None, typer.Option(help="Initialise the backbone from a `yolonas distill` checkpoint. Mutually exclusive with --pretrained, which loads Deci's EULA weights.")] = None,
     recipe: Annotated[str, typer.Option(help="Named recipe: legacy, coco or rf100vl. 'coco' is the one that reproduces published COCO results — it uses mosaic and letterboxes, which 'legacy' does not.")] = "legacy",
     grad_clip: Annotated[float, typer.Option(help="Clip gradients to this max norm (0 = disabled).")] = 10.0,
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
@@ -220,6 +221,12 @@ def train(
 
     # Build model -------------------------------------------------------
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
+    if init_backbone is not None and pretrained:
+        raise typer.BadParameter(
+            "--init-backbone and --pretrained both set the backbone. Pass "
+            "--no-pretrained alongside --init-backbone."
+        )
+
     if pretrained and num_classes != 80:
         # Transfer learning: load pretrained backbone+neck with strict=True,
         # then swap heads for a freshly initialised num_classes version.
@@ -233,6 +240,15 @@ def train(
     else:
         console.print(f"Building {model.value} (pretrained={pretrained}, num_classes={num_classes})...")
         yolo_model = builders[model.value](pretrained=pretrained, num_classes=num_classes)
+
+    if init_backbone is not None:
+        from modern_yolonas.weights import load_distilled_backbone
+
+        loaded = load_distilled_backbone(yolo_model, init_backbone)
+        console.print(
+            f"[green]Backbone initialised from {init_backbone} "
+            f"({loaded} tensors). Neck and heads stay at their initialisation.[/green]"
+        )
 
     if compile_model:
         import torch
