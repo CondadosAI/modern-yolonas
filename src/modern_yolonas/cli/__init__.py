@@ -8,6 +8,7 @@ from modern_yolonas.cli.dataset_benchmark_cmd import benchmark_dataset_app
 from modern_yolonas.cli.demo_cmd import demo
 from modern_yolonas.cli.detect_cmd import detect
 from modern_yolonas.cli.distill_cmd import distill
+from modern_yolonas.cli.domain_distance_cmd import domain_distance
 from modern_yolonas.cli.eval_cmd import eval_cmd
 from modern_yolonas.cli.export_cmd import export
 from modern_yolonas.cli.pretrain_cmd import pretrain
@@ -28,6 +29,7 @@ app.command()(benchmark)
 app.command()(demo)
 app.command()(distill)
 app.command()(pretrain)
+app.command(name="domain-distance")(domain_distance)
 app.command()(quantize)
 app.command()(qat)
 # `benchmark` measures latency; this one trains and reports mAP, so it gets its own
