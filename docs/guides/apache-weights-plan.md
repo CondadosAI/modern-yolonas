@@ -193,6 +193,35 @@ impression. Checkpoint of the baseline run: `runs/calib/epoch=7-step=58632.ckpt`
 
 If it does not clear the bar, stages 2 and 3 are wasted on it.
 
+**Result, 2026-09-21: cleared.** Same recipe, same 117266/4952 split, same
+`close_mosaic=1`, the only declared difference being `--init-backbone`:
+
+| epoch | scratch | distilled | Δ |
+|---:|---:|---:|---:|
+| sanity (pre-train) | 0.000 | 0.000 | — |
+| 0 | 0.020 | 0.028 | +0.008 |
+| 1 | 0.050 | 0.057 | +0.007 |
+| 2 | 0.068 | 0.076 | +0.008 |
+| 3 | 0.085 | 0.094 | +0.009 |
+| 4 | 0.102 | 0.114 | +0.012 |
+| 5 | 0.118 | 0.135 | +0.017 |
+| 6 | 0.132 | 0.153 | +0.021 |
+| **7** | **0.146** | **0.178** | **+0.032** |
+
+AR at epoch 7 moves with it, 0.417 → 0.448, so this is not precision bought by
+suppressing detections.
+
+**The gap compounds rather than shifting.** It is flat near +0.008 for the first four
+epochs and then grows every epoch to +0.032 — the distilled backbone is not merely
+starting ahead, it is still pulling away when the run ends. At epoch 5 it had already
+passed what the baseline reaches at epoch 7.
+
+Two consequences. Stages 2 and 3 are justified on this backbone. And the eight-epoch
+figure is a *lower* bound on what the stage is worth: the curve had not converged, so a
+gate run long enough to converge would report a larger margin, not a smaller one.
+
+Checkpoint: `runs/gate/epoch=7-step=58632.ckpt`.
+
 ### 2 — Pseudo-label `unlabeled2017`
 
 One inference pass with D-FINE-X (55.8 AP on COCO, Apache-2.0, COCO-only checkpoint — not the
