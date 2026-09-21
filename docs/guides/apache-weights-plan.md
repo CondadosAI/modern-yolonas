@@ -259,6 +259,28 @@ injects a bias the metric will punish.
 not reproduce roughly D-FINE-X's published AP against the real annotations, the confidence
 threshold or the postprocessing is wrong, and 123k bad labels are worse than none.
 
+**Run the gate at `--threshold 0.001`, not at the labelling threshold.** COCO AP is computed
+over the full ranked detection list, so any threshold above ~0 truncates the low-confidence
+tail and depresses AP — at the tool's default of 0.5 the gate cannot reproduce the published
+number no matter how correct the plumbing is, and would fail by construction. This is safe
+because D-FINE's `post_process_object_detection` already caps output at `num_top_queries`
+(300) per image before applying the threshold, so a near-zero threshold does not produce an
+unbounded detection list.
+
+Two different numbers live here and must not be conflated: **0.001 is the plumbing check**,
+and the threshold to *train* with comes from the precision/recall sweep below.
+
+**Result, 2026-09-21: passed exactly.** `dfine-x` on all 5000 `val2017` images at threshold
+0.001 scored **AP 0.558** against `instances_val2017.json`, matching D-FINE-X's published
+55.8 AP. Class mapping, box conversion and postprocessing are all correct.
+
+Throughput on the training machine: **28.8 img/s** at batch 8, so `unlabeled2017`'s 123403
+images take ~71 minutes. GPU utilisation averages 54% and is under 10% for a fifth of
+samples — the tool decodes JPEGs serially in the main loop, so a `DataLoader` would recover
+perhaps 30 minutes. Not taken: it is a one-time run already inside the plan's estimate, and
+the preprocessing path had just reproduced the published AP to the decimal, which is not a
+thing to perturb for half an hour.
+
 ### 3 — Train detection
 
 Phase A on all 241k with real and pseudo labels mixed, phase B fine-tuning on the 118k real
