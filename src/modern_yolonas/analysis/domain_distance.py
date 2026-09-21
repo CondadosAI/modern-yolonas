@@ -236,7 +236,10 @@ class DomainDistance:
         return (
             f"proxy A-distance : {self.d_a:.3f}  (of a possible 2.0)\n"
             f"  a linear probe tells the two sets apart {separable:.1f}% of the time\n"
-            f"KID              : {self.kid:.4f} +/- {self.kid_std:.4f}\n"
+            # Scientific notation, not fixed decimals: a same-domain KID lands
+            # around 1e-5, which four decimal places renders as a bare "0.0000"
+            # -- indistinguishable from an encoder that emitted nothing.
+            f"KID              : {self.kid:.3e} +/- {self.kid_std:.3e}\n"
             f"encoder          : {self.encoder}\n"
             f"images           : {self.n_query} query / {self.n_reference} reference"
         )
