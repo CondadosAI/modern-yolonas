@@ -233,8 +233,13 @@ class DomainDistance:
 
     def summary(self) -> str:
         separable = (1 - self.discriminator_error) * 100
+        # A discriminator can land below chance on a fold, which the formula turns
+        # into a negative distance that is then clamped. Without this note a reader
+        # cannot tell "at chance" from "exactly indistinguishable" -- both print
+        # 0.000.
+        at_chance = "  (discriminator at chance)" if self.discriminator_error >= 0.5 else ""
         return (
-            f"proxy A-distance : {self.d_a:.3f}  (of a possible 2.0)\n"
+            f"proxy A-distance : {self.d_a:.3f}  (of a possible 2.0){at_chance}\n"
             f"  a linear probe tells the two sets apart {separable:.1f}% of the time\n"
             # Scientific notation, not fixed decimals: a same-domain KID lands
             # around 1e-5, which four decimal places renders as a bare "0.0000"
