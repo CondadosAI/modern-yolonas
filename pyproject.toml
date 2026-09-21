@@ -80,6 +80,9 @@ fiftyone = ["fiftyone>=1.0"]
 # or an integrated GPU, and post-training quantization is where the speedup is.
 openvino = ["openvino>=2024.0", "nncf>=2.12"]
 wandb = ["wandb>=0.16"]
+# Self-supervised pretraining. lightly is MIT, so it puts no condition on the weights
+# a user trains with it -- unlike lightly-train, which is AGPL.
+ssl = ["lightly>=1.5"]
 tensorboard = ["tensorboard>=2.15"]
 # Frozen teachers for the distillation experiments; only tools/bench_training.py
 # and the future distillation trainer need them.
@@ -190,6 +193,9 @@ dev = [
     "onnxruntime>=1.15,<1.24 ; python_version < '3.11'",
     "onnxruntime>=1.15 ; python_version >= '3.11'",
     "onnxscript>=0.6.0",
+    # Likewise for tests/test_pretrain.py: it guards the checkpoint contract that
+    # `yolonas train --init-backbone` depends on, and a skipped test guards nothing.
+    "lightly>=1.5",
     # Regenerating docs/assets/embedding_space.png. Only arrives transitively via
     # jupyter otherwise, which is not something examples/ should rely on.
     "matplotlib>=3.7",
