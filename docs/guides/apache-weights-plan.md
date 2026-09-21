@@ -281,6 +281,47 @@ perhaps 30 minutes. Not taken: it is a one-time run already inside the plan's es
 the preprocessing path had just reproduced the published AP to the decimal, which is not a
 thing to perturb for half an hour.
 
+**Labelled, 2026-09-21.** All 123403 `unlabeled2017` images at threshold **0.3**, keeping the
+per-annotation score: 1,889,794 boxes, 265 MB, at
+`~/datasets/coco/annotations/pseudo_unlabeled2017_dfinex_t030.json` on the training machine.
+
+0.3 is not the training threshold. It is the lowest threshold anyone is likely to want, and
+every higher one stays reachable by filtering this file on the stored score. Labelling at a
+final threshold instead would discard the band below it permanently, and recovering that band
+would cost a second 71-minute inference pass. The file size is the only cost.
+
+**Filtering reproduces the sweep, which is what makes that valid:**
+
+| threshold | `unlabeled2017`, filtered | `val2017` sweep |
+|---:|---:|---:|
+| 0.3 | 15.31 | 15.7 |
+| 0.4 | 10.04 | 10.2 |
+| 0.5 | 7.43 | 7.5 |
+| 0.6 | 5.83 | 5.9 |
+| 0.7 | 4.67 | 4.7 |
+| 0.8 | 3.59 | 3.6 |
+
+Boxes per image agree within ~2% at every threshold. That says more than that the filter
+works: the teacher's calibration *transfers* to `unlabeled2017` — it is neither more nor less
+confident there than on a set with ground truth — which is the fact to establish before
+trusting 1.9 million labels no one will inspect.
+
+Other checks on the file: scores span 0.3003–0.9858, all 80 categories present, `person`
+dominates by a wide margin as it does in real COCO, 627 images (0.51%) carry no box at all,
+annotation ids are unique, every `image_id` resolves, and no box has non-positive extent.
+
+**The training threshold is a stage 3 decision, and the sweep argues against simply raising
+it.** Precision climbs with the threshold, but boxes per image fall below the real 7.3 from
+0.5 upward: at 0.7 the teacher gives 4.7. Phase A trains 100 epochs on these labels, and a
+scene rendered emptier than it is teaches *background* where an object stands, every epoch.
+Density matches at 0.5 (7.43 vs 7.3); precision there is 0.690 and understated.
+
+The option that addresses both sides uses machinery stage 0 already built: boxes above a high
+threshold become positives, and the band between 0.3 and that threshold becomes an **ignore
+region** through the same `CROWD_CLASS` sentinel and `VarifocalLoss` ignore mask that handle
+`iscrowd`. Neither a false positive nor a false background. Labelling at 0.3 is what keeps this
+available.
+
 ### 3 — Train detection
 
 Phase A on all 241k with real and pseudo labels mixed, phase B fine-tuning on the 118k real
