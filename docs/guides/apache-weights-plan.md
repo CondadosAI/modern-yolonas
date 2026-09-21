@@ -342,7 +342,25 @@ shift" reads as, and none of them report it.
 
 Measured floor, `yolo_nas_s` backbone features, 1000 images per side at 448px:
 
-<!-- ANCHORS -->
+| pair | proxy A-distance | probe accuracy |
+|---|---|---|
+| COCO `val2017` vs `train2017` | **0.000** | 48.7% (ε = 0.513, at chance) |
+| COCO `unlabeled2017` vs `train2017` | **0.048** | 51.2% |
+| COCO `val2017` vs the same photos in greyscale | **0.627** | 65.7% |
+
+The first two are the floor: two samples of one domain, and the statistic reads it.
+The third was run to answer a different question — whether the instrument can detect
+anything at all, since a degenerate encoder emitting constant features would also put
+the discriminator at chance and print 0.000. It is not the ceiling.
+
+It is a more useful reference point than expected. Removing colour was assumed to be
+trivially separable, which would have made it the top of the scale by construction. It
+reads 0.627, so these pooled SPP features are substantially colour-insensitive and a
+real but moderate shift lands in the middle of the range.
+
+Encoder health, checked on the same 300 images: 768 dimensions, mean per-dimension
+standard deviation 0.052, 2 of 768 dimensions constant, mean off-diagonal cosine
+similarity 0.506 between images. The features vary; the floor is a real reading.
 
 The **ceiling is unmeasured**: no dataset far from COCO has been run through this yet, so the
 upper half of the scale has no reference point. That is a gap, and the command's output says
