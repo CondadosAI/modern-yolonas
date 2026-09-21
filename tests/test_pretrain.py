@@ -167,3 +167,31 @@ def test_checkpoint_loads_as_a_distilled_backbone(tmp_path, image_dir):
 
     for key, value in query_state.items():
         assert torch.allclose(fresh.backbone.state_dict()[key], value)
+
+
+def test_lambda_dense_zero_really_skips_the_dense_branch(image_dir):
+    """The CLI documents lambda_dense=0 as MoCo-v2, so it must not run DenseCL.
+
+    Weighting the dense term by zero would still compute the [B, HW, HW]
+    correspondence and still push into the dense memory bank -- the loss value
+    would be right and everything downstream would be wrong about what was run.
+    """
+    net = yolo_nas_s(pretrained=False, num_classes=80)
+    module = DenseCLPretrainModule(
+        model=net, memory_bank_size=8, max_steps=2, warmup_steps=1, lambda_dense=0.0
+    )
+    dataset = UnlabelledImageFolder(image_dir, transform=build_transform(input_size=64))
+    batch = torch.utils.data.default_collate([dataset[i] for i in range(4)])
+
+    calls = []
+    original = DenseCLPretrainModule.match
+    DenseCLPretrainModule.match = staticmethod(
+        lambda q, k: calls.append(1) or original(q, k)
+    )
+    try:
+        loss = module.training_step(batch, 0)
+    finally:
+        DenseCLPretrainModule.match = staticmethod(original)
+
+    assert calls == [], "the dense correspondence ran with lambda_dense=0"
+    assert torch.isfinite(loss)

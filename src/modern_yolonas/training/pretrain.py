@@ -240,6 +240,15 @@ class DenseCLPretrainModule(L.LightningModule):
 
         global_loss = self.global_loss(query_global, key_global)
 
+        # lambda_dense = 0 is documented as "reduces to MoCo-v2", so it has to
+        # actually skip the dense branch. Weighting it by zero instead would still
+        # run the [B, HW, HW] correspondence matmul and still consume slots in the
+        # dense memory bank -- DenseCL with a dead term, not MoCo-v2.
+        if self.lambda_dense == 0:
+            self.log(f"{stage}/loss", global_loss, prog_bar=True, sync_dist=True)
+            self.log(f"{stage}/global_loss", global_loss, sync_dist=True)
+            return global_loss
+
         indices = self.match(query_tokens, key_tokens)
         batch_size, pixels, dim = query_dense.shape
         matched = torch.gather(
