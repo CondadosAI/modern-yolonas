@@ -61,6 +61,8 @@ def train(
     val_images: Annotated[str | None, typer.Option(help="[COCO] Validation images directory. Defaults to <data>/images/val.")] = None,
     train_ann: Annotated[str | None, typer.Option(help="[COCO] Training annotation JSON. Defaults to <data>/annotations/train.json.")] = None,
     val_ann: Annotated[str | None, typer.Option(help="[COCO] Validation annotation JSON. Defaults to <data>/annotations/val.json.")] = None,
+    extra_train_images: Annotated[str | None, typer.Option(help="[COCO] Images of a second training set, trained on alongside the first (e.g. pseudo-labelled unlabeled2017).")] = None,
+    extra_train_ann: Annotated[str | None, typer.Option(help="[COCO] Annotation JSON for --extra-train-images. Its category ids must be the first set's.")] = None,
 ):
     """Train a YOLO-NAS model."""
     from rich.console import Console
@@ -169,6 +171,9 @@ def train(
     if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
 
+        if extra_train_images is not None or extra_train_ann is not None:
+            raise typer.BadParameter("--extra-train-images and --extra-train-ann need --format coco.")
+
         train_dataset = YOLODetectionDataset(data, split="train", transforms=None, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset = YOLODetectionDataset(data, split="val", transforms=val_transforms, input_size=input_size)
         if num_classes == 0:
@@ -195,6 +200,21 @@ def train(
 
         train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=None, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset   = COCODetectionDataset(_val_images,   _val_ann,   transforms=val_transforms,   input_size=input_size)
+
+        if (extra_train_images is None) != (extra_train_ann is None):
+            raise typer.BadParameter("--extra-train-images and --extra-train-ann go together.")
+        if extra_train_ann is not None:
+            from modern_yolonas.data.concat import ConcatDetectionDataset
+
+            # The first set's mapping, not one derived from the extra file: a
+            # pseudo-label subset can lack a rare class, which would shift every
+            # later label by one and train on the wrong classes without a word.
+            extra_dataset = COCODetectionDataset(
+                extra_train_images, extra_train_ann, transforms=None, input_size=input_size,
+                ignore_empty_annotations=ignore_empty, cat_id_to_label=train_dataset.cat_id_to_label,
+            )
+            console.print(f"Extra training set: {len(extra_dataset)} images from {extra_train_ann}")
+            train_dataset = ConcatDetectionDataset([train_dataset, extra_dataset])
 
         val_ann_file = _val_ann
 

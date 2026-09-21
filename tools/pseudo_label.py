@@ -10,10 +10,12 @@ Running it is cheap: one inference pass, offline, once. Keeping a teacher in the
 training loop instead costs 36% of every step forever (see
 ``tools/bench_training.py --teacher``).
 
-Two modes:
+Modes:
 
     label      write a COCO-format annotation file for a directory of images
     validate   label a set that *has* ground truth and score against it
+    sweep      precision and recall per threshold against ground truth
+    filter     cut a labelled file down to a training threshold (no model)
 
 **Run validate before trusting label.** Pseudo-labels fail silently: a wrong
 confidence threshold or a broken class mapping produces a plausible-looking file
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import time
 from pathlib import Path
@@ -277,6 +280,72 @@ def cmd_sweep(args) -> None:
           "unannotated object counts as a false positive.")
 
 
+def select_images(data: dict, count: int, min_score: float, seed: int) -> list[int]:
+    """A reproducible sample of images holding at least one box scored ``min_score``.
+
+    Comparing training thresholds on a subset is only fair if every arm trains on
+    the same images. Sampling from images that keep a positive at the strictest
+    threshold under test guarantees that: no arm loses an image for having become
+    empty, so the arms differ in their labels and nothing else.
+    """
+    eligible = sorted({a["image_id"] for a in data["annotations"] if a["score"] >= min_score})
+    if count > len(eligible):
+        raise SystemExit(f"asked for {count} images, only {len(eligible)} have a box "
+                         f"scored {min_score} or more")
+    return sorted(random.Random(seed).sample(eligible, count))
+
+
+def filter_annotations(data: dict, positive: float, ignore_below: float | None = None,
+                       image_ids: list[int] | None = None) -> dict:
+    """Keep boxes scored ``positive`` or more; optionally mark a band as ignored.
+
+    Boxes scored in ``[ignore_below, positive)`` are written with ``iscrowd: 1``.
+    Training reads that as a region to ignore, the path COCO's own crowd regions
+    take: the anchors under the box are neither object nor background. That is
+    the honest label for a box the teacher is unsure of. Dropping it would instead
+    teach background wherever the teacher hesitated over a real object.
+    """
+    if ignore_below is not None and ignore_below >= positive:
+        raise SystemExit(f"--ignore-below {ignore_below} must be below --positive {positive}")
+    keep = None if image_ids is None else set(image_ids)
+    floor = positive if ignore_below is None else ignore_below
+
+    annotations = []
+    for a in data["annotations"]:
+        if keep is not None and a["image_id"] not in keep:
+            continue
+        if a["score"] >= positive:
+            annotations.append(a)
+        elif a["score"] >= floor:
+            annotations.append({**a, "iscrowd": 1})
+
+    images = data["images"] if keep is None else [im for im in data["images"] if im["id"] in keep]
+    info = {**data.get("info", {}), "positive": positive, "ignore_below": ignore_below}
+    return {**data, "info": info, "images": images, "annotations": annotations}
+
+
+def cmd_filter(args) -> None:
+    data = json.loads(args.labels.read_text())
+    image_ids = None
+    if args.subset:
+        min_score = args.subset_min_score if args.subset_min_score is not None else args.positive
+        image_ids = select_images(data, args.subset, min_score, args.seed)
+    out = filter_annotations(data, args.positive, args.ignore_below, image_ids)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("w") as handle:
+        json.dump(out, handle)
+
+    n = len(out["images"])
+    positives = [a for a in out["annotations"] if not a["iscrowd"]]
+    ignored = len(out["annotations"]) - len(positives)
+    empty = n - len({a["image_id"] for a in positives})
+    print(f"{n} images, {len(positives) / max(1, n):.2f} positive and "
+          f"{ignored / max(1, n):.2f} ignored boxes per image -> {args.out}")
+    if empty:
+        print(f"{empty} images have no positive box; training with --ignore-empty drops them, "
+              "so arms meant to share images will not")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -309,6 +378,20 @@ def main() -> None:
                    default=[0.3, 0.4, 0.5, 0.6, 0.7])
     p.add_argument("--iou", type=float, default=0.5)
     p.set_defaults(func=cmd_sweep)
+
+    p = sub.add_parser("filter", help="cut a labelled file down to a training threshold")
+    p.add_argument("--labels", type=Path, required=True, help="output of `label`")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--positive", type=float, required=True,
+                   help="boxes scored this or more become training targets")
+    p.add_argument("--ignore-below", type=float, default=None,
+                   help="boxes scored from this up to --positive are ignored, not dropped")
+    p.add_argument("--subset", type=int, default=0, help="sample this many images (0 = all)")
+    p.add_argument("--subset-min-score", type=float, default=None,
+                   help="sample only images with a box scored this or more; set it to the "
+                        "strictest --positive under comparison (default: --positive)")
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(func=cmd_filter)
 
     args = parser.parse_args()
     args.func(args)
