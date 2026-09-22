@@ -5,8 +5,8 @@ trained from scratch and published under Apache-2.0 — so that using YOLO-NAS c
 stops depending on Deci's non-commercial checkpoints. What gets funded gets published: the
 weights, the numbers, the failures and the configs, for everyone.
 
-If that is worth something to you or your company, the tiers are on the
-[CondadosAI sponsors page](https://github.com/sponsors/CondadosAI).
+Sponsorship is not open yet: the payout account is still being set up, so the sponsors page
+is not taking anything. This file is here for when it is.
 
 ## Companies
 

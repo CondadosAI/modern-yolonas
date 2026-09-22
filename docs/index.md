@@ -46,13 +46,6 @@ cv2.imwrite("output.jpg", det.annotate(image, detections))
 
 ## Sponsoring
 
-Sponsorship funds the GPU time behind this project — chiefly the from-scratch COCO weights
-that will replace Deci's non-commercial checkpoints. What that costs and where the money goes
-is on the [sponsors page](https://github.com/sponsors/CondadosAI); sponsors are listed in
-[SPONSORS.md](https://github.com/CondadosAI/modern-yolonas/blob/main/SPONSORS.md).
-
-<!-- sponsor-logos:start -->
-<p align="center">
-  <sub><i>No company sponsors yet — yours would be the first.</i></sub>
-</p>
-<!-- sponsor-logos:end -->
+GitHub Sponsors for this project is not open yet — the payout account is still being set up.
+If you want help with your own models, that is not sponsorship and has its own calendar:
+[cal.com/luis-condados](https://cal.com/luis-condados).
