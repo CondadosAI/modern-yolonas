@@ -49,16 +49,22 @@ categories:
 
   # Manual override. The highest matching increment wins, so a label can raise a
   # bump but never lower one. This is how the `dev` -> `main` release pull request
-  # gets its version: its title is `release: ...`, which is a type no rule above
-  # matches, so without a label it would fall through to the patch fallback.
+  # gets its version: its title is `chore: ...`, which the rules above resolve to a
+  # patch, so a release carrying features needs the label.
+  #
+  # The labels are namespaced because Dependabot applies a bare `major`, `minor` or
+  # `patch` label to its own pull requests whenever the repository has one, to say
+  # how far a *dependency* moved. The resolver reads every pull request merged since
+  # the last release, so a grouped bump containing one major dependency update
+  # drafted v0.6.0 as v1.0.0.
   - type: "version-resolver"
     semver-increment: "major"
     when:
-      label: "major"
+      label: "release:major"
   - type: "version-resolver"
     semver-increment: "minor"
     when:
-      label: "minor"
+      label: "release:minor"
 
   # Everything else: patch. No `when`, so it matches unconditionally.
   - type: "version-resolver"
