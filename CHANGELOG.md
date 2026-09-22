@@ -12,6 +12,222 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **TensorRT export.** `yolonas export --format tensorrt` builds an engine, and
+  `EngineRunner` runs one with torch owning the CUDA buffers. `--hardware-compatible`
+  builds an `AMPERE_PLUS` engine that loads on any sm_80+ GPU rather than only on the
+  card it was built on — measured cost on an RTX 3060 Laptop: 19% at 320, 10% at 640.
+  `--version-compatible` is a separate flag with a separate cost.
+- **`--target end2end`**, which bakes NonMaxSuppression into the graph: one
+  `detections [D, 7]` output instead of raw `[N, 4]` + `[N, 80]` tensors. It does not
+  make inference faster — ONNX's NonMaxSuppression is slower than torchvision's — and
+  the export guide says so with the numbers. What it buys is a single deployable file
+  with no Python in the inference path. The Frigate target is now this graph plus its
+  uint8-BGR input phase, rather than a second implementation.
+- **OpenVINO INT8** through `--precision int8 --calibration-dir`, which previously
+  could not compile at all.
+- `onnx-gpu` and `tensorrt` extras. `onnx` and `onnx-gpu` are declared as conflicting,
+  because both install a module named `onnxruntime`.
+- `modern_yolonas.export` as a real module — `export_onnx`, `export_openvino`,
+  `build_engine`, `EngineRunner`, `onnx_session` — so the CLI, the benchmarks and the
+  zoo all build from one graph.
+- `examples/runtime_matrix.py` and `examples/render_runtime_matrix.py`: latency across
+  runtime x device x precision x input size, recording the conditions the number
+  depends on (power source, SM clock under load, every runtime's version) and the
+  reason for each leg it could not measure.
+- `examples/runtime_accuracy.py`: COCO AP for an exported artifact rather than for the
+  PyTorch model, so an INT8 file's accuracy is measured.
+- `examples/export_zoo.py` and `examples/publish_zoo.py`: the full pre-exported set
+  with a manifest, and its Hugging Face model card.
+- `docs/guides/arm-support.md` — a plan, explicitly not a measurement.
+- COCO val2017 accuracy at 320 for all three variants, and an FPS column beside every
+  latency figure — labelled as the reciprocal of single-stream latency, which is not
+  throughput.
+- CI installs the `onnx` and `openvino` extras. Without them `tests/test_export.py`
+  skipped in its entirety and both paths shipped untested.
+
+### Fixed
+- **`EngineRunner` did not order its CUDA stream against torch's**, so TensorRT could
+  read an input whose copy had not landed. Nothing failed — the engine returned
+  plausible numbers, and COCO AP for YOLO-NAS-S at 640 came out at 31.4 instead of
+  47.3. Ruled out by experiment first: FP16 arithmetic (PyTorch on the same half
+  graph is exact), the exported FP16 ONNX (ONNX Runtime reads it at full accuracy)
+  and `AMPERE_PLUS` (the native engine was marginally worse).
+- OpenVINO INT8 export could not compile at all; the head's decode tail is now
+  excluded from quantization.
+
+### Changed
+- ONNX export writes weights into the file instead of a `.onnx.data` sidecar.
+  PyTorch's exporter defaults the other way; a published artifact that silently needs
+  a second file is a support burden, and TensorRT's byte parser cannot resolve it.
+- The default ONNX opset is 18, which is the lowest the current PyTorch exporter emits
+  natively.
+
+### Removed
+- `examples/bench_devices.py` and `docs/benchmarks/latency_matrix.{md,json}`. The script
+  read OpenVINO IR files it never produced and calibrated against a video that is not in
+  the repository, so its table could not be regenerated. `examples/runtime_matrix.py`
+  replaces it.
+
+### Added
+- **`yolonas track`, and `DeepHMSort`** — a built-in multi-object tracker, implementing
+  [Deep HM-SORT](https://arxiv.org/abs/2406.12081) on top of
+  [Deep-EIoU](https://arxiv.org/abs/2306.13074). The association cost is the harmonic mean
+  of the expansion-IoU distance and the appearance distance rather than their minimum, so a
+  lookalike cannot steal an id on appearance alone; and lost tracklets are kept for the
+  whole sequence, so an object that leaves the frame and returns is re-identified rather
+  than renumbered. No Kalman filter — expanded boxes stand in for a motion model.
+- `DeepHMSort.update_with_detections(detections) -> sv.Detections` matches
+  `sv.ByteTrack`'s contract, so supervision annotators, zones and traces work unchanged.
+  The appearance vectors are read from `detections.data["embedding"]`, which means any
+  `(N, D)` array — including a purpose-trained re-identification model's — can be
+  associated on, and that without the key the tracker degrades to motion-only.
+- `YoloNASDetector.track_video`, `track_video_to_file` and `annotate_tracks`. Tracking
+  reuses the per-object embeddings from the detection pass, so appearance-aware tracking
+  costs one forward pass per frame rather than two. Output is coloured by track id.
+- `modern_yolonas.tracking.matching` — expansion IoU, cosine distance, the harmonic-mean
+  fusion and the gated assignment, as plain numpy, usable on their own to diagnose a frame
+  that went wrong.
+- `scipy` is now a declared dependency (it was already present transitively via
+  `supervision` and `albumentations`); the tracker imports `linear_sum_assignment` directly.
+
+### Notes
+- **The paper's HOTA and ID-switch numbers are not inherited.** Its "Deep" is an OSNet
+  re-identification model trained on player crops; what this tracker gets is YOLO-NAS `c5`
+  features pooled per box — a by-product of detection, not a representation trained to tell
+  two people apart. The algorithm is implemented as described, but how well the appearance
+  cue performs has not been measured on a re-identification benchmark. `--fusion min` and
+  `--no-appearance` exist so the comparison can be run on your own footage.
+- **The tracker departs from the paper on one default.** The paper never discards a
+  tracklet; here a lost track is kept for `max_lost_seconds=2.0` and then dropped. Keeping
+  everything is a fixed-camera, closed-pitch assumption — on an open scene the pool grows
+  with every object ever seen, and old boxes wait around to catch a weak detection and
+  resurrect an id on nothing. `max_lost_seconds=None` / `--keep-all-tracks` restores the
+  paper's behaviour.
+- The budget is in **seconds of video**, not frames: `DeepHMSort.frame_rate` converts, and
+  `track_video` sets it from the clip it opens (dividing by `skip_frames + 1`), so the same
+  number means the same span at 25 and at 60 fps. Two seconds is Deep-EIoU's own default
+  (`track_buffer` 60 at 30 fps), and on a 100-frame clip of the Shibuya crossing it
+  reproduces the unlimited result exactly — 17 ids either way — where one second costs two
+  extra ids and splits a 53-frame track in half.
+- Where the paper is ambiguous — its 0.5 "threshold below which we discard tracks" fits
+  both `new_track_threshold` and `proximity_threshold` — the reading is stated in the
+  docstring. Deep-EIoU's default for the latter is also 0.5, so both readings agree on the
+  shipped configuration.
+- A gated appearance cost falls back to the motion cost alone rather than being fused with
+  a placeholder. `harmonic_mean(d, 1) = 2d/(d+1) > d`, so fusing would charge a pair for
+  evidence it never had, and would do it on exactly the distant pairs the expansion
+  scale-up exists to reach — cancelling the scale-up. A test pins this.
+- `expand_boxes` grows each side by `e` times the box's own width or height, so the
+  expanded box is `(1 + 2e)` times as large. The reference Deep-EIoU implementation's
+  `expand()` adds half the *expanded* width per side rather than half the increase, making
+  its boxes `2(1 + e)` times as large for the same `e`; the values do not port across.
+
+### Added
+- **`yolonas export --target objects`** — a self-contained ONNX graph with NMS and ROI
+  pooling inside it: image in, `detections [D, 7]` and `object_embedding [D, E]` out, with
+  row *i* of the vectors describing row *i* of the boxes, plus the image-level `embedding`.
+  This is the deployment form of `predict(..., Task.EMBED_OBJECTS)`, which until now had
+  no export.
+- It is built by graph surgery rather than tracing, because which boxes exist depends on
+  which survive NMS — a data-dependent shape `torch.export` will not produce. A base graph
+  emits its feature maps as outputs, and `NonMaxSuppression`, `RoiAlign`, the grid pooling
+  and the L2 normalization are added as ONNX nodes on top; the feature maps are dropped
+  from the final model. `DetectAndFeatureGraph` is that base, `export/objects.py` the
+  surgery.
+- Boxes are clipped to `valid_region` before being embedded, matching `embed_boxes` and
+  `predict(..., Task.EMBED_OBJECTS)`. A box that clips to zero area comes back as a zero
+  vector rather than NaN — the graph spells out `F.normalize`'s `max(norm, eps)` instead
+  of using `LpNormalization`, which has no such guard.
+- `export/frigate.py`'s constant helper is now public as `make_constant`, shared with the
+  new surgery.
+
+### Notes
+- `--max-detections` is `max_output_boxes_per_class` for the `objects` and `frigate`
+  targets: the ONNX NMS operator counts per class, where `postprocess` caps the total per
+  image. Exact detection parity with `postprocess` is not claimed — it uses
+  `torchvision.ops.batched_nms` behind a top-1024 prefilter — but the vectors are pinned
+  to match PyTorch ROI pooling on whatever boxes the graph emits.
+
+
+### Added
+- **ONNX export for embeddings.** `yolonas export --target embedding` emits a graph that
+  produces feature vectors with no detection head in it; `--target combined` emits
+  `pred_bboxes`, `pred_scores` and `embedding` from a single backbone pass — the
+  deployment form of `predict(..., Task.DETECT | Task.EMBED)`. `--embed-layers`,
+  `--embed-pooling` and `--no-normalize` configure the pooling, matching `FeaturePooler`.
+  Both work for OpenVINO too.
+- Both graphs take a second input, `valid_region` (`[B, 4]` int64, from
+  `modern_yolonas.inference.embed.valid_region`), carrying the letterbox geometry the
+  pooling needs. It cannot be a constant — it depends on the image's aspect ratio — and it
+  cannot be dropped without reintroducing the aspect-ratio clustering the pooling exists to
+  avoid.
+- `FeaturePooler.pool_images_masked` — the traceable sibling of `pool_images`, reducing
+  over a mask built from the region tensor rather than slicing with Python ints. The two
+  are pinned to each other by a test that runs without onnx installed, across eight aspect
+  ratios, both canvases, all seven layers and both pooling modes.
+- `examples/embed_onnx.py` — retrieval over a folder with an exported graph.
+- `tests/test_export.py` — the project's first ONNX tests: ORT against PyTorch for both
+  graphs, dynamic batch, and a check that `valid_region` actually reaches the pooling.
+
+### Changed
+- `yolonas export --opset` now defaults to **18**, was 17. Torch's dynamo exporter (the
+  default since 2.6) has no implementations below 18, so asking for 17 exported at 18 and
+  then failed to convert back down — printing a traceback and silently leaving the model
+  at 18. The flag now says what actually happens.
+
+### Fixed
+- `yolonas export --format onnx` wrote the weights to a sibling `<name>.onnx.data` and
+  reported only the `.onnx` as the output. An `.onnx` shipped without that sidecar loads
+  and then fails at the first inference. All ONNX targets now emit one self-contained
+  file. (Torch's dynamo exporter, which `torch.onnx.export` defaults to from 2.6, turned
+  this on; the `frigate` target was unaffected because its graph surgery already
+  re-serialized inline.)
+
+
+### Added
+- **Feature embeddings.** `YoloNASEmbedder` turns images — or boxes within them — into
+  fixed-length vectors from the backbone and neck, for image retrieval, near-duplicate
+  search, clustering and re-identification. `embed_batch` for galleries, `embed_boxes`
+  for per-object vectors via `roi_align` on the feature maps (one forward pass per frame,
+  and it takes `supervision.Detections.xyxy` as it comes). Vectors are L2-normalized by
+  default, so a dot product is the cosine similarity.
+- **Detections and embeddings from a single forward pass.**
+  `YoloNASDetector.predict(image, Task.DETECT | Task.EMBED | Task.EMBED_OBJECTS)` returns
+  a `Prediction` carrying whichever outputs were asked for; `predict_batch` is the batched
+  form. The backbone and neck run once — they are shared by detection and embedding, so
+  getting both no longer costs two passes. Per-object vectors go in
+  `detections.data["embedding"]`, so they follow the boxes through supervision's slicing.
+  `Task.EMBED_OBJECTS` implies `Task.DETECT`. `detector(image)` and `detect_batch` are
+  unchanged in behaviour and are now thin wrappers over the same path.
+- `FeaturePooler` holds the layer/pooling/normalize choice, so `YoloNASDetector` and
+  `YoloNASEmbedder` share one implementation rather than two that can drift. Pass one as
+  `YoloNASDetector(..., embedding=FeaturePooler(layers=("c4", "c5")))`.
+- Object embeddings are taken from the box **after** it is clipped to the frame, in both
+  `embed_boxes` and `Task.EMBED_OBJECTS`, so the two agree exactly and a detection running
+  off the edge is described by the part of it that is visible rather than by padding.
+- `YoloNAS.forward_features` returns the raw maps — `c2`–`c5` from the backbone and
+  `p3`–`p5` from the neck — for callers that want to pool them themselves. Additive: the
+  `forward` signature that ONNX export, the Frigate graph and the parity tests depend on
+  is untouched.
+- Pooling excludes the letterbox padding. Averaging the gray canvas in makes embeddings
+  cluster by aspect ratio rather than content: measured with the COCO `yolo_nas_s`
+  weights, full-canvas pooling scores an unrelated noise image against a street photo at
+  0.958 cosine — higher than that photo against a second real photo — purely because both
+  share a padding geometry. Pooling only the valid region puts the pair at 0.396.
+- `tutorials/fiftyone/03_embedding_space.ipynb` — compute the embeddings over a dataset,
+  project with UMAP and explore the space in the FiftyOne App, including near-duplicate
+  detection and an object-level (patch) embedding space.
+- `examples/embed_image.py` — image retrieval over a folder.
+- Docs: [embeddings guide](docs/guides/embeddings.md) and `YoloNASEmbedder` API page.
+
+### Changed
+- Funding now points at the **CondadosAI organization** rather than a personal account:
+  `github.com/sponsors/Gabriellgpc` has no Sponsors profile, so the `Funding` URL in the
+  package metadata, the README badge and the docs site were all dead links. Added
+  `SPONSORS.md`; the README keeps the ask and leaves the argument for it — the Deci
+  license, the cost of a from-scratch COCO run — to the sponsors page and `ROADMAP.md`.
+
 ## [0.5.0] - 2026-09-18
 
 ### Changed — breaking

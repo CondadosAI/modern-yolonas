@@ -32,20 +32,25 @@ nav:
   - CLI Reference: cli.md
   - API Reference:
     - Detector: api/detector.md
+    - Embeddings: api/embedder.md
+    - Tracking: api/tracker.md
     - YoloNAS Model: api/model.md
     - Training: api/training.md
     - Data: api/data.md
     - Weights: api/weights.md
   - Guides:
     - Training: guides/training.md
+    - Embeddings: guides/embeddings.md
+    - Tracking: guides/tracking.md
     - Training code review (2026-09-13): guides/training-review-2026-09-13.md
     - Export: guides/export.md
+    - ARM support (plan): guides/arm-support.md
     - Extending: guides/extending.md
   - Architecture: architecture.md
   - Benchmarks:
     - Model table: benchmarks/model_table.md
     - Parity vs super-gradients: benchmarks/parity.md
-    - Latency matrix: benchmarks/latency_matrix.md
+    - Runtime matrix: benchmarks/runtime_matrix.md
 
 # Provenance/licensing notes for the image assets; not a site page.
 exclude_docs: |

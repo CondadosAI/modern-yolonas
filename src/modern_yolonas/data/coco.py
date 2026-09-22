@@ -8,6 +8,8 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+from modern_yolonas.coco import CROWD_CLASS
 from torch.utils.data import Dataset
 
 Transform = Callable[[np.ndarray, dict[str, Any]], tuple[np.ndarray, dict[str, Any]]]
@@ -21,6 +23,10 @@ class COCODetectionDataset(Dataset):
         ann_file: Path to annotation JSON (e.g., ``coco/annotations/instances_train2017.json``).
         transforms: ``(image, targets) → (image, targets)`` callable.
         input_size: Target input size (used by transforms).
+        cat_id_to_label: Category id → label index to use instead of deriving one
+            from this file. Required when this dataset trains alongside another:
+            the derived mapping only counts categories that have annotations, so a
+            file missing one rare class would shift every later label by one.
     """
 
     def __init__(
@@ -31,6 +37,7 @@ class COCODetectionDataset(Dataset):
         input_size: int = 640,
         cache_annotations: bool = True,
         ignore_empty_annotations: bool = True,
+        cat_id_to_label: dict[int, int] | None = None,
     ):
         from pycocotools.coco import COCO
 
@@ -45,8 +52,21 @@ class COCODetectionDataset(Dataset):
         # Excludes unused categories (e.g. a "background" id=0 that carries no annotations)
         # so that the resulting label indices are always 0-indexed and contiguous.
         ann_cat_ids = {ann["category_id"] for ann in self.coco.dataset.get("annotations", [])}
-        cat_ids = sorted(c for c in self.coco.getCatIds() if c in ann_cat_ids)
-        self.cat_id_to_label = {cat_id: i for i, cat_id in enumerate(cat_ids)}
+        if cat_id_to_label is None:
+            cat_ids = sorted(c for c in self.coco.getCatIds() if c in ann_cat_ids)
+            self.cat_id_to_label = {cat_id: i for i, cat_id in enumerate(cat_ids)}
+        else:
+            unknown = {
+                ann["category_id"] for ann in self.coco.dataset.get("annotations", [])
+                if not ann.get("iscrowd", 0) and ann["category_id"] not in cat_id_to_label
+            }
+            if unknown:
+                raise ValueError(
+                    f"{ann_file} uses category ids missing from the given mapping: "
+                    f"{sorted(unknown)}"
+                )
+            self.cat_id_to_label = dict(cat_id_to_label)
+            cat_ids = sorted(self.cat_id_to_label, key=self.cat_id_to_label.__getitem__)
 
         # Ordered list of class names aligned with label indices 0..N-1
         cats = self.coco.loadCats(cat_ids)
@@ -76,10 +96,21 @@ class COCODetectionDataset(Dataset):
         anns = self.coco.loadAnns(ann_ids)
         targets = []
         for ann in anns:
-            if ann.get("iscrowd", 0):
-                continue
             x, y, bw, bh = ann["bbox"]
-            cls = self.cat_id_to_label[ann["category_id"]]
+            if bw <= 0 or bh <= 0:
+                # COCO train2017 carries two annotations with a zero-height box.
+                # They are not trainable targets, and Albumentations rejects them
+                # outright -- `y_max is less than or equal to y_min` -- which took
+                # a training run down about a thousand steps in, once the images
+                # happened to be drawn. pycocotools ignores zero-area annotations
+                # when scoring, so nothing is lost by never emitting them. Applies
+                # to crowd regions too: a zero-area one covers no anchors, so it
+                # would only be a box waiting to crash a transform.
+                continue
+            # Crowd regions are kept, marked, and used by the loss to ignore the
+            # anchors they cover. Dropping them taught the model that a crowd is
+            # background; training on them would teach one box around many objects.
+            cls = CROWD_CLASS if ann.get("iscrowd", 0) else self.cat_id_to_label[ann["category_id"]]
             xc = (x + bw / 2) / w_img
             yc = (y + bh / 2) / h_img
             nw = bw / w_img

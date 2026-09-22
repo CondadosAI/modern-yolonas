@@ -30,7 +30,11 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --dev
+        # The export extras are not optional for CI even though they are optional for
+        # users: without them `tests/test_export.py` skips entirely and the ONNX and
+        # OpenVINO paths ship untested. TensorRT is the one that cannot be here — it
+        # needs an NVIDIA GPU, which these runners do not have.
+        run: uv sync --dev --extra onnx --extra openvino
 
       - name: Lint
         run: uv run ruff check src/ tests/

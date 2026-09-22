@@ -48,9 +48,12 @@ def train(
     gradient_accum: Annotated[int, typer.Option(help="Gradient accumulation steps (1 = disabled).")] = 1,
     early_stopping_patience: Annotated[int, typer.Option(help="Stop training if train loss doesn't improve for N epochs (0 = disabled).")] = 0,
     early_stopping_min_delta: Annotated[float, typer.Option(help="Minimum improvement in train loss to count as progress.")] = 1e-4,
-    close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close).")] = 0,
+    close_mosaic_epochs: Annotated[int, typer.Option(help="Train the final N epochs without Mosaic/Mixup (0 = never close). Default comes from the recipe.")] = -1,
+    init_backbone: Annotated[Path | None, typer.Option(help="Initialise the backbone from a `yolonas distill` checkpoint. Mutually exclusive with --pretrained, which loads Deci's EULA weights.")] = None,
+    recipe: Annotated[str, typer.Option(help="Named recipe: legacy, coco or rf100vl. 'coco' is the one that reproduces published COCO results — it uses mosaic and letterboxes, which 'legacy' does not.")] = "legacy",
     grad_clip: Annotated[float, typer.Option(help="Clip gradients to this max norm (0 = disabled).")] = 10.0,
     amp: Annotated[bool, typer.Option("--amp/--no-amp", help="Automatic mixed precision training (fp16). Reduces VRAM and speeds up training on Ampere+ GPUs.")] = True,
+    channels_last: Annotated[bool, typer.Option("--channels-last/--no-channels-last", help="Hold activations in NHWC. Faster for convolutions under AMP on Ampere+; changes layout only, not results.")] = True,
     num_gpus: Annotated[int, typer.Option(help="Number of GPUs for DDP training. 1 = single GPU. Values >1 spawn child processes via torchrun.")] = 1,
     ignore_empty: Annotated[bool, typer.Option("--ignore-empty/--no-ignore-empty", help="Skip images with zero annotations (background-only samples).")] = True,
     # COCO-specific path overrides
@@ -58,6 +61,8 @@ def train(
     val_images: Annotated[str | None, typer.Option(help="[COCO] Validation images directory. Defaults to <data>/images/val.")] = None,
     train_ann: Annotated[str | None, typer.Option(help="[COCO] Training annotation JSON. Defaults to <data>/annotations/train.json.")] = None,
     val_ann: Annotated[str | None, typer.Option(help="[COCO] Validation annotation JSON. Defaults to <data>/annotations/val.json.")] = None,
+    extra_train_images: Annotated[str | None, typer.Option(help="[COCO] Images of a second training set, trained on alongside the first (e.g. pseudo-labelled unlabeled2017).")] = None,
+    extra_train_ann: Annotated[str | None, typer.Option(help="[COCO] Annotation JSON for --extra-train-images. Its category ids must be the first set's.")] = None,
 ):
     """Train a YOLO-NAS model."""
     from rich.console import Console
@@ -121,7 +126,8 @@ def train(
 
     # -----------------------------------------------------------------------
     from modern_yolonas import yolo_nas_s, yolo_nas_m, yolo_nas_l
-    from modern_yolonas.data.transforms import Compose, HSVAugment, HorizontalFlip, RandomAffine, RandomResizedCrop, LetterboxResize, RandomChannelSwap, Normalize, Mixup
+    from modern_yolonas.training.recipes import RECIPES
+    from modern_yolonas.training.run import build_transforms
     import lightning as L
     from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 
@@ -131,31 +137,44 @@ def train(
     console = Console()
     data_path = Path(data)
 
-    train_transforms = Compose([
-        HSVAugment(p=0.5),
-        RandomResizedCrop(size=input_size, scale=(0.05, 0.8), ratio=(0.75, 1.33), p=1.0),
-        HorizontalFlip(),
-        RandomAffine(degrees=0.0, translate=0.25, scale=(0.5, 1.5)),
-        RandomChannelSwap(p=0.5),
-        # LetterboxResize(target_size=input_size),
-        # Mixup is appended here after the dataset is created (needs dataset reference)
-        Normalize(),
-    ])
-    # Validation must see the whole image, aspect preserved — that is what detection
-    # mAP is defined over, and it is what `yolonas eval` and the inference path use.
-    # A CenterCrop here deletes edge objects, and raises outright on any image smaller
-    # than input_size (most of COCO val2017 at 640).
-    val_transforms = Compose([
-        LetterboxResize(target_size=input_size),
-        Normalize()
-    ])
+    if recipe not in RECIPES:
+        raise typer.BadParameter(f"unknown recipe {recipe!r}; choose from {', '.join(RECIPES)}")
+    active = {**RECIPES[recipe], "input_size": input_size}
+    aug = active["augmentations"]
+
+    # A recipe supplies defaults; anything the caller actually typed wins. "Actually
+    # typed" is inferred from the value still matching typer's default, which is the
+    # same convention the YAML config path uses.
+    if epochs == 300:
+        epochs = int(active["epochs"])
+    if batch_size == 32:
+        batch_size = int(active["batch_size"])
+    if lr == 2e-4:
+        lr = float(active["lr"])
+    if close_mosaic_epochs < 0:
+        close_mosaic_epochs = int(aug.get("close_mosaic_epochs", 0))
+
+    console.print(
+        f"[bold]recipe[/bold]={recipe}  optimizer={active['optimizer']}  "
+        f"mosaic={'on' if aug.get('mosaic') else 'off'}  "
+        f"geometry={'fused crop' if aug.get('fused_geometry') else 'letterbox'}  "
+        f"close_mosaic={close_mosaic_epochs}"
+    )
+
+    # Transforms are assigned after the datasets exist: Mosaic and Mixup need a
+    # dataset reference to draw their extra images from.
+    train_transforms = None
+    val_transforms = build_transforms(active, train=False)
 
     val_ann_file: Path | None = None
 
     if data_format == DataFormat.yolo:
         from modern_yolonas.data.yolo import YOLODetectionDataset
 
-        train_dataset = YOLODetectionDataset(data, split="train", transforms=train_transforms, input_size=input_size, ignore_empty_annotations=ignore_empty)
+        if extra_train_images is not None or extra_train_ann is not None:
+            raise typer.BadParameter("--extra-train-images and --extra-train-ann need --format coco.")
+
+        train_dataset = YOLODetectionDataset(data, split="train", transforms=None, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset = YOLODetectionDataset(data, split="val", transforms=val_transforms, input_size=input_size)
         if num_classes == 0:
             num_classes = train_dataset.num_classes
@@ -179,16 +198,39 @@ def train(
         if not _val_ann.exists() and (data_path / "annotations" / "instances_val2017.json").exists():
             _val_ann = data_path / "annotations" / "instances_val2017.json"
 
-        train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=train_transforms, input_size=input_size, ignore_empty_annotations=ignore_empty)
+        train_dataset = COCODetectionDataset(_train_images, _train_ann, transforms=None, input_size=input_size, ignore_empty_annotations=ignore_empty)
         val_dataset   = COCODetectionDataset(_val_images,   _val_ann,   transforms=val_transforms,   input_size=input_size)
+
+        if (extra_train_images is None) != (extra_train_ann is None):
+            raise typer.BadParameter("--extra-train-images and --extra-train-ann go together.")
+        if extra_train_ann is not None:
+            from modern_yolonas.data.concat import ConcatDetectionDataset
+
+            # The first set's mapping, not one derived from the extra file: a
+            # pseudo-label subset can lack a rare class, which would shift every
+            # later label by one and train on the wrong classes without a word.
+            extra_dataset = COCODetectionDataset(
+                extra_train_images, extra_train_ann, transforms=None, input_size=input_size,
+                ignore_empty_annotations=ignore_empty, cat_id_to_label=train_dataset.cat_id_to_label,
+            )
+            console.print(f"Extra training set: {len(extra_dataset)} images from {extra_train_ann}")
+            train_dataset = ConcatDetectionDataset([train_dataset, extra_dataset])
 
         val_ann_file = _val_ann
 
         if num_classes == 0:
             num_classes = len(train_dataset.cat_id_to_label)
 
-    # Wire Mixup now that we have a dataset (placed just before Normalize)
-    train_transforms.transforms.insert(-1, Mixup(train_dataset, prob=0.5))
+    train_transforms = build_transforms(active, train=True, dataset=train_dataset)
+    train_dataset.transforms = train_transforms
+
+    if len(train_dataset) > 50_000 and not aug.get("mosaic"):
+        console.print(
+            f"[yellow]{len(train_dataset)} training images with recipe {recipe!r}, which has no "
+            f"mosaic.[/yellow]\n"
+            f"[yellow]Every published COCO-scale recipe uses it. To switch:[/yellow] "
+            f"--recipe coco"
+        )
 
     # Resolve class names from dataset (used for annotation in val image logging)
     class_names: list[str] | None = getattr(train_dataset, "class_names", None)
@@ -199,6 +241,12 @@ def train(
 
     # Build model -------------------------------------------------------
     builders = {"yolo_nas_s": yolo_nas_s, "yolo_nas_m": yolo_nas_m, "yolo_nas_l": yolo_nas_l}
+    if init_backbone is not None and pretrained:
+        raise typer.BadParameter(
+            "--init-backbone and --pretrained both set the backbone. Pass "
+            "--no-pretrained alongside --init-backbone."
+        )
+
     if pretrained and num_classes != 80:
         # Transfer learning: load pretrained backbone+neck with strict=True,
         # then swap heads for a freshly initialised num_classes version.
@@ -213,6 +261,15 @@ def train(
         console.print(f"Building {model.value} (pretrained={pretrained}, num_classes={num_classes})...")
         yolo_model = builders[model.value](pretrained=pretrained, num_classes=num_classes)
 
+    if init_backbone is not None:
+        from modern_yolonas.weights import load_distilled_backbone
+
+        loaded = load_distilled_backbone(yolo_model, init_backbone)
+        console.print(
+            f"[green]Backbone initialised from {init_backbone} "
+            f"({loaded} tensors). Neck and heads stay at their initialisation.[/green]"
+        )
+
     if compile_model:
         import torch
         yolo_model = torch.compile(yolo_model)
@@ -224,9 +281,13 @@ def train(
         model=yolo_model,
         num_classes=num_classes,
         lr=lr,
+        optimizer_name=active["optimizer"],
+        weight_decay=active["weight_decay"],
+        cosine_final_lr_ratio=active.get("cosine_final_lr_ratio", 0.1),
         warmup_steps=warmup_steps,
         val_ann_file=val_ann_file,
         input_size=input_size,
+        channels_last=channels_last,
     )
 
     data_module = DetectionDataModule(

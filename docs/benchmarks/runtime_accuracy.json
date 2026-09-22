@@ -1,0 +1,110 @@
+[
+  {
+    "artifact": "build/zoo/yolo_nas_s_320_fp16.xml",
+    "runtime": "openvino:CPU",
+    "input_size": 320,
+    "nms_iou": 0.7,
+    "mAP": 38.36,
+    "mAP_50": 53.8,
+    "mAP_75": 41.4,
+    "mAP_small": 13.69,
+    "mAP_medium": 43.1,
+    "mAP_large": 64.08
+  },
+  {
+    "artifact": "build/zoo/yolo_nas_s_320_fp16_ampere_plus.engine",
+    "runtime": "tensorrt",
+    "input_size": 320,
+    "nms_iou": 0.7,
+    "mAP": 38.36,
+    "mAP_50": 53.83,
+    "mAP_75": 41.38,
+    "mAP_small": 13.68,
+    "mAP_medium": 43.07,
+    "mAP_large": 64.08
+  },
+  {
+    "artifact": "build/zoo/yolo_nas_s_320_int8.xml",
+    "runtime": "openvino:CPU",
+    "input_size": 320,
+    "nms_iou": 0.7,
+    "mAP": 37.92,
+    "mAP_50": 53.35,
+    "mAP_75": 40.64,
+    "mAP_small": 13.06,
+    "mAP_medium": 42.83,
+    "mAP_large": 62.97
+  },
+  {
+    "artifact": "build/native640_fp32.engine",
+    "runtime": "tensorrt",
+    "input_size": 640,
+    "nms_iou": 0.7,
+    "mAP": 47.33,
+    "mAP_50": 64.4,
+    "mAP_75": 51.78,
+    "mAP_small": 28.51,
+    "mAP_medium": 52.85,
+    "mAP_large": 63.58
+  },
+  {
+    "artifact": "build/zoo/yolo_nas_s_640_fp16.onnx",
+    "runtime": "onnx:cpu",
+    "input_size": 640,
+    "nms_iou": 0.7,
+    "mAP": 47.32,
+    "mAP_50": 64.38,
+    "mAP_75": 51.73,
+    "mAP_small": 28.47,
+    "mAP_medium": 52.88,
+    "mAP_large": 63.61
+  },
+  {
+    "artifact": "build/zoo/yolo_nas_s_640_fp16.xml",
+    "runtime": "openvino:CPU",
+    "input_size": 640,
+    "nms_iou": 0.7,
+    "mAP": 47.32,
+    "mAP_50": 64.4,
+    "mAP_75": 51.76,
+    "mAP_small": 28.51,
+    "mAP_medium": 52.84,
+    "mAP_large": 63.57
+  },
+  {
+    "artifact": "build/zoo/yolo_nas_s_640_fp16_ampere_plus.engine",
+    "runtime": "tensorrt",
+    "input_size": 640,
+    "nms_iou": 0.7,
+    "mAP": 47.31,
+    "mAP_50": 64.39,
+    "mAP_75": 51.73,
+    "mAP_small": 28.49,
+    "mAP_medium": 52.88,
+    "mAP_large": 63.57
+  },
+  {
+    "artifact": "build/zoo/yolo_nas_s_640_int8.xml",
+    "runtime": "openvino:CPU",
+    "input_size": 640,
+    "nms_iou": 0.7,
+    "mAP": 46.91,
+    "mAP_50": 64.08,
+    "mAP_75": 51.27,
+    "mAP_small": 28.16,
+    "mAP_medium": 52.47,
+    "mAP_large": 62.83
+  },
+  {
+    "artifact": "yolo_nas_s",
+    "runtime": "pytorch-fp16:yolo_nas_s",
+    "input_size": 640,
+    "nms_iou": 0.7,
+    "mAP": 47.32,
+    "mAP_50": 64.39,
+    "mAP_75": 51.75,
+    "mAP_small": 28.48,
+    "mAP_medium": 52.87,
+    "mAP_large": 63.6
+  }
+]
