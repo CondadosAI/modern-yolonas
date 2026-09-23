@@ -9,7 +9,6 @@
   <a href="https://pypi.org/project/modern-yolonas/"><img src="https://img.shields.io/pypi/pyversions/modern-yolonas" alt="Python"></a>
   <a href="https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE"><img src="https://img.shields.io/github/license/CondadosAI/modern-yolonas" alt="License"></a>
   <a href="https://huggingface.co/spaces/CondadosAI/modern-yolonas-demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20demo-Hugging%20Face-yellow" alt="Hugging Face Space"></a>
-  <a href="https://github.com/sponsors/CondadosAI"><img src="https://img.shields.io/badge/sponsor-ea4aaa?logo=githubsponsors&logoColor=white" alt="Sponsor"></a>
 </p>
 
 <p align="center">
@@ -485,28 +484,14 @@ the API design principles a change is reviewed against — and the
 
 ## 💖 Sponsoring
 
-Sponsorship funds the GPU time behind this project — chiefly the from-scratch COCO weights
-that will replace Deci's non-commercial checkpoints. What that costs and where the money goes
-is written out on the [sponsors page](https://github.com/sponsors/CondadosAI).
-
-<p align="center">
-  <a href="https://github.com/sponsors/CondadosAI"><b>❤️ Sponsor on GitHub</b></a>
-</p>
-
-Companies that need an invoice, a different arrangement, or a specific benchmark run: open an
-[issue](https://github.com/CondadosAI/modern-yolonas/issues) and we will sort it out there.
+GitHub Sponsors for this project is not open yet — the payout account is still being set up,
+so there is nothing to sponsor today. This section comes back when it is.
 
 Want help with your own models rather than funding this one? That is not sponsorship, and it
 has its own calendar: [cal.com/luis-condados](https://cal.com/luis-condados).
 
-Sponsors are listed in [SPONSORS.md](https://github.com/CondadosAI/modern-yolonas/blob/main/SPONSORS.md);
-company sponsors get their logo here and on the docs site.
-
-<!-- sponsor-logos:start -->
-<p align="center">
-  <sub><i>No company sponsors yet — yours would be the first.</i></sub>
-</p>
-<!-- sponsor-logos:end -->
+Companies that need an invoice, a different arrangement, or a specific benchmark run: open an
+[issue](https://github.com/CondadosAI/modern-yolonas/issues) and we will sort it out there.
 
 ---
 

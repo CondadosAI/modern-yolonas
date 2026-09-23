@@ -59,7 +59,6 @@ Documentation = "https://condadosai.github.io/modern-yolonas/"
 Repository = "https://github.com/CondadosAI/modern-yolonas"
 Changelog = "https://github.com/CondadosAI/modern-yolonas/blob/main/CHANGELOG.md"
 Issues = "https://github.com/CondadosAI/modern-yolonas/issues"
-Funding = "https://github.com/sponsors/CondadosAI"
 
 [project.optional-dependencies]
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "python-multipart>=0.0.6"]
