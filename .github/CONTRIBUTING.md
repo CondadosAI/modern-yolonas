@@ -104,10 +104,16 @@ version by what changed: at `0.x`, a breaking change is a minor bump, and `major
 unused until there is a stability contract to break. When that day comes, change the
 `semver-increment` on the `breaking: true` rule in `.github/release-drafter.yml`.
 
-The `dev` -> `main` release pull request is the exception: its title is `release: ...`,
-which matches no type, so **label it `minor` (or `major`) by hand before merging** or it
-resolves to a patch. A label can only raise the bump, never lower it — the highest
-matching increment wins.
+The `dev` -> `main` release pull request is the exception: its title is `chore: ...`
+(`pr-title.yml` rejects `release:`), which resolves to a patch, so **label it
+`release:minor` (or `release:major`) by hand before merging** when the release carries
+features. A label can only raise the bump, never lower it — the highest matching
+increment wins.
+
+The labels are namespaced on purpose. Dependabot puts a bare `major`/`minor`/`patch`
+label on its own pull requests whenever the repository has one, describing the
+*dependency* bump, and the resolver would read it as a bump of this package. Do not
+recreate those bare labels.
 
 ## Supported Python versions
 
