@@ -482,19 +482,6 @@ the API design principles a change is reviewed against — and the
 
 ---
 
-## 💖 Sponsoring
-
-GitHub Sponsors for this project is not open yet — the payout account is still being set up,
-so there is nothing to sponsor today. This section comes back when it is.
-
-Want help with your own models rather than funding this one? That is not sponsorship, and it
-has its own calendar: [cal.com/luis-condados](https://cal.com/luis-condados).
-
-Companies that need an invoice, a different arrangement, or a specific benchmark run: open an
-[issue](https://github.com/CondadosAI/modern-yolonas/issues) and we will sort it out there.
-
----
-
 ## 📄 License
 
 Apache-2.0 — **applies to the source code only**. See [LICENSE](https://github.com/CondadosAI/modern-yolonas/blob/main/LICENSE).
