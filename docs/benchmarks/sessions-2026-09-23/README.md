@@ -22,6 +22,12 @@ graphs, the OpenVINO IR (including INT8 calibration) and the TensorRT engines. T
 and third reused them from `build/`. So the spread between sessions is timing drift on
 identical files, not variation between exports.
 
+**One event during session 3.** Intel's graphics compiler wrote a `kernel.errors.txt` to the
+working directory during the iGPU leg (`igc_check`: "Input V38 = [256, 260) intersects with
+V37"). The leg completed and returned timings, and the same session produced the fastest
+iGPU INT8 figure at 320 (5.93 ms against 6.76 and 6.98). I cannot say whether the two are
+related; the median is unaffected either way.
+
 ## Range across the sessions, YOLO-NAS-S, model only (`nms=external`), ms
 
 | cell | session 1 | session 2 | session 3 | median |
