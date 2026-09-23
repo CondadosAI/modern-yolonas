@@ -43,9 +43,3 @@ cv2.imwrite("output.jpg", det.annotate(image, detections))
 - [Getting Started](getting-started.md) — install, first detection, CLI basics
 - [API Reference](api/detector.md) — full Python API
 - [Guides](guides/training.md) — training, export, extending
-
-## Sponsoring
-
-GitHub Sponsors for this project is not open yet — the payout account is still being set up.
-If you want help with your own models, that is not sponsorship and has its own calendar:
-[cal.com/luis-condados](https://cal.com/luis-condados).
