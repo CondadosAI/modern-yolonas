@@ -128,12 +128,11 @@ def evaluate(
     from modern_yolonas.benchmarks.mot import (
         DetectionCache,
         SWEEP,
+        build_tracker,
         evaluate as score,
         prepare_trackeval_layout,
         replay,
     )
-    from modern_yolonas.tracking import DeepHMSort
-
     console = Console()
     picked = _sequences(data, sequences, limit)
     cache_root = Path(cache_dir) / source.value
@@ -157,9 +156,10 @@ def evaluate(
     rows = {}
 
     for name in chosen:
-        settings = dict(SWEEP[name])
-        use_embeddings = settings.pop("use_embeddings", True)
-        tracker = DeepHMSort(**settings)
+        try:
+            tracker, use_embeddings = build_tracker(name)
+        except ImportError as exc:
+            raise typer.BadParameter(f"{name}: {exc}") from exc
 
         results = {s.name: replay(caches[s.name], tracker, use_embeddings) for s in picked}
         prepare_trackeval_layout(picked, results, work_dir, benchmark, split)

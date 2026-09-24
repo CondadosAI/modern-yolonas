@@ -347,21 +347,51 @@ def _assemble(collected, sequence: Sequence, width: int) -> DetectionCache:
 #: Tracker configurations the benchmark compares, keyed by the name the CLI takes.
 #:
 #: Each entry is keyword arguments for :class:`~modern_yolonas.tracking.DeepHMSort`,
-#: plus ``use_embeddings`` which is handled by :func:`replay` rather than the tracker.
-#: Three questions, and nothing else, so the table stays readable:
+#: plus ``use_embeddings`` which is handled by :func:`replay` rather than the tracker,
+#: or ``tracker`` naming one of the roboflow/trackers baselines. The questions:
 #:
 #: * ``harmonic`` against ``min`` — Deep HM-SORT's first contribution, the fusion.
 #: * either against ``motion`` — whether the appearance cue earns its keep *at all*
 #:   with YOLO-NAS features, which is the claim the tracking guide would not make.
 #: * ``*-keepall`` against the rest — Deep HM-SORT's second contribution, and the
 #:   default this project changed to two seconds.
+#: * ``bytetrack`` and ``ocsort`` against all of them — whether any of it beats the
+#:   standard motion-only trackers. ``motion-matched`` moves Deep HM-SORT's
+#:   thresholds to ByteTrack's library defaults, so a remaining gap is not the
+#:   score floor.
 SWEEP: dict[str, dict] = {
     "harmonic": {"fusion": "harmonic"},
     "min": {"fusion": "min"},
     "motion": {"use_embeddings": False},
     "harmonic-keepall": {"fusion": "harmonic", "max_lost_seconds": None},
     "motion-keepall": {"use_embeddings": False, "max_lost_seconds": None},
+    "motion-matched": {"use_embeddings": False, "track_low_threshold": 0.1, "new_track_threshold": 0.7},
+    "bytetrack": {"tracker": "bytetrack", "use_embeddings": False},
+    "ocsort": {"tracker": "ocsort", "use_embeddings": False},
 }
+
+
+def build_tracker(name: str):
+    """Build the tracker for one :data:`SWEEP` entry.
+
+    Returns:
+        ``(tracker, use_embeddings)``. The roboflow/trackers entries raise
+        ``ImportError`` naming the ``tracking`` extra when it is not installed.
+    """
+    settings = dict(SWEEP[name])
+    use_embeddings = settings.pop("use_embeddings", True)
+    kind = settings.pop("tracker", "deep-hm-sort")
+    if kind == "bytetrack":
+        from modern_yolonas.tracking.external import ByteTrack
+
+        return ByteTrack(**settings), use_embeddings
+    if kind == "ocsort":
+        from modern_yolonas.tracking.external import OCSort
+
+        return OCSort(**settings), use_embeddings
+    from modern_yolonas.tracking import DeepHMSort
+
+    return DeepHMSort(**settings), use_embeddings
 
 
 # -------------------------------------------------------------------------- replay
@@ -372,7 +402,8 @@ def replay(cache: DetectionCache, tracker, use_embeddings: bool = True) -> np.nd
 
     Args:
         cache: From :func:`build_detector_cache` or :func:`build_oracle_cache`.
-        tracker: A :class:`~modern_yolonas.tracking.DeepHMSort`. It is reset first
+        tracker: Anything with the tracker contract (:class:`~modern_yolonas.tracking.DeepHMSort`,
+            :class:`~modern_yolonas.tracking.ByteTrack`, ...). It is reset first
             and its ``frame_rate`` is taken from the cache, so the caller can reuse
             one instance across sequences without ids leaking between them.
         use_embeddings: ``False`` withholds the appearance vectors, which is the

@@ -6,6 +6,8 @@ end-to-end one needs TrackEval, which is an optional extra (it pulls the non-hea
 """
 
 import numpy as np
+import importlib.util
+
 import pytest
 
 from modern_yolonas.benchmarks.mot import (
@@ -252,12 +254,23 @@ def test_write_mot_file_is_readable_back(tmp_path):
 
 
 def test_every_sweep_entry_builds_a_tracker():
-    from modern_yolonas.tracking import DeepHMSort
+    from modern_yolonas.benchmarks.mot import build_tracker
 
+    has_trackers = importlib.util.find_spec("trackers") is not None
     for name, settings in SWEEP.items():
-        settings = dict(settings)
-        settings.pop("use_embeddings", None)
-        assert DeepHMSort(**settings) is not None, name
+        if settings.get("tracker") and not has_trackers:
+            with pytest.raises(ImportError, match="tracking"):
+                build_tracker(name)
+            continue
+        tracker, use_embeddings = build_tracker(name)
+        assert hasattr(tracker, "update_with_detections"), name
+        assert isinstance(use_embeddings, bool), name
+
+
+def test_the_baselines_are_motion_only():
+    assert SWEEP["bytetrack"]["use_embeddings"] is False
+    assert SWEEP["ocsort"]["use_embeddings"] is False
+    assert SWEEP["motion-matched"]["track_low_threshold"] == 0.1
 
 
 def test_the_sweep_covers_all_three_questions():
@@ -325,3 +338,13 @@ def test_the_layout_links_the_ground_truth_rather_than_copying_it(tmp_path, trac
 
     seqmap = (work / "gt" / "seqmaps" / "unit-test.txt").read_text()
     assert seqmap.splitlines() == ["name", "seq"]
+
+
+def test_a_missing_tracking_extra_names_the_install_command(monkeypatch):
+    import sys
+
+    from modern_yolonas.tracking import external
+
+    monkeypatch.setitem(sys.modules, "trackers", None)
+    with pytest.raises(ImportError, match=r"modern-yolonas\[tracking\]"):
+        external.ByteTrack()
