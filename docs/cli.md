@@ -70,6 +70,56 @@ Boxes are coloured by track id, not by class, so an ID-swap shows as a colour ch
 The summary reports `unique_ids`: far above the true object count means ids are
 fragmenting.
 
+## `yolonas benchmark-tracking`
+
+Measure the tracker on a MOT-format dataset. Split in two, because the detector pass
+takes minutes and a tracker pass takes seconds — an ablation should not pay for the
+first one every time, and every configuration then sees byte-identical detections, so
+a difference in the metrics can only have come from the association.
+
+```bash
+# Once per dataset: detect (or read the ground truth) and embed every frame.
+yolonas benchmark-tracking cache --data ~/datasets/sportsmot/val --source oracle
+yolonas benchmark-tracking cache --data ~/datasets/sportsmot/val --source detector
+
+# As often as you like: replay every tracker configuration and score it.
+yolonas benchmark-tracking evaluate --data ~/datasets/sportsmot/val --source oracle
+```
+
+Needs the `mot` extra for the metrics: `uv sync --extra mot`, or
+`pip install "modern-yolonas[mot]"`. It is separate from `benchmark` because TrackEval
+depends on `opencv-python` where this project depends on `opencv-python-headless`;
+installing it replaces the headless build, which then wants libGL at import time.
+
+### `cache`
+
+| Option | Default | Description |
+|---|---|---|
+| `--data` | *required* | Split directory, one subdirectory per sequence |
+| `--source` | `detector` | `detector` runs detection; `oracle` embeds the ground-truth boxes, leaving association as the only source of error |
+| `--model` | `yolo_nas_l` | Model variant |
+| `--conf` | `0.1` | Detector threshold. Low on purpose — the tracker filters on replay, so a score sweep needs no re-detection |
+| `--output` | `runs/mot-cache` | Where the per-sequence `.npz` caches go |
+| `--sequences` | all | A split file, or a comma-separated list of names |
+| `--limit` | — | Only the first N sequences, for a smoke run |
+| `--overwrite` | off | Rebuild caches that already exist |
+
+### `evaluate`
+
+| Option | Default | Description |
+|---|---|---|
+| `--data` | *required* | The same split directory |
+| `--cache` | `runs/mot-cache` | Where `cache` wrote its output |
+| `--source` | `detector` | Which cache to replay |
+| `--benchmark` / `--split` | `sportsmot` / `val` | TrackEval names; also name the output folder |
+| `--preproc` | off | TrackEval's MOT17 preprocessing. Needed for MOT17, a no-op on SportsMOT |
+| `--configs` | all | Comma-separated subset of `harmonic`, `min`, `motion`, `harmonic-keepall`, `motion-keepall` |
+| `--output` | `runs/mot-eval` | Results table, `results.json` and the TrackEval tree |
+
+Ground truth is symlinked into the TrackEval layout, never copied — SportsMOT and
+MOT17 are both non-redistributable, and a copy inside the repo is the accident worth
+designing out.
+
 ## `yolonas train`
 
 Train a YOLO-NAS model.
