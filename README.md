@@ -296,53 +296,50 @@ for layer choice and why the letterbox padding is excluded from pooling, and the
 
 ![Deep HM-SORT tracking pedestrians across Shibuya crossing](docs/assets/tracking_demo.gif)
 
-<sub>Boxes are coloured by track id, not by class, so an ID-swap shows as a colour change.
+<sub>Deep HM-SORT, boxes coloured by track id so an ID-swap shows as a colour change.
 48 frames, 14 ids, 10 of them alive for at least half the clip.</sub>
 
-Tracking uses the same forward pass as detection — the per-object embeddings Deep HM-SORT
-associates on are the ones the detector already computed, so appearance-aware tracking
-costs one pass per frame rather than two.
+The default tracker is **ByteTrack**, from [roboflow/trackers](https://github.com/roboflow/trackers).
+It is the optional `tracking` extra, because it pulls in `opencv-python` over the headless
+build this package uses:
+
+```bash
+pip install "modern-yolonas[tracking]"
+yolonas track --source match.mp4 --classes 0
+```
 
 ```python
 from modern_yolonas import YoloNASDetector
-from modern_yolonas.tracking import DeepHMSort
 
 detector = YoloNASDetector("yolo_nas_s")
-tracker = DeepHMSort()
 
-for frame_index, frame, detections in detector.track_video("match.mp4", tracker):
+for frame_index, frame, detections in detector.track_video("match.mp4"):
     detections.tracker_id          # (N,) stable ids
-    detections.data["embedding"]   # (N, 768) the vectors it associated on
 
 # Or straight to a file, with ids drawn on
 stats = detector.track_video_to_file("match.mp4", "tracked.mp4")
 stats["unique_ids"]                # distinct objects the tracker believes it saw
 ```
 
-A lost track stays findable for **2 seconds of video** by default, counted with the clip's
-own frame rate rather than in frames, so the number means the same thing at 25 and 60 fps:
+ByteTrack is the default because it measured best. On all 45 SportsMOT validation sequences,
+with YOLO-NAS-L detections, it scores **53.7 HOTA against 47.6** for
+[Deep HM-SORT](https://arxiv.org/abs/2406.12081), the tracker this package also ships, with
+1,885 ID switches against 3,172 ([tracking benchmark](https://condadosai.github.io/modern-yolonas/benchmarks/tracking/)).
+
+Deep HM-SORT needs no extra dependency and associates on appearance as well as motion,
+reusing the per-object embeddings from the detection pass. On clean, ground-truth boxes its
+motion-only mode beats ByteTrack (89.7 against 87.5 HOTA); its appearance cue does not help
+with these embeddings, which barely separate one player from another:
 
 ```python
-DeepHMSort()                       # 2 s — good default for open scenes
-DeepHMSort(max_lost_seconds=10.0)  # a doorway, where people come back
-DeepHMSort(max_lost_seconds=None)  # the paper: keep every tracklet, forever
+from modern_yolonas.tracking import DeepHMSort
+
+for frame_index, frame, detections in detector.track_video("match.mp4", DeepHMSort()):
+    detections.data["embedding"]   # (N, 768) the vectors it associated on
 ```
 
-The paper never discards a tracklet, which is right for a fixed camera on a closed pitch and
-wrong for a street — there the pool grows with every object ever seen. `--keep-all-tracks`
-restores the paper's behaviour.
-
-[Deep HM-SORT](https://arxiv.org/abs/2406.12081) fuses the motion and appearance costs with
-their **harmonic mean** instead of taking the smaller one, which stops a lookalike from
-stealing an id on appearance alone, and it keeps every tracklet for the whole sequence so an
-object that leaves the frame and returns is re-identified rather than renumbered. It has no
-Kalman filter — [Deep-EIoU](https://arxiv.org/abs/2306.13074) drops it in favour of expanding
-the boxes before intersecting them.
-
-The appearance vectors are a by-product of detection, not a re-identification model trained
-to tell two people apart, so the paper's HOTA numbers are not inherited here. Any `(N, D)`
-array in `detections.data["embedding"]` is associated on, so a purpose-trained model drops
-straight in — see the [tracking guide](https://condadosai.github.io/modern-yolonas/guides/tracking/).
+Any `(N, D)` array in `detections.data["embedding"]` is associated on, so a purpose-trained
+re-identification model drops straight in — see the [tracking guide](https://condadosai.github.io/modern-yolonas/guides/tracking/).
 
 ### Low-level model API
 
