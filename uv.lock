@@ -4112,6 +4112,10 @@ distill = [
 fiftyone = [
     { name = "fiftyone" },
 ]
+mot = [
+    { name = "trackers" },
+    { name = "trackeval" },
+]
 onnx = [
     { name = "onnx" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and extra == 'extra-14-modern-yolonas-onnx') or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
@@ -4143,6 +4147,9 @@ tensorrt = [
     { name = "onnx" },
     { name = "onnxscript" },
     { name = "tensorrt-cu13" },
+]
+tracking = [
+    { name = "trackers" },
 ]
 wandb = [
     { name = "wandb" },
@@ -4207,12 +4214,15 @@ requires-dist = [
     { name = "torch", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu130" },
     { name = "torchmetrics", specifier = ">=1.3" },
     { name = "torchvision", specifier = ">=0.22", index = "https://download.pytorch.org/whl/cu130" },
+    { name = "trackers", marker = "extra == 'mot'", specifier = ">=2.6,<3" },
+    { name = "trackers", marker = "extra == 'tracking'", specifier = ">=2.6,<3" },
+    { name = "trackeval", marker = "extra == 'mot'", specifier = ">=1.3" },
     { name = "transformers", marker = "extra == 'distill'", specifier = ">=4.56" },
     { name = "typer", specifier = ">=0.9" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.20" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.16" },
 ]
-provides-extras = ["benchmark", "demo", "distill", "fiftyone", "onnx", "onnx-gpu", "openvino", "serve", "ssl", "tensorboard", "tensorrt", "wandb"]
+provides-extras = ["benchmark", "demo", "distill", "fiftyone", "mot", "onnx", "onnx-gpu", "openvino", "serve", "ssl", "tensorboard", "tensorrt", "tracking", "wandb"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5362,6 +5372,26 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0a/01/3e3fab8d643ca097ea4aa9e51246643699dfaaa0650589744fe44bc46651/onnxscript-0.7.2.tar.gz", hash = "sha256:2c664f6383d10f332a4d47b2876dcab16dba84909fe703656b19abc281fda165", size = 646719, upload-time = "2026-09-09T17:06:44.567Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b9/3b/06260997cdc41138e58718588a6c87d0eb342bbe0dda8a6aae91d163c384/onnxscript-0.7.2-py3-none-any.whl", hash = "sha256:d0e7121c6a1eefd608058928e111cbdb76709f70d269ff0d07aee493bd1d13c9", size = 754215, upload-time = "2026-09-09T17:06:46.442Z" },
+]
+
+[[package]]
+name = "opencv-python"
+version = "5.0.0.93"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/79/4c/a438d23e09ce2033c09f7b784ad2fbdb0adf529e434101ed28f142226f98/opencv_python-5.0.0.93.tar.gz", hash = "sha256:66aac3e5b5faa48d4025816592f3af19e4bfc2c68dec067bae2dbb4ca10aa9e2", size = 81802749, upload-time = "2026-07-02T06:59:53.815Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/75/76f6ade78f6102c61034f828e2a22616708df2c9504bc8d6af9dd8f73dc5/opencv_python-5.0.0.93-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:198a75138241810206a17c829dbcc40a7cb1841cda538ca86cbbfc6c7d95f898", size = 48322443, upload-time = "2026-07-02T05:50:25.466Z" },
+    { url = "https://files.pythonhosted.org/packages/15/8c/bc1bda6aae69a32e9d84fc34153ba104cd25226861eb4aea33b2cea4860d/opencv_python-5.0.0.93-cp37-abi3-macosx_14_0_x86_64.whl", hash = "sha256:6bbc32f59e1b1a7db7b39c81f63d00625f041d333037fd8702f6da52cc39108b", size = 34782755, upload-time = "2026-07-02T05:51:30.556Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/8a/b04776ec45d2dea08a1b176f1829201db3515d4ed16c35f8fcc9fa7beb16/opencv_python-5.0.0.93-cp37-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:e2b4272e736836f66c2d176e43ab8101f3a00d45654916399f52e150c58981ac", size = 50614064, upload-time = "2026-07-02T06:53:22.604Z" },
+    { url = "https://files.pythonhosted.org/packages/95/54/eb47866b94f2b5b42dde17644b78055ef1ee05aae59962c7290e55270803/opencv_python-5.0.0.93-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:f8b6d0a212253dd26ad338c812f1f23ca118fdf05a9c8c6b9444f161aa8c5881", size = 71064711, upload-time = "2026-07-02T06:54:13.148Z" },
+    { url = "https://files.pythonhosted.org/packages/93/da/962579f1e703cbf8c5422fd1f576467dcb3b5b0b0b81c1471c979764353a/opencv_python-5.0.0.93-cp37-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:08d5d91d967b58d6db86073b2ad3eaef88ca4ebdfd45c9059bf59f5ded0c7ad2", size = 49798576, upload-time = "2026-07-02T06:54:33.781Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/4c/c73f828fdbcd37eaf21d08fa852544a3ca7c2dbb3ea76873d64f2ea413d1/opencv_python-5.0.0.93-cp37-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c8de2dec111122a02e8beb28e16c31904992dfd6186560b142a92c71403c1039", size = 73783032, upload-time = "2026-07-02T06:55:03.415Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/4b/edaf83b996ca5a1a3d8ccad485706b9c6d4742b13b9c4586bf1c1e7d9423/opencv_python-5.0.0.93-cp37-abi3-win32.whl", hash = "sha256:4b4b1a34c79bf8d3738e3cfe9a9e67b51a79663f6b692cbdad8c31f570da4157", size = 35564734, upload-time = "2026-07-02T05:49:57.704Z" },
+    { url = "https://files.pythonhosted.org/packages/21/f0/9fa6e85cb10c8eb36a0222d27e50fe381b86ce49a55446bf39f491727564/opencv_python-5.0.0.93-cp37-abi3-win_amd64.whl", hash = "sha256:f90ba04b8f73bc5c3814037699739f0156f597338a98f05956c684e7c3ca10d2", size = 44000345, upload-time = "2026-07-02T05:49:54.971Z" },
 ]
 
 [[package]]
@@ -9051,6 +9081,47 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
+]
+
+[[package]]
+name = "trackers"
+version = "2.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "opencv-python" },
+    { name = "pydeprecate" },
+    { name = "requests" },
+    { name = "rich" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "supervision" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/68/18336fa578845de98d3bb20b08e007b066c33fcbb08ece3398ec8b438b1c/trackers-2.6.0.tar.gz", hash = "sha256:1d33d3ce0b684478e4adb3f32f138a5d15a71694202ee484a98a90a75c4afaa0", size = 185208, upload-time = "2026-08-06T17:39:18.08Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/11/f53ad8cea391fed47e367ed94dca375608daa83afc196c1ddb2b3faa9f24/trackers-2.6.0-py3-none-any.whl", hash = "sha256:4d5dfec12ba146c8df6b82d699ecb44a56fe50fed375ba42c635a95b81987277", size = 220772, upload-time = "2026-08-06T17:39:16.332Z" },
+]
+
+[[package]]
+name = "trackeval"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "matplotlib", version = "3.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "pycocotools" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-14-modern-yolonas-onnx' and extra == 'extra-14-modern-yolonas-onnx-gpu')" },
+    { name = "tabulate" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/11/39/623b992c21f3be8907d31b17626aa65d689f18ea1cccddda1a928977077f/trackeval-1.3.0.tar.gz", hash = "sha256:77b110a659db2a59215349118445039154cee504841a92cc10e846d11c104803", size = 388048, upload-time = "2026-03-03T09:36:44.36Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/2b/04f83d0f5547a4b84dba61aa82ba2abbe26b318ac8f7a1605b9a608ea256/trackeval-1.3.0-py3-none-any.whl", hash = "sha256:bf5ed90f7b5a3eafc6dcfce36fb900259a587e8f3b2438ef23d72e7d4ab94efb", size = 207659, upload-time = "2026-03-03T09:36:46.447Z" },
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ from typing import Annotated
 import typer
 
 from modern_yolonas.cli.benchmark_cmd import benchmark
+from modern_yolonas.cli.benchmark_tracking_cmd import benchmark_tracking_app
 from modern_yolonas.cli.dataset_benchmark_cmd import benchmark_dataset_app
 from modern_yolonas.cli.demo_cmd import demo
 from modern_yolonas.cli.detect_cmd import detect
@@ -35,6 +36,9 @@ app.command()(qat)
 # `benchmark` measures latency; this one trains and reports mAP, so it gets its own
 # name rather than becoming a subcommand of a released command.
 app.add_typer(benchmark_dataset_app, name="benchmark-dataset")
+# Tracking is measured, not trained, and reports HOTA rather than mAP — so it is a
+# third command rather than a subcommand of either existing one.
+app.add_typer(benchmark_tracking_app, name="benchmark-tracking")
 
 
 def _version_callback(value: bool):

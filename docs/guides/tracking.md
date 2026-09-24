@@ -193,6 +193,13 @@ fusion ever gets a say. That is not a criticism of either; it is a reminder that
 difference only appears where the paper says it does, in a crowd of lookalikes, and that
 you should check which regime your footage is in before tuning anything.
 
+The lookalike case has since been measured, on all 45 SportsMOT validation sequences
+([tracking benchmark](../benchmarks/tracking.md)). There the cue hurts: on ground-truth
+boxes the harmonic fusion scores 86.1 HOTA against 89.7 for motion alone, because two
+different players in the same frame sit at a median cosine distance of 0.092, nearly
+as close as one player a second later (0.059). The same benchmark has ByteTrack ahead
+of every Deep HM-SORT configuration on real detections, 53.7 HOTA against 47.6.
+
 Two ways to get a better answer:
 
 ```python
