@@ -30,7 +30,7 @@ from modern_yolonas.inference.visualize import COCO_NAMES
 from modern_yolonas.validation import validate_confidence, validate_device, validate_input_size, validate_iou_threshold, validate_model_name
 
 if TYPE_CHECKING:
-    from modern_yolonas.tracking import DeepHMSort
+    from modern_yolonas.tracking import Tracker
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
 
@@ -530,55 +530,65 @@ class YoloNASDetector:
     def track_video(
         self,
         source: str | Path | int,
-        tracker: DeepHMSort | None = None,
+        tracker: Tracker | None = None,
         conf_threshold: float | None = None,
         iou_threshold: float | None = None,
-        appearance: bool = True,
+        appearance: bool | None = None,
         skip_frames: int = 0,
     ) -> Generator[tuple[int, np.ndarray, sv.Detections], None, None]:
         """Detect and track each frame of a video, in one forward pass per frame.
 
-        The appearance vectors Deep HM-SORT associates on are the same per-object
-        embeddings :meth:`predict` produces, read off the features the detection
-        pass already computed — so tracking with appearance costs one pass per
-        frame, not the two a bolted-on re-identification model would need.
+        The default tracker is :class:`~modern_yolonas.tracking.ByteTrack`, which
+        needs the ``tracking`` extra. Pass a
+        :class:`~modern_yolonas.tracking.DeepHMSort` to associate on appearance
+        as well: its vectors are the per-object embeddings :meth:`predict` reads
+        off the features the detection pass already computed, so appearance costs
+        one pass per frame, not the two a bolted-on re-identification model would
+        need. ``docs/benchmarks/tracking.md`` measures both.
 
         The detector runs at the tracker's ``track_low_threshold`` unless told
-        otherwise. That is deliberate: Deep HM-SORT's second association round
-        exists to hold a track through a frame where the detector wavers, and it
-        can only do that if those weak detections reach it. Raising
-        ``conf_threshold`` to the tracker's ``track_high_threshold`` turns that
-        round off.
+        otherwise: 0.1 for ByteTrack, which is what the benchmark ran, and 0.4 for
+        Deep HM-SORT. Both trackers have a second association round for
+        low-score detections, and it can only hold a track through a frame where
+        the detector wavers if those detections reach it.
 
         Args:
             source: Video file path or camera index (0 for webcam).
-            tracker: A configured :class:`~modern_yolonas.tracking.DeepHMSort`, or
-                ``None`` for a default one. Pass your own to tune it, to keep
-                inspecting ``tracker.tracks``, or to reuse it across calls — it is
-                stateful, so :meth:`~modern_yolonas.tracking.DeepHMSort.reset`
+            tracker: A configured tracker, or ``None`` for a default
+                :class:`~modern_yolonas.tracking.ByteTrack`. Pass your own to tune
+                it or to reuse it across calls — it is stateful, so ``reset()``
                 between unrelated videos. Its ``frame_rate`` is set from this
-                video, so ``max_lost_seconds`` means the same span of time
-                whatever the clip was shot at.
+                video, so time-based settings mean the same span whatever the clip
+                was shot at.
             conf_threshold: Override the tracker-derived detection threshold.
             iou_threshold: Override the instance default.
-            appearance: Compute per-object embeddings and associate on them.
-                ``False`` drops to motion-only association, which is faster by the
-                ROI pooling and markedly worse through occlusions.
+            appearance: Compute per-object embeddings for the tracker. Defaults to
+                ``True`` for :class:`~modern_yolonas.tracking.DeepHMSort` and
+                ``False`` otherwise, since ByteTrack does not read them and the ROI
+                pooling is not free.
             skip_frames: Process every N-th frame (0 = every frame). Note the
                 tracker sees only the processed frames, so objects move further
-                between them and the expansion has more work to do.
+                between them.
 
         Yields:
             ``(frame_index, frame, detections)`` for each processed frame, where
             ``detections`` carries ``tracker_id`` and holds only the detections
             that matched a track.
+
+        Raises:
+            ImportError: With the default tracker, when the ``tracking`` extra is
+                not installed. The message names the install command.
         """
         from modern_yolonas.tracking import DeepHMSort
 
         if tracker is None:
-            tracker = DeepHMSort()
+            from modern_yolonas.tracking.external import ByteTrack
+
+            tracker = ByteTrack()
         if conf_threshold is None:
             conf_threshold = tracker.track_low_threshold
+        if appearance is None:
+            appearance = isinstance(tracker, DeepHMSort)
 
         tasks = Task.DETECT | Task.EMBED_OBJECTS if appearance else Task.DETECT
 
@@ -621,10 +631,10 @@ class YoloNASDetector:
         self,
         source: str | Path,
         output: str | Path,
-        tracker: DeepHMSort | None = None,
+        tracker: Tracker | None = None,
         conf_threshold: float | None = None,
         iou_threshold: float | None = None,
-        appearance: bool = True,
+        appearance: bool | None = None,
         codec: str = "mp4v",
         show_fps: bool = False,
     ) -> dict[str, int | float]:

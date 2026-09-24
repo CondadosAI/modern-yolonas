@@ -1,22 +1,22 @@
 # Tracking
 
-`modern-yolonas` ships with one tracker, **Deep HM-SORT**, and it is the default.
-It reuses the per-object embeddings the detector already computes, so tracking with
-appearance costs one forward pass per frame rather than the two a bolted-on
-re-identification model would need.
+`modern-yolonas` ships two trackers behind one interface.
 
-<video src="../../assets/tracking_demo.mp4" autoplay loop muted playsinline width="100%">
-  Your browser does not support the video element.
-</video>
+- **ByteTrack**, the default, from [roboflow/trackers](https://github.com/roboflow/trackers).
+  It needs the `tracking` extra: `pip install "modern-yolonas[tracking]"`.
+- **Deep HM-SORT**, implemented here with no extra dependency. It associates on appearance
+  as well as motion, reusing the per-object embeddings the detector already computes.
 
-<sub>Boxes are coloured by track id rather than by class, so an ID-swap shows as a colour
-change. 48 frames, 14 ids, 10 of them alive for at least half the clip. This clip is a
-legibility demo, not evidence: with this few well-separated people, <code>--fusion min</code>
-and <code>--no-appearance</code> produce identical output — see
-<a href="#where-the-embeddings-come-from-and-what-that-means">below</a>.</sub>
+ByteTrack is the default because it measured best on real detections: 53.7 HOTA against
+47.6 for Deep HM-SORT, on all 45 SportsMOT validation sequences, with 1,885 ID switches
+against 3,172. The [tracking benchmark](../benchmarks/tracking.md) has the tables, the
+ablation and the conditions. Deep HM-SORT is documented in full below, because on clean
+boxes it is the better of the two and because its appearance input takes any
+re-identification model you have.
 
 ```bash
-yolonas track --source match.mp4 --classes 0
+yolonas track --source match.mp4 --classes 0                          # ByteTrack
+yolonas track --source match.mp4 --classes 0 --tracker deep-hm-sort   # Deep HM-SORT
 ```
 
 ```python
@@ -24,18 +24,37 @@ from modern_yolonas import YoloNASDetector
 from modern_yolonas.tracking import DeepHMSort
 
 detector = YoloNASDetector("yolo_nas_s")
-tracker = DeepHMSort()
 
-for frame_index, frame, detections in detector.track_video("match.mp4", tracker):
-    detections.tracker_id          # (N,) stable ids
-    detections.data["embedding"]   # (N, 768) the vectors it associated on
+for frame_index, frame, detections in detector.track_video("match.mp4"):
+    detections.tracker_id          # (N,) stable ids, from ByteTrack
+
+for frame_index, frame, detections in detector.track_video("match.mp4", DeepHMSort()):
+    detections.data["embedding"]   # (N, 768) the vectors Deep HM-SORT associated on
 ```
 
 `track_video` yields only the detections that matched a track. Everything else — the
 confidence, the class, `data["class_name"]` — comes through untouched, so it slices
-and annotates like any other `sv.Detections`.
+and annotates like any other `sv.Detections`. It computes the per-object embeddings only
+for a tracker that reads them, so the default path skips that cost.
 
-## What the algorithm does
+The detector runs at the tracker's floor unless you pass `conf_threshold`: 0.1 for
+ByteTrack, which is what the benchmark ran, and `track_low_threshold` (0.4) for
+Deep HM-SORT. ByteTrack is not class-aware; filter classes before tracking
+(`--classes`) when two classes should not share ids.
+
+## Deep HM-SORT
+
+<video src="../../assets/tracking_demo.mp4" autoplay loop muted playsinline width="100%">
+  Your browser does not support the video element.
+</video>
+
+<sub>Deep HM-SORT on the Shibuya crossing. Boxes are coloured by track id rather than by
+class, so an ID-swap shows as a colour change. 48 frames, 14 ids, 10 of them alive for at
+least half the clip. This clip is a legibility demo, not evidence: with this few
+well-separated people, <code>--fusion min</code> and <code>--no-appearance</code> produce
+identical output — see <a href="#where-the-embeddings-come-from-and-what-that-means">below</a>.</sub>
+
+### What the algorithm does
 
 Deep HM-SORT ([arXiv:2406.12081](https://arxiv.org/abs/2406.12081)) is a two-change
 delta on Deep-EIoU ([arXiv:2306.13074](https://arxiv.org/abs/2306.13074)), which is
@@ -192,6 +211,13 @@ settles every association on its own, so neither the appearance cue nor the choi
 fusion ever gets a say. That is not a criticism of either; it is a reminder that the
 difference only appears where the paper says it does, in a crowd of lookalikes, and that
 you should check which regime your footage is in before tuning anything.
+
+The lookalike case has since been measured, on all 45 SportsMOT validation sequences
+([tracking benchmark](../benchmarks/tracking.md)). There the cue hurts: on ground-truth
+boxes the harmonic fusion scores 86.1 HOTA against 89.7 for motion alone, because two
+different players in the same frame sit at a median cosine distance of 0.092, nearly
+as close as one player a second later (0.059). The same benchmark has ByteTrack ahead
+of every Deep HM-SORT configuration on real detections, 53.7 HOTA against 47.6.
 
 Two ways to get a better answer:
 

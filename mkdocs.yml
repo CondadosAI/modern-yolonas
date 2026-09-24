@@ -51,6 +51,7 @@ nav:
     - Model table: benchmarks/model_table.md
     - Parity vs super-gradients: benchmarks/parity.md
     - Runtime matrix: benchmarks/runtime_matrix.md
+    - Tracking: benchmarks/tracking.md
 
 # Provenance/licensing notes for the image assets; not a site page.
 exclude_docs: |

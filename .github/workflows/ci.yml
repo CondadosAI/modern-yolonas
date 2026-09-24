@@ -34,7 +34,7 @@ jobs:
         # users: without them `tests/test_export.py` skips entirely and the ONNX and
         # OpenVINO paths ship untested. TensorRT is the one that cannot be here — it
         # needs an NVIDIA GPU, which these runners do not have.
-        run: uv sync --dev --extra onnx --extra openvino
+        run: uv sync --dev --extra onnx --extra openvino --extra tracking
 
       - name: Lint
         run: uv run ruff check src/ tests/
