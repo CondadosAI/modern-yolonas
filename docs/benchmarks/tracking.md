@@ -9,7 +9,7 @@ tables below are printed from it by `examples/render_tracking_table.py`.
 
 With real detections, **ByteTrack scores 53.7 HOTA against 47.6 for Deep HM-SORT's
 default configuration**, with 1,885 ID switches against 3,172. It leads in every
-sport.
+sport. That is why ByteTrack is the default tracker.
 
 Deep HM-SORT's appearance cue does not help. The per-box embeddings the detector
 produces barely separate one player from another, so on ground-truth boxes the

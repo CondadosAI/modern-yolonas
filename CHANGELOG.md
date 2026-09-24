@@ -12,7 +12,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING: ByteTrack is the default tracker.** `track_video`, `track_video_to_file`
+  and `yolonas track` now use `modern_yolonas.tracking.ByteTrack` (roboflow/trackers)
+  unless given a tracker. It needs the new `tracking` extra: `pip install
+  "modern-yolonas[tracking]"`; without it the default path raises an `ImportError` that
+  names the install command. On all 45 SportsMOT validation sequences it scores 53.7
+  HOTA against 47.6 for Deep HM-SORT's default configuration, with 1,885 ID switches
+  against 3,172 — see `docs/benchmarks/tracking.md`. To keep the old behaviour, pass
+  `DeepHMSort()` or `--tracker deep-hm-sort`.
+- `track_video(appearance=None)` computes per-object embeddings only for a tracker
+  that reads them (Deep HM-SORT), so the ByteTrack path skips the ROI pooling.
+- `yolonas track` refuses Deep HM-SORT's options (`--fusion`, `--track-low`, ...) when
+  the tracker is ByteTrack, instead of ignoring them.
+
 ### Added
+- **Tracking benchmark on SportsMOT.** `yolonas benchmark-tracking cache | evaluate`
+  replays every tracker on the same cached detections and scores it with TrackEval;
+  `ByteTrack`, `OCSort` and a threshold-matched Deep HM-SORT are part of the sweep.
+  Results, ablation and the embedding-separability analysis are in
+  `docs/benchmarks/tracking.md`.
+- `modern_yolonas.tracking.ByteTrack` / `OCSort` and the `Tracker` protocol. The
+  `tracking` extra holds `opencv-python` to the headless build's version range: left
+  free it resolved to 5.0 and changed what `cv2` draws.
 - **TensorRT export.** `yolonas export --format tensorrt` builds an engine, and
   `EngineRunner` runs one with torch owning the CUDA buffers. `--hardware-compatible`
   builds an `AMPERE_PLUS` engine that loads on any sm_80+ GPU rather than only on the

@@ -78,11 +78,15 @@ benchmark = ["rf100vl>=0.1"]
 # because it requires `opencv-python` where this project depends on
 # `opencv-python-headless`. Both ship the same `cv2` package, so installing this
 # replaces the headless build with the GUI one — which then needs libGL and friends at
-# import time, and does not have them on a bare server.
-tracking = ["trackers>=2.6,<3"]
-# TrackEval computes HOTA/CLEAR/Identity for `yolonas benchmark-tracking`. Same
-# opencv-python caveat as `tracking`, which it includes because the benchmark compares
-# against ByteTrack and OC-SORT.
+# import time, and does not have them on a bare server. The GUI build is held to the
+# headless build's version range (albucore caps that at 4.10): left free it resolved
+# to 5.0, whichever build then won changed what `cv2` draws, and test_visualize failed.
+tracking = ["trackers>=2.6,<3", "opencv-python>=4.9,<4.11"]
+# TrackEval computes HOTA/CLEAR/Identity for `yolonas benchmark-tracking`, and the
+# benchmark compares against ByteTrack and OC-SORT. TrackEval needs opencv-python 4.11
+# or later, so this cannot take `tracking`'s version cap: it moves `cv2` to the GUI
+# build's version, which changes what `cv2` draws. A benchmark environment, not one
+# to draw in; install it separately when that matters.
 mot = ["trackeval>=1.3", "trackers>=2.6,<3"]
 fiftyone = ["fiftyone>=1.0"]
 # nncf rides along because INT8 is the reason most people reach for OpenVINO on a CPU
@@ -171,7 +175,12 @@ target-version = "py310"
 select = ["E4", "E7", "E9", "F"]
 
 [tool.uv]
-conflicts = [[{ extra = "onnx" }, { extra = "onnx-gpu" }]]
+conflicts = [
+    [{ extra = "onnx" }, { extra = "onnx-gpu" }],
+    # `mot` already includes roboflow/trackers; the two differ only in the opencv-python
+    # version they allow (see the comments on each), so they cannot resolve together.
+    [{ extra = "mot" }, { extra = "tracking" }],
+]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
