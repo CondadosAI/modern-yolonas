@@ -162,11 +162,17 @@ def extract_model_state_dict(checkpoint_path: str | Path, map_location: str = "c
     """Load model weights from either a Lightning .ckpt or legacy .pt checkpoint.
 
     Handles:
-    - Lightning format: state_dict keys prefixed with ``model.``
+    - Lightning format: EMA weights from ``ema_state_dict`` when ``EMACallback``
+      wrote one, otherwise ``state_dict`` with its ``model.`` prefix stripped
     - Legacy format: ``model_state_dict`` key or EMA ``ema.ema_state_dict``
     - Plain state_dict (e.g. from super-gradients pretrained weights)
     """
     ckpt = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+
+    # Lightning checkpoint with EMA. Its `state_dict` holds the raw training weights,
+    # kept for resuming; the EMA weights are the ones validation scored.
+    if "ema_state_dict" in ckpt:
+        return ckpt["ema_state_dict"]
 
     # Lightning checkpoint format
     if "state_dict" in ckpt:

@@ -63,11 +63,16 @@ class EMACallback(L.Callback):
         if self.ema_model is not None:
             checkpoint["ema_state_dict"] = self.ema_model.state_dict()
             checkpoint["ema_updates"] = self.updates
-            # Save EMA weights as the model weights in the checkpoint
-            ema_sd = self.ema_model.state_dict()
-            prefix = "model."
-            for k, v in ema_sd.items():
-                checkpoint["state_dict"][prefix + k] = v
+            # `state_dict` must hold the raw training weights: it is what `--resume`
+            # loads back into the model. This used to overwrite it with the EMA
+            # weights, so a resumed run silently continued from the average instead
+            # of where optimisation stopped. Consumers that want EMA read
+            # `ema_state_dict`, which `extract_model_state_dict` prefers.
+            if self._orig_state is not None:
+                # Saved mid-validation, with EMA swapped into the model.
+                prefix = "model."
+                for k, v in self._orig_state.items():
+                    checkpoint["state_dict"][prefix + k] = v
 
     def on_load_checkpoint(self, trainer, pl_module, checkpoint):
         if "ema_state_dict" in checkpoint:
