@@ -591,3 +591,63 @@ def test_skipping_frames_shortens_the_effective_frame_rate(detector, tmp_path):
     tracker = DeepHMSort()
     list(detector.track_video(path, tracker, conf_threshold=0.9, skip_frames=2))
     assert tracker.frame_rate == pytest.approx(10.0)
+
+
+def _write_clip(path, frames=4):
+    import cv2
+
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10.0, (160, 120))
+    assert writer.isOpened()
+    for k in range(frames):
+        canvas = np.zeros((120, 160, 3), dtype=np.uint8)
+        cv2.rectangle(canvas, (20 + 10 * k, 40), (60 + 10 * k, 90), (255, 255, 255), -1)
+        writer.write(canvas)
+    writer.release()
+    return path
+
+
+def _spy_tasks(detector, monkeypatch):
+    """Record the tasks each predict() call asked for."""
+    seen = []
+    original = detector.predict
+
+    def spy(image, tasks, *args, **kwargs):
+        seen.append(tasks)
+        return original(image, tasks, *args, **kwargs)
+
+    monkeypatch.setattr(detector, "predict", spy)
+    return seen
+
+
+def test_track_video_defaults_to_bytetrack(detector, tmp_path, monkeypatch):
+    pytest.importorskip("trackers", reason="ByteTrack is the optional `tracking` extra")
+    from modern_yolonas import Task
+
+    path = _write_clip(tmp_path / "clip.mp4")
+    seen = _spy_tasks(detector, monkeypatch)
+
+    frames = list(detector.track_video(path, conf_threshold=0.0))
+
+    assert [index for index, _, _ in frames] == [0, 1, 2, 3]
+    # ByteTrack reads no appearance, so the default skips the ROI pooling.
+    assert seen and all(not (tasks & Task.EMBED_OBJECTS) for tasks in seen)
+
+
+def test_track_video_without_the_extra_says_how_to_install(detector, tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "trackers", None)
+    path = _write_clip(tmp_path / "clip.mp4")
+    with pytest.raises(ImportError, match=r"modern-yolonas\[tracking\]"):
+        next(detector.track_video(path))
+
+
+def test_deep_hm_sort_still_gets_appearance_by_default(detector, tmp_path, monkeypatch):
+    from modern_yolonas import Task
+
+    path = _write_clip(tmp_path / "clip.mp4")
+    seen = _spy_tasks(detector, monkeypatch)
+
+    list(detector.track_video(path, DeepHMSort(), conf_threshold=0.0))
+
+    assert seen and all(tasks & Task.EMBED_OBJECTS for tasks in seen)

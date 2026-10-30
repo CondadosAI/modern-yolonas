@@ -1,14 +1,25 @@
 # Tracking API
 
-`DeepHMSort` is the built-in multi-object tracker. It takes an `sv.Detections` and
-returns the subset that matched a track, with `tracker_id` filled in — the same
-contract as `sv.ByteTrack.update_with_detections`, so anything already built around
-supervision keeps working.
+Every tracker takes an `sv.Detections` and returns the subset that matched a track, with
+`tracker_id` filled in. `track_video` accepts anything that satisfies the `Tracker`
+protocol below.
 
-See the [tracking guide](../guides/tracking.md) for what the algorithm does, which
-knobs matter, and what the defaults assume about your footage.
+See the [tracking guide](../guides/tracking.md) for how the two trackers differ and the
+[tracking benchmark](../benchmarks/tracking.md) for how they measure.
 
-## Tracker
+## The contract
+
+::: modern_yolonas.tracking.Tracker
+
+## ByteTrack (default)
+
+Needs the `tracking` extra.
+
+::: modern_yolonas.tracking.external.ByteTrack
+
+::: modern_yolonas.tracking.external.OCSort
+
+## Deep HM-SORT
 
 ::: modern_yolonas.tracking.DeepHMSort
 

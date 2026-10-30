@@ -34,34 +34,39 @@ yolonas detect --source video.mp4 --skip-frames 2
 
 ## `yolonas track`
 
-Track objects across a video with Deep HM-SORT. See the
-[tracking guide](guides/tracking.md) for what the algorithm does and what the defaults
-assume about your footage.
+Track objects across a video, with ByteTrack (the default) or Deep HM-SORT. ByteTrack needs
+the `tracking` extra. See the [tracking guide](guides/tracking.md) for how the two differ and
+the [tracking benchmark](benchmarks/tracking.md) for why ByteTrack is the default.
 
 ```bash
-yolonas track --source match.mp4 --classes 0
-yolonas track --source match.mp4 --fusion min                  # the Deep-EIoU baseline
-yolonas track --source match.mp4 --keep-all-tracks             # the paper's memory: unlimited
-yolonas track --source match.mp4 --no-appearance               # motion-only, as a control
+yolonas track --source match.mp4 --classes 0                              # ByteTrack
+yolonas track --source match.mp4 --tracker deep-hm-sort                   # Deep HM-SORT
+yolonas track --source match.mp4 --tracker deep-hm-sort --fusion min      # the Deep-EIoU baseline
+yolonas track --source match.mp4 --tracker deep-hm-sort --keep-all-tracks # the paper's memory
+yolonas track --source match.mp4 --tracker deep-hm-sort --no-appearance   # motion-only
 ```
+
+The options marked *deep-hm-sort* only apply with `--tracker deep-hm-sort`; passing one
+with ByteTrack is an error rather than a silent no-op.
 
 | Option | Default | Description |
 |---|---|---|
 | `--source` | *required* | Video file path |
+| `--tracker` | `bytetrack` | `bytetrack` or `deep-hm-sort` |
 | `--model` | `yolo_nas_s` | Model variant (s/m/l) |
 | `--weights` | — | Custom checkpoint; `--model` then selects the architecture |
-| `--conf` | `--track-low` | Detection threshold. Must stay at or below `--track-low`, or the low-score association round never sees anything |
+| `--conf` | the tracker's floor | Detection threshold: 0.1 for ByteTrack, `--track-low` for Deep HM-SORT. Keep it at or below that floor, or the low-score association round never sees anything |
 | `--iou` | `0.7` | NMS IoU threshold |
-| `--classes` | all | Comma-separated class ids to track, filtered before association |
-| `--appearance` / `--no-appearance` | on | Associate on per-object embeddings as well as motion |
-| `--fusion` | `harmonic` | `harmonic` is Deep HM-SORT; `min` is Deep-EIoU's original |
-| `--track-high` | `0.6` | Score at or above which a detection enters the first round |
-| `--track-low` | `0.4` | Score below which a detection is ignored |
-| `--new-track` | `0.5` | Lowest score that may start a track |
-| `--expansion` | `0.3` | Box growth for the first association round |
-| `--max-lost-seconds` | `2.0` | How long a track may go unmatched, in seconds of video — converted with the clip's own frame rate |
-| `--keep-all-tracks` | off | Never drop a track. The paper's setting, and a closed-environment assumption |
-| `--class-aware` | off | Refuse to associate across classes |
+| `--classes` | all | Comma-separated class ids to track, filtered before association. ByteTrack is not class-aware, so this is how to keep classes apart |
+| `--appearance` / `--no-appearance` | on | *deep-hm-sort.* Associate on per-object embeddings as well as motion |
+| `--fusion` | `harmonic` | *deep-hm-sort.* `harmonic` is Deep HM-SORT; `min` is Deep-EIoU's original |
+| `--track-high` | `0.6` | *deep-hm-sort.* Score at or above which a detection enters the first round |
+| `--track-low` | `0.4` | *deep-hm-sort.* Score below which a detection is ignored |
+| `--new-track` | `0.5` | *deep-hm-sort.* Lowest score that may start a track |
+| `--expansion` | `0.3` | *deep-hm-sort.* Box growth for the first association round |
+| `--max-lost-seconds` | `2.0` | *deep-hm-sort.* How long a track may go unmatched, in seconds of video |
+| `--keep-all-tracks` | off | *deep-hm-sort.* Never drop a track. The paper's setting, and a closed-environment assumption |
+| `--class-aware` | off | *deep-hm-sort.* Refuse to associate across classes |
 | `--output` | `results` | Output directory |
 | `--codec` | `mp4v` | Video output codec |
 | `--show-fps` | off | Burn the per-frame time into the output |
@@ -69,6 +74,56 @@ yolonas track --source match.mp4 --no-appearance               # motion-only, as
 Boxes are coloured by track id, not by class, so an ID-swap shows as a colour change.
 The summary reports `unique_ids`: far above the true object count means ids are
 fragmenting.
+
+## `yolonas benchmark-tracking`
+
+Measure the tracker on a MOT-format dataset. Split in two, because the detector pass
+takes minutes and a tracker pass takes seconds — an ablation should not pay for the
+first one every time, and every configuration then sees byte-identical detections, so
+a difference in the metrics can only have come from the association.
+
+```bash
+# Once per dataset: detect (or read the ground truth) and embed every frame.
+yolonas benchmark-tracking cache --data ~/datasets/sportsmot/val --source oracle
+yolonas benchmark-tracking cache --data ~/datasets/sportsmot/val --source detector
+
+# As often as you like: replay every tracker configuration and score it.
+yolonas benchmark-tracking evaluate --data ~/datasets/sportsmot/val --source oracle
+```
+
+Needs the `mot` extra for the metrics: `uv sync --extra mot`, or
+`pip install "modern-yolonas[mot]"`. It is separate from `benchmark` because TrackEval
+depends on `opencv-python` where this project depends on `opencv-python-headless`;
+installing it replaces the headless build, which then wants libGL at import time.
+
+### `cache`
+
+| Option | Default | Description |
+|---|---|---|
+| `--data` | *required* | Split directory, one subdirectory per sequence |
+| `--source` | `detector` | `detector` runs detection; `oracle` embeds the ground-truth boxes, leaving association as the only source of error |
+| `--model` | `yolo_nas_l` | Model variant |
+| `--conf` | `0.1` | Detector threshold. Low on purpose — the tracker filters on replay, so a score sweep needs no re-detection |
+| `--output` | `runs/mot-cache` | Where the per-sequence `.npz` caches go |
+| `--sequences` | all | A split file, or a comma-separated list of names |
+| `--limit` | — | Only the first N sequences, for a smoke run |
+| `--overwrite` | off | Rebuild caches that already exist |
+
+### `evaluate`
+
+| Option | Default | Description |
+|---|---|---|
+| `--data` | *required* | The same split directory |
+| `--cache` | `runs/mot-cache` | Where `cache` wrote its output |
+| `--source` | `detector` | Which cache to replay |
+| `--benchmark` / `--split` | `sportsmot` / `val` | TrackEval names; also name the output folder |
+| `--preproc` | off | TrackEval's MOT17 preprocessing. Needed for MOT17, a no-op on SportsMOT |
+| `--configs` | all | Comma-separated subset of `harmonic`, `min`, `motion`, `harmonic-keepall`, `motion-keepall` |
+| `--output` | `runs/mot-eval` | Results table, `results.json` and the TrackEval tree |
+
+Ground truth is symlinked into the TrackEval layout, never copied — SportsMOT and
+MOT17 are both non-redistributable, and a copy inside the repo is the accident worth
+designing out.
 
 ## `yolonas train`
 

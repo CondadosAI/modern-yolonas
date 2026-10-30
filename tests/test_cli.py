@@ -232,3 +232,13 @@ class TestTrackCommand:
     def test_track_refuses_a_still_image(self):
         result = runner.invoke(app, ["track", "--source", "photo.jpg"])
         assert result.exit_code != 0
+
+    def test_track_help_names_both_trackers(self):
+        out = _plain(runner.invoke(app, ["track", "--help"]).output)
+        assert "--tracker" in out
+
+    def test_deep_hm_sort_options_are_refused_with_bytetrack(self):
+        """Passing --fusion to ByteTrack must fail, not be silently ignored."""
+        result = runner.invoke(app, ["track", "--source", "clip.mp4", "--fusion", "min"])
+        assert result.exit_code != 0
+        assert "deep-hm-sort" in _plain(result.output)
