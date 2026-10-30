@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-30
+
 ### Changed
 - **BREAKING: ByteTrack is the default tracker.** `track_video`, `track_video_to_file`
   and `yolonas track` now use `modern_yolonas.tracking.ByteTrack` (roboflow/trackers)
