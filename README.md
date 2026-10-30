@@ -50,6 +50,11 @@ self-contained graph for [Frigate](https://frigate.video/).
 
 ## 🚀 Updates
 
+- **[2026-10-30]** `v0.6.0` — export to ONNX, OpenVINO (INT8 now compiles) and TensorRT from one
+  graph, with an end-to-end graph that has NMS baked in for [Frigate](https://frigate.video/); a
+  TensorRT stream-ordering bug that returned plausible boxes at 31.4 AP instead of 47.3 is fixed;
+  `yolonas track` with **ByteTrack as the default tracker** (53.7 HOTA on SportsMOT; needs the
+  `tracking` extra); every figure in the model table below is measured by this project.
 - **[2026-09-18]** `v0.5.0` — training moved to [PyTorch Lightning](https://lightning.ai/);
   quantization (`yolonas quantize` for PTQ, `yolonas qat` for QAT) on `torch.ao.quantization`
   FX graph mode; accuracy is now measured by this project rather than quoted; two mAP bugs and
@@ -127,7 +132,7 @@ uv add modern-yolonas
 pip install modern-yolonas
 ```
 
-Optional extras: `[onnx]`, `[openvino]`, `[fiftyone]`, `[benchmark]`, `[serve]`, `[demo]`, `[tensorboard]`, `[wandb]`.
+Optional extras: `[tracking]`, `[onnx]`, `[onnx-gpu]`, `[openvino]`, `[tensorrt]`, `[fiftyone]`, `[benchmark]`, `[mot]`, `[serve]`, `[demo]`, `[tensorboard]`, `[wandb]`, `[ssl]`, `[distill]`.
 
 ---
 
