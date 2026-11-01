@@ -81,7 +81,7 @@ benchmark = ["rf100vl>=0.1"]
 # import time, and does not have them on a bare server. The GUI build is held to the
 # headless build's version range (albucore caps that at 4.10): left free it resolved
 # to 5.0, whichever build then won changed what `cv2` draws, and test_visualize failed.
-tracking = ["trackers>=2.6,<3", "opencv-python>=4.9,<4.11"]
+tracking = ["trackers>=2.6,<3", "opencv-python>=4.9,<5.1"]
 # TrackEval computes HOTA/CLEAR/Identity for `yolonas benchmark-tracking`, and the
 # benchmark compares against ByteTrack and OC-SORT. TrackEval needs opencv-python 4.11
 # or later, so this cannot take `tracking`'s version cap: it moves `cv2` to the GUI
